@@ -3,6 +3,7 @@ import {
   getAuth,
   signInWithPopup,
   GoogleAuthProvider,
+  browserPopupRedirectResolver,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
@@ -24,10 +25,49 @@ SCOPES.forEach((scope) => {
   provider.addScope(scope);
 });
 
+const SESSION_TOKEN_KEY = 'gsheets_oauth_access_token';
+const SESSION_EXPIRES_KEY = 'gsheets_oauth_expires_at';
+
 let cachedAccessToken: string | null = null;
 let cachedTokenExpiresAt = 0;
 
-async function getServerCachedToken(): Promise<string | null> {
+function loadSessionCachedToken(): string | null {
+  try {
+    const token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    const expiresRaw = sessionStorage.getItem(SESSION_EXPIRES_KEY);
+    const expiresAt = expiresRaw ? Number(expiresRaw) : 0;
+    if (token && expiresAt > Date.now() + 30000) {
+      cachedAccessToken = token;
+      cachedTokenExpiresAt = expiresAt;
+      return token;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return null;
+}
+
+function saveSessionCachedToken(token: string, expiresAt: number): void {
+  try {
+    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+    sessionStorage.setItem(SESSION_EXPIRES_KEY, String(expiresAt));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearSessionCachedToken(): void {
+  try {
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+// Warm up token from sessionStorage and backend cache on load (non-blocking)
+loadSessionCachedToken();
+void (async () => {
   try {
     const res = await fetch('/api/google-token');
     if (res.ok) {
@@ -42,69 +82,131 @@ async function getServerCachedToken(): Promise<string | null> {
       ) {
         cachedAccessToken = data.accessToken;
         cachedTokenExpiresAt = data.expiresAt;
-        return data.accessToken;
+        saveSessionCachedToken(data.accessToken, data.expiresAt);
       }
     }
   } catch {
-    // ignore
+    // ignore when running on static hosting like Vercel
   }
-  return null;
+})();
+
+function saveCachedToken(token: string, expiresInSec = 3500): void {
+  const expiresAt = Date.now() + expiresInSec * 1000;
+  cachedAccessToken = token;
+  cachedTokenExpiresAt = expiresAt;
+  saveSessionCachedToken(token, expiresAt);
+
+  void fetch('/api/google-token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accessToken: token, expiresInSec }),
+  }).catch(() => {
+    // ignore when running on static hosting
+  });
 }
 
-async function saveServerCachedToken(
-  token: string,
-  expiresInSec = 3500
-): Promise<void> {
-  cachedAccessToken = token;
-  cachedTokenExpiresAt = Date.now() + expiresInSec * 1000;
+/**
+ * Clears Firebase Auth's internal cached originValidationPromises and dead auth iframes.
+ * Without this, if signInWithPopup failed once BEFORE the user added their domain in
+ * Firebase Console, @firebase/auth permanently caches the rejected promise in memory
+ * until the page is hard-reloaded.
+ */
+function resetFirebasePopupResolverCache(): void {
   try {
-    await fetch('/api/google-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accessToken: token, expiresInSec }),
-    });
+    const internalAuth = auth as unknown as {
+      _key?: () => string;
+      _popupRedirectResolver?: {
+        originValidationPromises?: Record<string, unknown>;
+        eventManagers?: Record<string, unknown>;
+        iframes?: Record<string, unknown>;
+      };
+    };
+    const resolver = internalAuth._popupRedirectResolver;
+    if (resolver) {
+      if (resolver.originValidationPromises) {
+        for (const k of Object.keys(resolver.originValidationPromises)) {
+          delete resolver.originValidationPromises[k];
+        }
+      }
+      if (resolver.eventManagers) {
+        for (const k of Object.keys(resolver.eventManagers)) {
+          delete resolver.eventManagers[k];
+        }
+      }
+      if (resolver.iframes) {
+        for (const k of Object.keys(resolver.iframes)) {
+          delete resolver.iframes[k];
+        }
+      }
+    }
+    const resolverProto = browserPopupRedirectResolver as unknown as {
+      prototype?: {
+        originValidationPromises?: Record<string, unknown>;
+      };
+    };
+    if (resolverProto?.prototype?.originValidationPromises) {
+      for (const k of Object.keys(resolverProto.prototype.originValidationPromises)) {
+        delete resolverProto.prototype.originValidationPromises[k];
+      }
+    }
+    if (typeof document !== 'undefined') {
+      const authIframes = document.querySelectorAll(
+        'iframe[src*="/__/auth/iframe"]'
+      );
+      authIframes.forEach((el) => el.parentNode?.removeChild(el));
+    }
   } catch {
-    // ignore
+    // ignore internal cleanup errors
   }
 }
 
 export async function ensureGoogleSheetsAccessToken(
   forceNew = false
 ): Promise<string> {
-  if (
-    !forceNew &&
-    cachedAccessToken &&
-    cachedTokenExpiresAt > Date.now() + 30000
-  ) {
-    return cachedAccessToken;
+  if (!forceNew) {
+    if (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) {
+      return cachedAccessToken;
+    }
+    const sessionToken = loadSessionCachedToken();
+    if (sessionToken) {
+      return sessionToken;
+    }
+  } else {
+    invalidateCachedToken();
   }
 
-  if (!forceNew) {
-    const serverToken = await getServerCachedToken();
-    if (serverToken) {
-      return serverToken;
-    }
-  }
+  // Always clear any stale rejected originValidationPromises before opening popup
+  resetFirebasePopupResolverCache();
 
   try {
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(
+      auth,
+      provider,
+      browserPopupRedirectResolver
+    );
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('ไม่สามารถรับสิทธิ์เชื่อมต่อ Google Sheets ได้ กรุณาลองอีกครั้ง');
     }
-    await saveServerCachedToken(credential.accessToken, 3500);
-    await flushPendingJobTransfersToGoogleSheet(credential.accessToken);
+    saveCachedToken(credential.accessToken, 3500);
+    void flushPendingJobTransfersToGoogleSheet(credential.accessToken);
     return credential.accessToken;
   } catch (err: unknown) {
+    resetFirebasePopupResolverCache();
     const code = (err as { code?: string })?.code ?? '';
     if (code === 'auth/unauthorized-domain') {
       throw new Error(
-        `โดเมน ${window.location.hostname} ยังไม่ได้เพิ่มใน Firebase Console -> Authentication -> Settings -> Authorized domains (โปรเจกต์ ${firebaseConfig.projectId})`
+        `โดเมน ${window.location.hostname} ยังไม่ได้รับอนุญาต หรือเบราว์เซอร์จำค่าเดิมไว้ กรุณากดรีเฟรชหน้าเว็บ (F5 / Ctrl+R) 1 ครั้ง (แนะนำให้เพิ่มคำว่า vercel.app ใน Firebase Console -> Authentication -> Settings -> Authorized domains ของโปรเจกต์ ${firebaseConfig.projectId} เพื่อรองรับทุกลิงก์ของ Vercel ถาวร)`
       );
     }
-    if (code === 'auth/popup-closed-by-user') {
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
       throw new Error(
         'หน้าต่างยืนยันสิทธิ์ Google ถูกปิดก่อนเสร็จสิ้น กรุณากดยืนยันอีกครั้งเพื่อบันทึกข้อมูลลง Google Sheets'
+      );
+    }
+    if (code === 'auth/popup-blocked') {
+      throw new Error(
+        'เบราว์เซอร์บล็อกหน้าต่างป๊อปอัป (Popup) กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้แล้วกดยืนยันอีกครั้ง'
       );
     }
     throw err instanceof Error
@@ -116,6 +218,7 @@ export async function ensureGoogleSheetsAccessToken(
 function invalidateCachedToken(): void {
   cachedAccessToken = null;
   cachedTokenExpiresAt = 0;
+  clearSessionCachedToken();
 }
 
 export const SHEET_TABS: SheetTabConfig[] = [
@@ -616,6 +719,10 @@ export async function appendJobTransferRecord(
     payload.rounds || 1, // V: จำนวนรอบ
   ];
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     const rowNumber = await postJobTransferRowToGoogleSheetsApi(
@@ -624,7 +731,9 @@ export async function appendJobTransferRecord(
     );
     return { recordId, rowNumber };
   } catch (err: unknown) {
-    // Retry once with fresh popup token if cached token expired
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     const rowNumber = await postJobTransferRowToGoogleSheetsApi(
       rowValues,
@@ -679,10 +788,17 @@ export async function completeJobTransferRecord(params: {
     }
   };
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     await executePut(accessToken);
-  } catch {
+  } catch (err: unknown) {
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     await executePut(accessToken);
   }
@@ -722,10 +838,17 @@ export async function appendDeliveryPointRecord(
     }
   };
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     await executePost(accessToken);
-  } catch {
+  } catch (err: unknown) {
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     await executePost(accessToken);
   }
@@ -802,10 +925,17 @@ export async function updateDeliveryPointGate(params: {
     }
   };
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     await executeUpdate(accessToken);
-  } catch {
+  } catch (err: unknown) {
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     await executeUpdate(accessToken);
   }
@@ -876,10 +1006,17 @@ export async function updateVehicleRegistration(params: {
     }
   };
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     await executeUpdate(accessToken);
-  } catch {
+  } catch (err: unknown) {
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     await executeUpdate(accessToken);
   }
@@ -954,10 +1091,17 @@ export async function updateJobTransferNote(params: {
     }
   };
 
+  const hadCachedToken = Boolean(
+    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
+      loadSessionCachedToken()
+  );
   let accessToken = await ensureGoogleSheetsAccessToken(false);
   try {
     await executeUpdate(accessToken);
-  } catch {
+  } catch (err: unknown) {
+    if (!hadCachedToken) {
+      throw err;
+    }
     accessToken = await ensureGoogleSheetsAccessToken(true);
     await executeUpdate(accessToken);
   }
