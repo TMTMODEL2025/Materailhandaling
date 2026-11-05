@@ -1,0 +1,1328 @@
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  Search,
+  RefreshCw,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  SlidersHorizontal,
+  ExternalLink,
+  AlertCircle,
+  Plus,
+  CheckCircle2,
+  Menu,
+  Pencil,
+  Check,
+} from 'lucide-react';
+import { User } from 'firebase/auth';
+import {
+  GOOGLE_SHEET_ID,
+  SHEET_TABS,
+  fetchSheetTabData,
+  updateDeliveryPointGate,
+} from './services/googleSheets';
+import { initAuth, googleSignIn, logout } from './services/auth';
+import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
+import { RecordDetailModal } from './components/RecordDetailModal';
+import { JobTransferModal } from './components/JobTransferModal';
+import { DeliveryPointModal } from './components/DeliveryPointModal';
+
+const PAGE_SIZE = 50;
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
+  const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Search & Filter states
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedColumnId, setSelectedColumnId] = useState<string>('ALL');
+  const [quickFilterValue, setQuickFilterValue] = useState<string>('ALL');
+  const [rowLimit, setRowLimit] = useState<number>(SHEET_TABS[0].defaultLimit ?? 250);
+  const [deepSearchTerm, setDeepSearchTerm] = useState<string>('');
+
+  // Auto-refresh interval in seconds (0 = off)
+  const [refreshIntervalSec, setRefreshIntervalSec] = useState<number>(30);
+
+  // Sorting & Pagination
+  const [sortConfig, setSortConfig] = useState<{
+    colId: string;
+    direction: 'asc' | 'desc';
+  } | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Selected row for detail modal
+  const [selectedRow, setSelectedRow] = useState<SheetRow | null>(null);
+
+  // Job Transfer & Delivery Point creation modals & Google OAuth states
+  const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
+  const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู
+  const [editingGateRowNumber, setEditingGateRowNumber] = useState<number | null>(null);
+  const [editingGateValue, setEditingGateValue] = useState<string>('');
+  const [confirmingGateRowNumber, setConfirmingGateRowNumber] = useState<number | null>(
+    null
+  );
+  const [isUpdatingGate, setIsUpdatingGate] = useState<boolean>(false);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (user, token) => {
+        setAuthUser(user);
+        setAuthToken(token);
+      },
+      () => {
+        setAuthUser(null);
+        setAuthToken(null);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleRequestGoogleLogin = async (): Promise<string | null> => {
+    setIsLoggingIn(true);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setAuthUser(result.user);
+        setAuthToken(result.accessToken);
+        return result.accessToken;
+      }
+      return null;
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGoogleLogout = async () => {
+    await logout();
+    setAuthUser(null);
+    setAuthToken(null);
+  };
+
+  const loadData = useCallback(
+    async (options?: { silent?: boolean; remoteSearch?: string }) => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      if (options?.silent) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+      setError(null);
+
+      try {
+        const result = await fetchSheetTabData(activeTab, {
+          limit: rowLimit,
+          remoteSearchQuery: options?.remoteSearch ?? deepSearchTerm,
+          signal: controller.signal,
+        });
+        setSheetData(result);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'เกิดข้อผิดพลาดในการดึงข้อมูลจาก Google Sheets'
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
+      }
+    },
+    [activeTab, rowLimit, deepSearchTerm]
+  );
+
+  // Initial load and when activeTab / rowLimit / deepSearchTerm changes
+  useEffect(() => {
+    loadData({ silent: false });
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, [loadData]);
+
+  // Real-time polling
+  useEffect(() => {
+    if (refreshIntervalSec <= 0) return;
+    const timer = setInterval(() => {
+      loadData({ silent: true });
+    }, refreshIntervalSec * 1000);
+    return () => clearInterval(timer);
+  }, [refreshIntervalSec, loadData]);
+
+  const handleSelectTab = (tab: SheetTabConfig) => {
+    setIsSidebarOpen(false);
+    if (tab.gid === activeTab.gid) return;
+    setActiveTab(tab);
+    setRowLimit(tab.defaultLimit ?? 250);
+    setSearchQuery('');
+    setDeepSearchTerm('');
+    setSelectedColumnId('ALL');
+    setQuickFilterValue('ALL');
+    setSortConfig(null);
+    setCurrentPage(1);
+    setEditingGateRowNumber(null);
+    setConfirmingGateRowNumber(null);
+  };
+
+  const handleConfirmGateUpdate = async (row: SheetRow) => {
+    const newGate = editingGateValue.trim();
+    const oldGate = (row.values['C'] ?? '').trim();
+    const deliveryPoint = (row.values['B'] ?? '').trim();
+
+    if (!newGate) return;
+    if (newGate === oldGate) {
+      setEditingGateRowNumber(null);
+      setConfirmingGateRowNumber(null);
+      return;
+    }
+
+    setIsUpdatingGate(true);
+    setError(null);
+
+    try {
+      let token = authToken;
+      if (!token) {
+        token = await handleRequestGoogleLogin();
+      }
+      if (!token) {
+        throw new Error('กรุณาเข้าสู่ระบบด้วยบัญชี Google ก่อนแก้ไขข้อมูลประตู');
+      }
+
+      const now = new Date();
+      const updatedDate = `${now.getDate()}/${now.getMonth() + 1}/${
+        now.getFullYear() + 543
+      }`;
+
+      await updateDeliveryPointGate(
+        {
+          deliveryPoint,
+          oldGate,
+          newGate,
+          updatedDate,
+        },
+        token
+      );
+
+      setEditingGateRowNumber(null);
+      setConfirmingGateRowNumber(null);
+      setSaveSuccessMsg(
+        `อัปเดตประตูของจุดส่งสินค้า ${deliveryPoint} เป็น "${newGate}" และอัปเดตวันที่เป็น ${updatedDate} เรียบร้อยแล้ว`
+      );
+      loadData({ silent: true });
+      setTimeout(() => {
+        setSaveSuccessMsg(null);
+      }, 5000);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'เกิดข้อผิดพลาดในการอัปเดตข้อมูลประตูลง Google Sheets'
+      );
+    } finally {
+      setIsUpdatingGate(false);
+    }
+  };
+
+  // Detect primary status/category column for quick filter buttons
+  const quickFilterColumn = useMemo<SheetColumn | null>(() => {
+    if (!sheetData) return null;
+    const candidates = [
+      'สถานะ',
+      'สถานะการใช้งาน',
+      'สถานะการอนุมัติ',
+      'ประเภทสินค้า',
+      'ประเภทรถ',
+      'ประเภทการซ่อม',
+      'STATUS',
+      'ครบรอบPM',
+      'ยี่ห้อ',
+      'จุดส่งสินค้า',
+    ];
+    for (const label of candidates) {
+      const found = sheetData.columns.find((c) => c.label.trim() === label);
+      if (found) return found;
+    }
+    return null;
+  }, [sheetData]);
+
+  const quickFilterOptions = useMemo<string[]>(() => {
+    if (!sheetData || !quickFilterColumn) return [];
+    const counts = new Map<string, number>();
+    sheetData.rows.forEach((row) => {
+      const val = row.values[quickFilterColumn.id]?.trim();
+      if (val) {
+        counts.set(val, (counts.get(val) ?? 0) + 1);
+      }
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7)
+      .map(([val]) => val);
+  }, [sheetData, quickFilterColumn]);
+
+  // Filter rows by search query, selected column, and quick filter
+  const filteredRows = useMemo<SheetRow[]>(() => {
+    if (!sheetData) return [];
+    const q = searchQuery.trim().toLowerCase();
+
+    return sheetData.rows.filter((row) => {
+      if (
+        quickFilterValue !== 'ALL' &&
+        quickFilterColumn &&
+        row.values[quickFilterColumn.id]?.trim() !== quickFilterValue
+      ) {
+        return false;
+      }
+
+      if (!q) return true;
+
+      if (selectedColumnId !== 'ALL') {
+        const cellVal = (row.values[selectedColumnId] ?? '').toLowerCase();
+        return cellVal.includes(q);
+      }
+
+      // Search across row number and all active columns
+      if (String(row.rowNumber).includes(q)) return true;
+      return sheetData.columns.some((col) =>
+        (row.values[col.id] ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [sheetData, searchQuery, selectedColumnId, quickFilterValue, quickFilterColumn]);
+
+  // Sort filtered rows
+  const sortedRows = useMemo<SheetRow[]>(() => {
+    if (!sortConfig || !sheetData) return filteredRows;
+    const { colId, direction } = sortConfig;
+    const col = sheetData.columns.find((c) => c.id === colId);
+
+    return [...filteredRows].sort((a, b) => {
+      if (colId === '__ROW__') {
+        return direction === 'asc'
+          ? a.rowNumber - b.rowNumber
+          : b.rowNumber - a.rowNumber;
+      }
+
+      const rawA = a.rawValues[colId];
+      const rawB = b.rawValues[colId];
+
+      if (typeof rawA === 'number' && typeof rawB === 'number') {
+        return direction === 'asc' ? rawA - rawB : rawB - rawA;
+      }
+
+      const strA = a.values[colId] ?? '';
+      const strB = b.values[colId] ?? '';
+
+      if (col?.type === 'number') {
+        const numA = parseFloat(strA.replace(/,/g, ''));
+        const numB = parseFloat(strB.replace(/,/g, ''));
+        if (!Number.isNaN(numA) && !Number.isNaN(numB)) {
+          return direction === 'asc' ? numA - numB : numB - numA;
+        }
+      }
+
+      const cmp = strA.localeCompare(strB, 'th');
+      return direction === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredRows, sortConfig, sheetData]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedColumnId, quickFilterValue, activeTab.gid]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
+  const paginatedRows = useMemo<SheetRow[]>(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return sortedRows.slice(start, start + PAGE_SIZE);
+  }, [sortedRows, currentPage]);
+
+  // Contextual real-time summary metric based on actual columns in current sheet
+  const contextualMetric = useMemo<{ label: string; value: string; subtext: string }>(() => {
+    if (!sheetData || filteredRows.length === 0) {
+      return {
+        label: 'คอลัมน์ข้อมูลที่ใช้งาน',
+        value: sheetData ? `${sheetData.columns.length}` : '0',
+        subtext: 'คอลัมน์ในตารางปัจจุบัน',
+      };
+    }
+
+    // Check if there is a weight column ('น้ำหนัก')
+    const weightCol = sheetData.columns.find((c) => c.label.trim() === 'น้ำหนัก');
+    if (weightCol) {
+      let totalWeight = 0;
+      filteredRows.forEach((r) => {
+        const raw = r.rawValues[weightCol.id];
+        if (typeof raw === 'number') {
+          totalWeight += raw;
+        } else {
+          const parsed = parseFloat((r.values[weightCol.id] ?? '').replace(/,/g, ''));
+          if (!Number.isNaN(parsed)) totalWeight += parsed;
+        }
+      });
+      return {
+        label: 'น้ำหนักรวมรายการที่แสดง',
+        value: `${totalWeight.toLocaleString('th-TH', { maximumFractionDigits: 0 })} กก.`,
+        subtext: `คำนวณจาก ${filteredRows.length.toLocaleString('th-TH')} รายการ`,
+      };
+    }
+
+    // Check if there is a remaining stock column ('คงเหลือ')
+    const remainCol = sheetData.columns.find((c) => c.label.trim() === 'คงเหลือ');
+    if (remainCol) {
+      let totalRemain = 0;
+      filteredRows.forEach((r) => {
+        const raw = r.rawValues[remainCol.id];
+        if (typeof raw === 'number') {
+          totalRemain += raw;
+        } else {
+          const parsed = parseFloat((r.values[remainCol.id] ?? '').replace(/,/g, ''));
+          if (!Number.isNaN(parsed)) totalRemain += parsed;
+        }
+      });
+      return {
+        label: 'ยอดคงเหลือรวมในคลัง',
+        value: `${totalRemain.toLocaleString('th-TH')} ชิ้น/เส้น`,
+        subtext: `จากรายการอะไหล่ ${filteredRows.length.toLocaleString('th-TH')} รายการ`,
+      };
+    }
+
+    // Otherwise count top status value if quickFilterColumn exists
+    if (quickFilterColumn) {
+      const topValue = quickFilterOptions[0];
+      if (topValue) {
+        const count = filteredRows.filter(
+          (r) => r.values[quickFilterColumn.id]?.trim() === topValue
+        ).length;
+        return {
+          label: `${quickFilterColumn.label}: ${topValue}`,
+          value: `${count.toLocaleString('th-TH')} รายการ`,
+          subtext: `คิดเป็น ${Math.round((count / filteredRows.length) * 100)}% ของข้อมูลที่แสดง`,
+        };
+      }
+    }
+
+    return {
+      label: 'คอลัมน์ข้อมูลที่ใช้งาน',
+      value: `${sheetData.columns.length} คอลัมน์`,
+      subtext: `ตาราง ${sheetData.tabName}`,
+    };
+  }, [sheetData, filteredRows, quickFilterColumn, quickFilterOptions]);
+
+  const handleSort = (colId: string) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.colId !== colId) {
+        return { colId, direction: 'asc' };
+      }
+      if (prev.direction === 'asc') {
+        return { colId, direction: 'desc' };
+      }
+      return null;
+    });
+  };
+
+  const handleTriggerDeepSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = searchQuery.trim();
+    setDeepSearchTerm(trimmed);
+    loadData({ silent: false, remoteSearch: trimmed });
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setSelectedColumnId('ALL');
+    setQuickFilterValue('ALL');
+    if (deepSearchTerm !== '') {
+      setDeepSearchTerm('');
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (!sheetData || sortedRows.length === 0) return;
+    const headers = ['ลำดับแถว', ...sheetData.columns.map((c) => c.label)];
+    const csvLines = [
+      headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
+      ...sortedRows.map((row) => {
+        const cells = [
+          String(row.rowNumber),
+          ...sheetData.columns.map((col) => row.values[col.id] ?? ''),
+        ];
+        return cells.map((c) => `"${c.replace(/"/g, '""')}"`).join(',');
+      }),
+    ];
+    const csvContent = '\uFEFF' + csvLines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${sheetData.tabName}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Highlight matching search text inside cell
+  const renderHighlightedText = (text: string) => {
+    if (!text) return <span className="text-slate-300">-</span>;
+    const q = searchQuery.trim();
+    if (!q) return text;
+
+    const lowerText = text.toLowerCase();
+    const lowerQ = q.toLowerCase();
+    const matchIdx = lowerText.indexOf(lowerQ);
+    if (matchIdx === -1) return text;
+
+    const before = text.slice(0, matchIdx);
+    const match = text.slice(matchIdx, matchIdx + q.length);
+    const after = text.slice(matchIdx + q.length);
+
+    return (
+      <>
+        {before}
+        <mark className="rounded-xs bg-amber-200/80 px-0.5 text-slate-900">
+          {match}
+        </mark>
+        {after}
+      </>
+    );
+  };
+
+  const formattedFetchTime = useMemo(() => {
+    if (!sheetData?.fetchedAt) return '-';
+    return new Date(sheetData.fetchedAt).toLocaleTimeString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }, [sheetData?.fetchedAt]);
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 text-slate-900">
+      {/* Mobile Sidebar Backdrop */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-xs lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Left Sidebar Navigation */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <a
+            href="#top"
+            onClick={(e) => {
+              e.preventDefault();
+              handleSelectTab(SHEET_TABS[0]);
+            }}
+            className="text-sm font-bold tracking-tight text-slate-900 truncate"
+          >
+            ระบบขนส่งและงานซ่อมบำรุง
+          </a>
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="ปิดเมนู"
+            className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 py-4">
+          <div className="px-2.5 pb-2 text-xs font-semibold text-slate-400">
+            เมนูตารางข้อมูลทั้งหมด
+          </div>
+          <nav className="space-y-1">
+            {SHEET_TABS.map((tab) => {
+              const isSelected = activeTab.gid === tab.gid;
+              return (
+                <button
+                  key={tab.gid}
+                  type="button"
+                  onClick={() => handleSelectTab(tab)}
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                    isSelected
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="truncate">{tab.name}</span>
+                  <span
+                    className={`ml-2 text-xs whitespace-nowrap shrink-0 ${
+                      isSelected ? 'text-slate-300' : 'text-slate-400'
+                    }`}
+                  >
+                    {tab.category}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Top Bar Contract: Breadcrumb on left, primary action on right */}
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="เปิดเมนู"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 lg:hidden shrink-0"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            <div className="flex items-center gap-2 text-sm text-slate-500 truncate">
+              <span className="hidden sm:inline">ฐานข้อมูล</span>
+              <span aria-hidden="true" className="hidden sm:inline">/</span>
+              <span className="hidden sm:inline">{activeTab.category}</span>
+              <span aria-hidden="true" className="hidden sm:inline">/</span>
+              <span className="font-semibold text-slate-900 truncate">
+                {activeTab.name}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => loadData({ silent: true })}
+              disabled={isLoading || isRefreshing}
+              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${
+                  isLoading || isRefreshing ? 'animate-spin' : ''
+                }`}
+              />
+              <span>ซิงค์ข้อมูลล่าสุด</span>
+            </button>
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+          {/* Sheet Header & Metadata Row */}
+          <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span>Google Sheets Live Data</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums">ID: {GOOGLE_SHEET_ID}</span>
+                <span aria-hidden="true">·</span>
+                <span>หมวดหมู่: {activeTab.category}</span>
+              </div>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
+                {activeTab.name}
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">{activeTab.description}</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {activeTab.gid === '606634465' && (
+                <button
+                  type="button"
+                  onClick={() => setIsJobModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>บันทึกย้ายงาน</span>
+                </button>
+              )}
+
+              {activeTab.gid === '1156877149' && (
+                <button
+                  type="button"
+                  onClick={() => setIsDeliveryPointModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>เพิ่มจุดส่งสินค้า</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <label htmlFor="refresh-select" className="font-medium whitespace-nowrap">
+                  อัปเดตอัตโนมัติ:
+                </label>
+                <select
+                  id="refresh-select"
+                  value={refreshIntervalSec}
+                  onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
+                >
+                  <option value={15}>ทุก 15 วินาที</option>
+                  <option value={30}>ทุก 30 วินาที</option>
+                  <option value={60}>ทุก 60 วินาที</option>
+                  <option value={0}>ปิดอัตโนมัติ</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <label htmlFor="limit-select" className="font-medium whitespace-nowrap">
+                  จำนวนดึงข้อมูล:
+                </label>
+                <select
+                  id="limit-select"
+                  value={rowLimit}
+                  onChange={(e) => setRowLimit(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
+                >
+                  <option value={100}>100 แถวล่าสุด</option>
+                  <option value={250}>250 แถวล่าสุด</option>
+                  <option value={500}>500 แถวล่าสุด</option>
+                  <option value={1000}>1,000 แถวล่าสุด</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={!sheetData || sortedRows.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>ส่งออก CSV</span>
+              </button>
+
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+              >
+                <span>เปิดตารางต้นฉบับ</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </div>
+          </div>
+
+        {/* 4-Column KPI Summary Strip */}
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-medium text-slate-500">
+              ข้อมูลทั้งหมดในชีต ({activeTab.name})
+            </div>
+            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
+              {isLoading && !sheetData
+                ? '...'
+                : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              รายการบันทึกสะสมใน Google Sheets
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-medium text-slate-500">
+              รายการที่แสดงผล / ค้นหาพบ
+            </div>
+            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
+              {isLoading && !sheetData
+                ? '...'
+                : sortedRows.length.toLocaleString('th-TH')}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              จากข้อมูลที่โหลดมา {(sheetData?.rows.length ?? 0).toLocaleString('th-TH')} รายการล่าสุด
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="truncate text-xs font-medium text-slate-500">
+              {contextualMetric.label}
+            </div>
+            <div className="mt-1.5 truncate font-mono text-2xl font-bold text-slate-900 tabular-nums">
+              {isLoading && !sheetData ? '...' : contextualMetric.value}
+            </div>
+            <div className="mt-1 truncate text-xs text-slate-500">
+              {contextualMetric.subtext}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-medium text-slate-500">
+              เวลาซิงค์ข้อมูลล่าสุด
+            </div>
+            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
+              {formattedFetchTime}
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+              <span>
+                {refreshIntervalSec > 0
+                  ? `ซิงค์อัตโนมัติทุก ${refreshIntervalSec} วินาที`
+                  : 'โหมดอัปเดตด้วยตนเอง'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Search & Filter Control Bar */}
+        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4">
+          <form
+            onSubmit={handleTriggerDeepSearch}
+            className="flex flex-col gap-3 lg:flex-row lg:items-center"
+          >
+            {/* Main Search Input */}
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={`พิมพ์คำค้นหาในตาราง ${activeTab.name} (เช่น เบอร์รถ, ชื่อพนักงาน, รหัส, สถานะ, วันที่)...`}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  aria-label="ล้างคำค้นหา"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Specific Column Filter Dropdown */}
+            <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                <label
+                  htmlFor="col-filter"
+                  className="text-xs font-medium text-slate-600 whitespace-nowrap"
+                >
+                  ค้นหาในคอลัมน์:
+                </label>
+                <select
+                  id="col-filter"
+                  value={selectedColumnId}
+                  onChange={(e) => setSelectedColumnId(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-slate-900 focus:outline-none"
+                >
+                  <option value="ALL">ทุกคอลัมน์ทั้งหมด</option>
+                  {sheetData?.columns.map((col) => (
+                    <option key={col.id} value={col.id}>
+                      {col.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Deep Search button when sheet has more rows than currently loaded */}
+              {sheetData && sheetData.totalRowsInSheet > rowLimit && (
+                <button
+                  type="submit"
+                  className="rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                >
+                  ค้นหาลึกทั้งชีต ({sheetData.totalRowsInSheet.toLocaleString('th-TH')} แถว)
+                </button>
+              )}
+
+              {(searchQuery !== '' ||
+                selectedColumnId !== 'ALL' ||
+                quickFilterValue !== 'ALL' ||
+                deepSearchTerm !== '') && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+                >
+                  ล้างตัวกรอง
+                </button>
+              )}
+            </div>
+          </form>
+
+          {/* Interactive Quick Filter Bar (if status/type column is present) */}
+          {quickFilterColumn && quickFilterOptions.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+              <span className="mr-1 text-xs font-medium text-slate-500 whitespace-nowrap">
+                กรองด่วน ({quickFilterColumn.label}):
+              </span>
+              <button
+                type="button"
+                onClick={() => setQuickFilterValue('ALL')}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  quickFilterValue === 'ALL'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+              >
+                ทั้งหมด
+              </button>
+              {quickFilterOptions.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() =>
+                    setQuickFilterValue((prev) => (prev === opt ? 'ALL' : opt))
+                  }
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    quickFilterValue === opt
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                  }`}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {deepSearchTerm && (
+            <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
+              <span>
+                กำลังแสดงผลการค้นหาลึกจากทั้งตารางสำหรับคำว่า:{' '}
+                <strong className="font-semibold text-slate-900">
+                  "{deepSearchTerm}"
+                </strong>
+              </span>
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="font-medium text-slate-900 underline hover:no-underline whitespace-nowrap shrink-0"
+              >
+                กลับไปดูข้อมูลล่าสุดตามปกติ
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Save Success Notification */}
+        {saveSuccessMsg && (
+          <div className="mt-5 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm text-emerald-900">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span className="font-medium">{saveSuccessMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSaveSuccessMsg(null)}
+              className="text-xs font-medium text-emerald-800 hover:underline"
+            >
+              ปิด
+            </button>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="mt-5 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+              <div>
+                <div className="font-semibold">ไม่สามารถดึงข้อมูลจาก Google Sheets ได้</div>
+                <div className="text-xs text-red-700">{error}</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadData({ silent: false })}
+              className="rounded-lg bg-red-700 px-3.5 py-2 text-xs font-medium text-white hover:bg-red-800 whitespace-nowrap shrink-0"
+            >
+              ลองใหม่อีกครั้ง
+            </button>
+          </div>
+        )}
+
+        {/* Main Data Table Card */}
+        <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
+                  <th className="w-20 px-4 py-3 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSort('__ROW__')}
+                      className="inline-flex items-center gap-1 hover:text-slate-900"
+                    >
+                      <span>แถวที่</span>
+                      {sortConfig?.colId === '__ROW__' ? (
+                        sortConfig.direction === 'asc' ? (
+                          <ArrowUp className="h-3.5 w-3.5 text-slate-900" />
+                        ) : (
+                          <ArrowDown className="h-3.5 w-3.5 text-slate-900" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                      )}
+                    </button>
+                  </th>
+                  {sheetData?.columns.map((col) => {
+                    const isSorted = sortConfig?.colId === col.id;
+                    const isNumeric = col.type === 'number';
+                    return (
+                      <th
+                        key={col.id}
+                        className={`px-4 py-3 whitespace-nowrap ${
+                          isNumeric ? 'text-right' : 'text-left'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSort(col.id)}
+                          className={`inline-flex items-center gap-1.5 hover:text-slate-900 ${
+                            isNumeric ? 'ml-auto flex-row-reverse' : ''
+                          }`}
+                        >
+                          <span>{col.label}</span>
+                          {isSorted ? (
+                            sortConfig.direction === 'asc' ? (
+                              <ArrowUp className="h-3.5 w-3.5 text-slate-900 shrink-0" />
+                            ) : (
+                              <ArrowDown className="h-3.5 w-3.5 text-slate-900 shrink-0" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="h-3 w-3 text-slate-400 shrink-0" />
+                          )}
+                        </button>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {isLoading && !sheetData ? (
+                  Array.from({ length: 10 }).map((_, idx) => (
+                    <tr key={idx} className="animate-pulse">
+                      <td className="px-4 py-3">
+                        <div className="h-4 w-12 rounded bg-slate-200" />
+                      </td>
+                      {Array.from({ length: 6 }).map((__, cIdx) => (
+                        <td key={cIdx} className="px-4 py-3">
+                          <div className="h-4 w-28 rounded bg-slate-200" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : paginatedRows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={(sheetData?.columns.length ?? 5) + 1}
+                      className="px-6 py-14 text-center"
+                    >
+                      <div className="mx-auto max-w-md">
+                        <div className="text-base font-semibold text-slate-900">
+                          ไม่พบรายการข้อมูลที่ตรงกับเงื่อนไขการค้นหา
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {searchQuery
+                            ? `ไม่พบข้อมูลที่มีคำว่า "${searchQuery}" ในชุดข้อมูลที่เลือก`
+                            : 'ไม่มีข้อมูลในตารางนี้'}
+                        </p>
+                        <div className="mt-4 flex items-center justify-center gap-2">
+                          {(searchQuery !== '' ||
+                            selectedColumnId !== 'ALL' ||
+                            quickFilterValue !== 'ALL' ||
+                            deepSearchTerm !== '') && (
+                            <button
+                              type="button"
+                              onClick={handleClearSearch}
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                            >
+                              ล้างคำค้นหาทั้งหมด
+                            </button>
+                          )}
+                          {searchQuery.trim() !== '' &&
+                            sheetData &&
+                            sheetData.totalRowsInSheet > rowLimit &&
+                            deepSearchTerm !== searchQuery.trim() && (
+                              <button
+                                type="button"
+                                onClick={handleTriggerDeepSearch}
+                                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+                              >
+                                ค้นหาลึกทั้งชีต ({sheetData.totalRowsInSheet.toLocaleString('th-TH')} แถว)
+                              </button>
+                            )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedRows.map((row) => (
+                    <tr
+                      key={row.rowNumber}
+                      onClick={() => setSelectedRow(row)}
+                      className="cursor-pointer transition-colors hover:bg-slate-50"
+                    >
+                      <td className="px-4 py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                        #{row.rowNumber.toLocaleString('th-TH')}
+                      </td>
+                      {sheetData?.columns.map((col) => {
+                        const val = row.values[col.id] ?? '';
+                        const isNumeric = col.type === 'number';
+                        const isMono =
+                          isNumeric ||
+                          col.type === 'date' ||
+                          col.type === 'datetime' ||
+                          col.type === 'timeofday';
+
+                        const isEditableGateCell =
+                          activeTab.gid === '1156877149' && col.id === 'C';
+                        const isEditingThisRow =
+                          isEditableGateCell && editingGateRowNumber === row.rowNumber;
+                        const isConfirmingThisRow =
+                          isEditableGateCell &&
+                          confirmingGateRowNumber === row.rowNumber;
+
+                        return (
+                          <td
+                            key={col.id}
+                            onClick={
+                              isEditableGateCell
+                                ? (e) => e.stopPropagation()
+                                : undefined
+                            }
+                            className={`px-4 py-2.5 text-slate-800 ${
+                              isEditableGateCell ? 'min-w-[240px]' : 'max-w-[260px] truncate'
+                            } ${isNumeric ? 'text-right' : 'text-left'} ${
+                              isMono ? 'font-mono text-xs tabular-nums' : 'text-sm'
+                            }`}
+                            title={!isEditableGateCell ? val : undefined}
+                          >
+                            {isEditableGateCell ? (
+                              isConfirmingThisRow ? (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-xs text-slate-700">
+                                    ยืนยันเปลี่ยนเป็น{' '}
+                                    <strong className="font-semibold text-slate-900">
+                                      {editingGateValue.trim()}
+                                    </strong>{' '}
+                                    และอัปเดตวันที่วันนี้?
+                                  </span>
+                                  <button
+                                    type="button"
+                                    disabled={isUpdatingGate}
+                                    onClick={() => handleConfirmGateUpdate(row)}
+                                    className="inline-flex items-center gap-1 rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                    <span>
+                                      {isUpdatingGate ? 'กำลังบันทึก...' : 'ยืนยัน'}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isUpdatingGate}
+                                    onClick={() => setConfirmingGateRowNumber(null)}
+                                    className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                  >
+                                    ย้อนกลับ
+                                  </button>
+                                </div>
+                              ) : isEditingThisRow ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    value={editingGateValue}
+                                    onChange={(e) => setEditingGateValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        if (
+                                          editingGateValue.trim() &&
+                                          editingGateValue.trim() !== val.trim()
+                                        ) {
+                                          setConfirmingGateRowNumber(row.rowNumber);
+                                        } else {
+                                          setEditingGateRowNumber(null);
+                                        }
+                                      } else if (e.key === 'Escape') {
+                                        setEditingGateRowNumber(null);
+                                        setConfirmingGateRowNumber(null);
+                                      }
+                                    }}
+                                    className="w-32 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (
+                                        editingGateValue.trim() &&
+                                        editingGateValue.trim() !== val.trim()
+                                      ) {
+                                        setConfirmingGateRowNumber(row.rowNumber);
+                                      } else {
+                                        setEditingGateRowNumber(null);
+                                      }
+                                    }}
+                                    className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+                                  >
+                                    บันทึก
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGateRowNumber(null);
+                                      setConfirmingGateRowNumber(null);
+                                    }}
+                                    className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 whitespace-nowrap shrink-0"
+                                  >
+                                    ยกเลิก
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between gap-2">
+                                  <span>{renderHighlightedText(val)}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGateRowNumber(row.rowNumber);
+                                      setEditingGateValue(val);
+                                      setConfirmingGateRowNumber(null);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                    <span>แก้ไข</span>
+                                  </button>
+                                </div>
+                              )
+                            ) : (
+                              renderHighlightedText(val)
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Footer */}
+          {sheetData && sortedRows.length > 0 && (
+            <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/50 px-5 py-3 sm:flex-row">
+              <div className="text-xs text-slate-600">
+                แสดงรายการที่{' '}
+                <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {((currentPage - 1) * PAGE_SIZE + 1).toLocaleString('th-TH')}
+                </span>{' '}
+                ถึง{' '}
+                <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {Math.min(currentPage * PAGE_SIZE, sortedRows.length).toLocaleString(
+                    'th-TH'
+                  )}
+                </span>{' '}
+                จากทั้งหมด{' '}
+                <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {sortedRows.length.toLocaleString('th-TH')}
+                </span>{' '}
+                รายการ
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>ก่อนหน้า</span>
+                </button>
+
+                <span className="px-2 font-mono text-xs font-medium text-slate-700 tabular-nums whitespace-nowrap">
+                  หน้า {currentPage.toLocaleString('th-TH')} /{' '}
+                  {totalPages.toLocaleString('th-TH')}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
+                >
+                  <span>ถัดไป</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        </main>
+      </div>
+
+      {/* Record Detail Modal */}
+      <RecordDetailModal
+        row={selectedRow}
+        columns={sheetData?.columns ?? []}
+        tabName={activeTab.name}
+        onClose={() => setSelectedRow(null)}
+      />
+
+      {/* Job Transfer Creation Modal */}
+      <JobTransferModal
+        isOpen={isJobModalOpen}
+        onClose={() => setIsJobModalOpen(false)}
+        existingRows={activeTab.gid === '606634465' ? sheetData?.rows ?? [] : []}
+        accessToken={authToken}
+        currentUser={authUser}
+        isLoggingIn={isLoggingIn}
+        onRequestLogin={handleRequestGoogleLogin}
+        onLogout={handleGoogleLogout}
+        onSavedSuccess={() => {
+          setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานลงฐานข้อมูล Google Sheets เรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* Delivery Point Creation Modal */}
+      <DeliveryPointModal
+        isOpen={isDeliveryPointModalOpen}
+        onClose={() => setIsDeliveryPointModalOpen(false)}
+        existingRows={activeTab.gid === '1156877149' ? sheetData?.rows ?? [] : []}
+        accessToken={authToken}
+        currentUser={authUser}
+        isLoggingIn={isLoggingIn}
+        onRequestLogin={handleRequestGoogleLogin}
+        onLogout={handleGoogleLogout}
+        onSavedSuccess={() => {
+          setSaveSuccessMsg('เพิ่มข้อมูลจุดส่งสินค้าลงฐานข้อมูล Google Sheets เรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+    </div>
+  );
+}
