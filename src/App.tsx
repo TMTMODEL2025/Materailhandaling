@@ -605,427 +605,369 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top Bar Contract: Breadcrumb on left, primary action on right */}
-        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3 min-w-0">
+        {/* Compact Sticky Top Bar */}
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6 sm:py-2.5 lg:px-8">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={() => setIsSidebarOpen(true)}
               aria-label="เปิดเมนู"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 lg:hidden shrink-0"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 lg:hidden shrink-0"
             >
               <Menu className="h-4 w-4" />
             </button>
-            <div className="flex items-center gap-2 text-sm text-slate-500 truncate">
-              <span className="hidden sm:inline">ฐานข้อมูล</span>
-              <span aria-hidden="true" className="hidden sm:inline">/</span>
-              <span className="hidden sm:inline">{activeTab.category}</span>
-              <span aria-hidden="true" className="hidden sm:inline">/</span>
-              <span className="font-semibold text-slate-900 truncate">
-                {activeTab.name}
-              </span>
-            </div>
+            <h1 className="text-sm font-bold text-slate-900 sm:text-base truncate">
+              {activeTab.name}
+            </h1>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {activeTab.gid === '606634465' && (
+              <button
+                type="button"
+                onClick={() => setIsJobModalOpen(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>บันทึกย้ายงาน</span>
+              </button>
+            )}
+
+            {activeTab.gid === '1156877149' && (
+              <button
+                type="button"
+                onClick={() => setIsDeliveryPointModalOpen(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>เพิ่มจุดส่งสินค้า</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => loadData({ silent: true })}
               disabled={isLoading || isRefreshing}
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+              title="ซิงค์ข้อมูลล่าสุด"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-60 whitespace-nowrap shrink-0"
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${
                   isLoading || isRefreshing ? 'animate-spin' : ''
                 }`}
               />
-              <span>ซิงค์ข้อมูลล่าสุด</span>
+              <span className="hidden sm:inline">ซิงค์ข้อมูล</span>
             </button>
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-          {/* Sheet Header & Metadata Row */}
-          <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span>Google Sheets Live Data</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono tabular-nums">ID: {GOOGLE_SHEET_ID}</span>
-                <span aria-hidden="true">·</span>
-                <span>หมวดหมู่: {activeTab.category}</span>
+        <main className="mx-auto w-full max-w-[1440px] px-2.5 py-2.5 sm:px-6 sm:py-4 lg:px-8">
+          {/* Compact KPI Summary Strip (2x2 on mobile, 4 cols on desktop, no verbose subtext) */}
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
+              <div className="truncate text-[11px] font-medium text-slate-500">
+                ทั้งหมดในชีต
               </div>
-              <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-                {activeTab.name}
-              </h1>
-              <p className="mt-1 text-sm text-slate-600">{activeTab.description}</p>
+              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                {isLoading && !sheetData
+                  ? '...'
+                  : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {activeTab.gid === '606634465' && (
-                <button
-                  type="button"
-                  onClick={() => setIsJobModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>บันทึกย้ายงาน</span>
-                </button>
-              )}
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
+              <div className="truncate text-[11px] font-medium text-slate-500">
+                แสดงผล
+              </div>
+              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                {isLoading && !sheetData
+                  ? '...'
+                  : sortedRows.length.toLocaleString('th-TH')}
+              </div>
+            </div>
 
-              {activeTab.gid === '1156877149' && (
-                <button
-                  type="button"
-                  onClick={() => setIsDeliveryPointModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>เพิ่มจุดส่งสินค้า</span>
-                </button>
-              )}
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
+              <div className="truncate text-[11px] font-medium text-slate-500">
+                {contextualMetric.label}
+              </div>
+              <div className="mt-0.5 truncate font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                {isLoading && !sheetData ? '...' : contextualMetric.value}
+              </div>
+            </div>
 
-              <div className="flex items-center gap-2 text-xs text-slate-600">
-                <label htmlFor="refresh-select" className="font-medium whitespace-nowrap">
-                  อัปเดตอัตโนมัติ:
-                </label>
-                <select
-                  id="refresh-select"
-                  value={refreshIntervalSec}
-                  onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
-                >
-                  <option value={15}>ทุก 15 วินาที</option>
-                  <option value={30}>ทุก 30 วินาที</option>
-                  <option value={60}>ทุก 60 วินาที</option>
-                  <option value={0}>ปิดอัตโนมัติ</option>
-                </select>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
+              <div className="truncate text-[11px] font-medium text-slate-500">
+                อัปเดตล่าสุด
+              </div>
+              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                {formattedFetchTime}
+              </div>
+            </div>
+          </div>
+
+          {/* Compact Search, Filter & Utility Bar */}
+          <div className="mt-2.5 rounded-lg border border-slate-200 bg-white p-2.5 sm:mt-3 sm:p-3">
+            <form
+              onSubmit={handleTriggerDeepSearch}
+              className="flex flex-col gap-2 lg:flex-row lg:items-center"
+            >
+              {/* Main Search Input */}
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={`ค้นหาใน ${activeTab.name}...`}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-8 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    aria-label="ล้างคำค้นหา"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-slate-600">
-                <label htmlFor="limit-select" className="font-medium whitespace-nowrap">
-                  จำนวนดึงข้อมูล:
-                </label>
+              {/* Controls Row */}
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                  <SlidersHorizontal className="h-3 w-3 text-slate-500 shrink-0" />
+                  <select
+                    id="col-filter"
+                    aria-label="ค้นหาในคอลัมน์"
+                    value={selectedColumnId}
+                    onChange={(e) => setSelectedColumnId(e.target.value)}
+                    className="bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
+                  >
+                    <option value="ALL">ทุกคอลัมน์</option>
+                    {sheetData?.columns.map((col) => (
+                      <option key={col.id} value={col.id}>
+                        {col.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <select
                   id="limit-select"
+                  aria-label="จำนวนดึงข้อมูล"
                   value={rowLimit}
                   onChange={(e) => setRowLimit(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
                 >
-                  <option value={100}>100 แถวล่าสุด</option>
-                  <option value={250}>250 แถวล่าสุด</option>
-                  <option value={500}>500 แถวล่าสุด</option>
-                  <option value={1000}>1,000 แถวล่าสุด</option>
+                  <option value={100}>100 แถว</option>
+                  <option value={250}>250 แถว</option>
+                  <option value={500}>500 แถว</option>
+                  <option value={1000}>1,000 แถว</option>
                 </select>
-              </div>
 
-              <button
-                type="button"
-                onClick={handleExportCsv}
-                disabled={!sheetData || sortedRows.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>ส่งออก CSV</span>
-              </button>
-
-              <a
-                href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-              >
-                <span>เปิดตารางต้นฉบับ</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </div>
-          </div>
-
-        {/* 4-Column KPI Summary Strip */}
-        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-medium text-slate-500">
-              ข้อมูลทั้งหมดในชีต ({activeTab.name})
-            </div>
-            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {isLoading && !sheetData
-                ? '...'
-                : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              รายการบันทึกสะสมใน Google Sheets
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-medium text-slate-500">
-              รายการที่แสดงผล / ค้นหาพบ
-            </div>
-            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {isLoading && !sheetData
-                ? '...'
-                : sortedRows.length.toLocaleString('th-TH')}
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              จากข้อมูลที่โหลดมา {(sheetData?.rows.length ?? 0).toLocaleString('th-TH')} รายการล่าสุด
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="truncate text-xs font-medium text-slate-500">
-              {contextualMetric.label}
-            </div>
-            <div className="mt-1.5 truncate font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {isLoading && !sheetData ? '...' : contextualMetric.value}
-            </div>
-            <div className="mt-1 truncate text-xs text-slate-500">
-              {contextualMetric.subtext}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-medium text-slate-500">
-              เวลาซิงค์ข้อมูลล่าสุด
-            </div>
-            <div className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {formattedFetchTime}
-            </div>
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-              <span>
-                {refreshIntervalSec > 0
-                  ? `ซิงค์อัตโนมัติทุก ${refreshIntervalSec} วินาที`
-                  : 'โหมดอัปเดตด้วยตนเอง'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Search & Filter Control Bar */}
-        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4">
-          <form
-            onSubmit={handleTriggerDeepSearch}
-            className="flex flex-col gap-3 lg:flex-row lg:items-center"
-          >
-            {/* Main Search Input */}
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={`พิมพ์คำค้นหาในตาราง ${activeTab.name} (เช่น เบอร์รถ, ชื่อพนักงาน, รหัส, สถานะ, วันที่)...`}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={handleClearSearch}
-                  aria-label="ล้างคำค้นหา"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Specific Column Filter Dropdown */}
-            <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                <label
-                  htmlFor="col-filter"
-                  className="text-xs font-medium text-slate-600 whitespace-nowrap"
-                >
-                  ค้นหาในคอลัมน์:
-                </label>
                 <select
-                  id="col-filter"
-                  value={selectedColumnId}
-                  onChange={(e) => setSelectedColumnId(e.target.value)}
-                  className="bg-transparent text-xs font-semibold text-slate-900 focus:outline-none"
+                  id="refresh-select"
+                  aria-label="อัปเดตอัตโนมัติ"
+                  value={refreshIntervalSec}
+                  onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
                 >
-                  <option value="ALL">ทุกคอลัมน์ทั้งหมด</option>
-                  {sheetData?.columns.map((col) => (
-                    <option key={col.id} value={col.id}>
-                      {col.label}
-                    </option>
-                  ))}
+                  <option value={15}>ซิงค์ 15วิ</option>
+                  <option value={30}>ซิงค์ 30วิ</option>
+                  <option value={60}>ซิงค์ 60วิ</option>
+                  <option value={0}>ปิดซิงค์</option>
                 </select>
+
+                {sheetData && sheetData.totalRowsInSheet > rowLimit && (
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                  >
+                    ค้นหาทั้งชีต
+                  </button>
+                )}
+
+                {(searchQuery !== '' ||
+                  selectedColumnId !== 'ALL' ||
+                  quickFilterValue !== 'ALL' ||
+                  deepSearchTerm !== '') && (
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+                  >
+                    ล้างกรอง
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  disabled={!sheetData || sortedRows.length === 0}
+                  title="ส่งออก CSV"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">CSV</span>
+                </button>
+
+                <a
+                  href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="เปิดตารางต้นฉบับ"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+                >
+                  <span className="hidden sm:inline">ชีตต้นฉบับ</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
               </div>
+            </form>
 
-              {/* Deep Search button when sheet has more rows than currently loaded */}
-              {sheetData && sheetData.totalRowsInSheet > rowLimit && (
-                <button
-                  type="submit"
-                  className="rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
-                >
-                  ค้นหาลึกทั้งชีต ({sheetData.totalRowsInSheet.toLocaleString('th-TH')} แถว)
-                </button>
-              )}
-
-              {(searchQuery !== '' ||
-                selectedColumnId !== 'ALL' ||
-                quickFilterValue !== 'ALL' ||
-                deepSearchTerm !== '') && (
+            {/* Compact Horizontal Scrollable Quick Filter Bar */}
+            {quickFilterColumn && quickFilterOptions.length > 0 && (
+              <div className="mt-2 flex items-center gap-1 overflow-x-auto border-t border-slate-100 pt-2 no-scrollbar">
                 <button
                   type="button"
-                  onClick={handleClearSearch}
-                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-                >
-                  ล้างตัวกรอง
-                </button>
-              )}
-            </div>
-          </form>
-
-          {/* Interactive Quick Filter Bar (if status/type column is present) */}
-          {quickFilterColumn && quickFilterOptions.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-              <span className="mr-1 text-xs font-medium text-slate-500 whitespace-nowrap">
-                กรองด่วน ({quickFilterColumn.label}):
-              </span>
-              <button
-                type="button"
-                onClick={() => setQuickFilterValue('ALL')}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  quickFilterValue === 'ALL'
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
-                }`}
-              >
-                ทั้งหมด
-              </button>
-              {quickFilterOptions.map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() =>
-                    setQuickFilterValue((prev) => (prev === opt ? 'ALL' : opt))
-                  }
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    quickFilterValue === opt
+                  onClick={() => setQuickFilterValue('ALL')}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    quickFilterValue === 'ALL'
                       ? 'bg-slate-900 text-white'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
                   }`}
                 >
-                  {opt}
+                  ทั้งหมด
                 </button>
-              ))}
-            </div>
-          )}
+                {quickFilterOptions.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() =>
+                      setQuickFilterValue((prev) => (prev === opt ? 'ALL' : opt))
+                    }
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                      quickFilterValue === opt
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            )}
 
-          {deepSearchTerm && (
-            <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
-              <span>
-                กำลังแสดงผลการค้นหาลึกจากทั้งตารางสำหรับคำว่า:{' '}
-                <strong className="font-semibold text-slate-900">
-                  "{deepSearchTerm}"
-                </strong>
-              </span>
+            {deepSearchTerm && (
+              <div className="mt-2 flex items-center justify-between rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700">
+                <span className="truncate">
+                  ค้นหาทั้งตาราง: <strong className="font-semibold text-slate-900">"{deepSearchTerm}"</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="ml-2 font-medium text-slate-900 underline hover:no-underline whitespace-nowrap shrink-0"
+                >
+                  ดูข้อมูลปกติ
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Save Success Notification */}
+          {saveSuccessMsg && (
+            <div className="mt-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
+              <div className="flex items-center gap-2 min-w-0">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span className="font-medium truncate">{saveSuccessMsg}</span>
+              </div>
               <button
                 type="button"
-                onClick={handleClearSearch}
-                className="font-medium text-slate-900 underline hover:no-underline whitespace-nowrap shrink-0"
+                onClick={() => setSaveSuccessMsg(null)}
+                className="ml-2 text-xs font-medium text-emerald-800 hover:underline shrink-0"
               >
-                กลับไปดูข้อมูลล่าสุดตามปกติ
+                ปิด
               </button>
             </div>
           )}
-        </div>
 
-        {/* Save Success Notification */}
-        {saveSuccessMsg && (
-          <div className="mt-5 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm text-emerald-900">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-              <span className="font-medium">{saveSuccessMsg}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSaveSuccessMsg(null)}
-              className="text-xs font-medium text-emerald-800 hover:underline"
-            >
-              ปิด
-            </button>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="mt-5 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
-              <div>
-                <div className="font-semibold">ไม่สามารถดึงข้อมูลจาก Google Sheets ได้</div>
-                <div className="text-xs text-red-700">{error}</div>
+          {/* Error State */}
+          {error && (
+            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-800">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-semibold">เกิดข้อผิดพลาด</div>
+                  <div className="break-words text-red-700">{error}</div>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => loadData({ silent: false })}
+                className="rounded-lg bg-red-700 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-red-800 whitespace-nowrap shrink-0"
+              >
+                ลองใหม่
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => loadData({ silent: false })}
-              className="rounded-lg bg-red-700 px-3.5 py-2 text-xs font-medium text-white hover:bg-red-800 whitespace-nowrap shrink-0"
-            >
-              ลองใหม่อีกครั้ง
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* Main Data Table Card */}
-        <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
-                  <th className="w-20 px-4 py-3 whitespace-nowrap">
-                    <button
-                      type="button"
-                      onClick={() => handleSort('__ROW__')}
-                      className="inline-flex items-center gap-1 hover:text-slate-900"
-                    >
-                      <span>แถวที่</span>
-                      {sortConfig?.colId === '__ROW__' ? (
-                        sortConfig.direction === 'asc' ? (
-                          <ArrowUp className="h-3.5 w-3.5 text-slate-900" />
-                        ) : (
-                          <ArrowDown className="h-3.5 w-3.5 text-slate-900" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 text-slate-400" />
-                      )}
-                    </button>
-                  </th>
-                  {sheetData?.columns.map((col) => {
-                    const isSorted = sortConfig?.colId === col.id;
-                    const isNumeric = col.type === 'number';
-                    return (
-                      <th
-                        key={col.id}
-                        className={`px-4 py-3 whitespace-nowrap ${
-                          isNumeric ? 'text-right' : 'text-left'
-                        }`}
+          {/* Main Data Table Card */}
+          <div className="mt-2.5 sm:mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
+                    <th className="w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => handleSort('__ROW__')}
+                        className="inline-flex items-center gap-1 hover:text-slate-900"
                       >
-                        <button
-                          type="button"
-                          onClick={() => handleSort(col.id)}
-                          className={`inline-flex items-center gap-1.5 hover:text-slate-900 ${
-                            isNumeric ? 'ml-auto flex-row-reverse' : ''
+                        <span>แถว</span>
+                        {sortConfig?.colId === '__ROW__' ? (
+                          sortConfig.direction === 'asc' ? (
+                            <ArrowUp className="h-3 w-3 text-slate-900" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3 text-slate-900" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        )}
+                      </button>
+                    </th>
+                    {sheetData?.columns.map((col) => {
+                      const isSorted = sortConfig?.colId === col.id;
+                      const isNumeric = col.type === 'number';
+                      return (
+                        <th
+                          key={col.id}
+                          className={`px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap ${
+                            isNumeric ? 'text-right' : 'text-left'
                           }`}
                         >
-                          <span>{col.label}</span>
-                          {isSorted ? (
-                            sortConfig.direction === 'asc' ? (
-                              <ArrowUp className="h-3.5 w-3.5 text-slate-900 shrink-0" />
+                          <button
+                            type="button"
+                            onClick={() => handleSort(col.id)}
+                            className={`inline-flex items-center gap-1 hover:text-slate-900 ${
+                              isNumeric ? 'ml-auto flex-row-reverse' : ''
+                            }`}
+                          >
+                            <span>{col.label}</span>
+                            {isSorted ? (
+                              sortConfig.direction === 'asc' ? (
+                                <ArrowUp className="h-3 w-3 text-slate-900 shrink-0" />
+                              ) : (
+                                <ArrowDown className="h-3 w-3 text-slate-900 shrink-0" />
+                              )
                             ) : (
-                              <ArrowDown className="h-3.5 w-3.5 text-slate-900 shrink-0" />
-                            )
-                          ) : (
-                            <ArrowUpDown className="h-3 w-3 text-slate-400 shrink-0" />
-                          )}
-                        </button>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
+                              <ArrowUpDown className="h-3 w-3 text-slate-400 shrink-0" />
+                            )}
+                          </button>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
 
               <tbody className="divide-y divide-slate-100 text-sm">
                 {isLoading && !sheetData ? (
@@ -1092,7 +1034,7 @@ export default function App() {
                       onClick={() => setSelectedRow(row)}
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >
-                      <td className="px-4 py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                      <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
                         #{row.rowNumber.toLocaleString('th-TH')}
                       </td>
                       {sheetData?.columns.map((col) => {
@@ -1133,16 +1075,16 @@ export default function App() {
                                 ? (e) => e.stopPropagation()
                                 : undefined
                             }
-                            className={`px-4 py-2.5 ${
+                            className={`px-2.5 py-2 sm:px-4 sm:py-2.5 ${
                               isOver20MinDuration
                                 ? 'bg-red-50 font-bold text-red-600'
                                 : 'text-slate-800'
                             } ${
                               isEditableInlineCell
-                                ? 'min-w-[240px]'
-                                : 'max-w-[260px] truncate'
+                                ? 'min-w-[200px] sm:min-w-[240px]'
+                                : 'max-w-[220px] sm:max-w-[260px] truncate'
                             } ${isNumeric ? 'text-right' : 'text-left'} ${
-                              isMono ? 'font-mono text-xs tabular-nums' : 'text-sm'
+                              isMono ? 'font-mono text-xs tabular-nums' : 'text-xs sm:text-sm'
                             }`}
                             title={!isEditableInlineCell ? val : undefined}
                           >
@@ -1150,19 +1092,17 @@ export default function App() {
                               isConfirmingThisRow ? (
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-xs text-slate-700">
-                                    ยืนยันบันทึกเป็น{' '}
+                                    ยืนยัน{' '}
                                     <strong className="font-semibold text-slate-900">
                                       {editingGateValue.trim() || '(ว่าง)'}
                                     </strong>
-                                    {isEditableGateCell
-                                      ? ' และอัปเดตวันที่วันนี้?'
-                                      : ' ?'}
+                                    ?
                                   </span>
                                   <button
                                     type="button"
                                     disabled={isUpdatingGate}
                                     onClick={() => handleConfirmGateUpdate(row)}
-                                    className="inline-flex items-center gap-1 rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                    className="inline-flex items-center gap-1 rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
                                   >
                                     <Check className="h-3 w-3" />
                                     <span>
@@ -1205,7 +1145,7 @@ export default function App() {
                                         setConfirmingGateRowNumber(null);
                                       }
                                     }}
-                                    className="w-36 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                                    className="w-32 sm:w-36 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
                                   />
                                   <button
                                     type="button"
@@ -1220,7 +1160,7 @@ export default function App() {
                                         setEditingGateRowNumber(null);
                                       }
                                     }}
-                                    className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+                                    className="rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
                                   >
                                     บันทึก
                                   </button>
@@ -1236,7 +1176,7 @@ export default function App() {
                                   </button>
                                 </div>
                               ) : (
-                                <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center justify-between gap-1.5">
                                   <span>{renderHighlightedText(val)}</span>
                                   <button
                                     type="button"
@@ -1245,9 +1185,9 @@ export default function App() {
                                       setEditingGateValue(val);
                                       setConfirmingGateRowNumber(null);
                                     }}
-                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0"
+                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0"
                                   >
-                                    <Pencil className="h-3 w-3" />
+                                    <Pencil className="h-2.5 w-2.5" />
                                     <span>แก้ไข</span>
                                   </button>
                                 </div>
@@ -1265,50 +1205,47 @@ export default function App() {
             </table>
           </div>
 
-          {/* Pagination Footer */}
+          {/* Compact Pagination Footer */}
           {sheetData && sortedRows.length > 0 && (
-            <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/50 px-5 py-3 sm:flex-row">
-              <div className="text-xs text-slate-600">
-                แสดงรายการที่{' '}
+            <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50/50 px-3 py-2 sm:px-5 sm:py-2.5">
+              <div className="text-[11px] sm:text-xs text-slate-600">
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
                   {((currentPage - 1) * PAGE_SIZE + 1).toLocaleString('th-TH')}
-                </span>{' '}
-                ถึง{' '}
+                </span>
+                –
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
                   {Math.min(currentPage * PAGE_SIZE, sortedRows.length).toLocaleString(
                     'th-TH'
                   )}
                 </span>{' '}
-                จากทั้งหมด{' '}
+                / {' '}
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
                   {sortedRows.length.toLocaleString('th-TH')}
-                </span>{' '}
-                รายการ
+                </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage <= 1}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
-                  <span>ก่อนหน้า</span>
+                  <span className="hidden sm:inline">ก่อนหน้า</span>
                 </button>
 
-                <span className="px-2 font-mono text-xs font-medium text-slate-700 tabular-nums whitespace-nowrap">
-                  หน้า {currentPage.toLocaleString('th-TH')} /{' '}
-                  {totalPages.toLocaleString('th-TH')}
+                <span className="px-1.5 font-mono text-xs font-medium text-slate-700 tabular-nums whitespace-nowrap">
+                  {currentPage.toLocaleString('th-TH')}/{totalPages.toLocaleString('th-TH')}
                 </span>
 
                 <button
                   type="button"
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage >= totalPages}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
-                  <span>ถัดไป</span>
+                  <span className="hidden sm:inline">ถัดไป</span>
                   <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               </div>

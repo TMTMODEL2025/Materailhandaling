@@ -356,40 +356,29 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-2 sm:p-4 backdrop-blur-xs"
       onClick={() => {
         if (!isSubmitting) onClose();
       }}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-slate-200 bg-white shadow-lg"
+        className="flex max-h-[94vh] w-full max-w-xl flex-col rounded-xl border border-slate-200 bg-white shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">
-              {flowStep === 'CONFIRM_START' && 'ยืนยันการเริ่มส่งสินค้า'}
-              {flowStep === 'IN_TRANSIT' && 'กำลังดำเนินการส่งสินค้า'}
-              {flowStep === 'CONFIRM_FINISH' && 'ยืนยันการจบงานส่งสินค้า'}
-              {flowStep === 'FORM' && 'บันทึกการย้ายงานใหม่'}
-            </h2>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-              <span>ตาราง บันทึกการย้ายงาน</span>
-              <span aria-hidden="true">·</span>
-              <span>
-                {flowStep === 'IN_TRANSIT' || flowStep === 'CONFIRM_FINISH'
-                  ? 'ขั้นตอนที่ 2: ถึงที่หมายแล้วกดปุ่ม จบ'
-                  : 'ขั้นตอนที่ 1: ระบุข้อมูลและกดปุ่ม เริ่มส่งสินค้า'}
-              </span>
-            </div>
-          </div>
+        {/* Compact Modal Header (no instructional subtitle) */}
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 sm:px-5 sm:py-3.5">
+          <h2 className="text-sm font-bold text-slate-900 sm:text-base">
+            {flowStep === 'CONFIRM_START' && 'ยืนยันเริ่มส่งสินค้า'}
+            {flowStep === 'IN_TRANSIT' && 'กำลังส่งสินค้า'}
+            {flowStep === 'CONFIRM_FINISH' && 'ยืนยันจบงานส่งสินค้า'}
+            {flowStep === 'FORM' && 'บันทึกการย้ายงาน'}
+          </h2>
           <button
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
             aria-label="ปิดหน้าต่าง"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
           >
             <X className="h-4 w-4" />
           </button>
@@ -397,7 +386,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
         {/* Error Banner */}
         {submitError && (
-          <div className="mx-6 mt-4 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+          <div className="mx-4 mt-2.5 sm:mx-5 sm:mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
             <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
             <span>{submitError}</span>
           </div>
@@ -405,44 +394,30 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
         {/* STEP: CONFIRM_START */}
         {flowStep === 'CONFIRM_START' && (
-          <div className="overflow-y-auto px-6 py-5">
-            <p className="text-sm text-slate-700">
-              ตรวจสอบข้อมูลก่อนกดยืนยันเพื่อ{' '}
-              <strong className="font-semibold text-slate-900">เริ่มส่งสินค้า</strong>{' '}
-              (ระบบจะบันทึกเวลาเริ่มและสถานะ{' '}
-              <span className="font-semibold text-amber-700">อยู่ระว่างการส่ง</span>{' '}
-              ลงในฐานข้อมูล):
-            </p>
-
-            <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-2 text-sm">
+          <div className="overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-1.5 text-xs sm:text-sm">
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">วันที่ / เวลาเริ่ม</span>
+                <span className="text-slate-500">วันที่ / เวลาเริ่ม</span>
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
                   {date} · {pendingStartTime}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  รหัสพนักงาน / ชื่อพนักงานขับรถ
-                </span>
+                <span className="text-slate-500">พนักงานขับรถ</span>
                 <span className="font-semibold text-slate-900">
                   {employeeId ? `${employeeId} · ` : ''}
                   {driverName || '-'}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  เบอร์รถ / เบอร์หาง
-                </span>
+                <span className="text-slate-500">เบอร์รถ / เบอร์หาง</span>
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
                   {vehicleNumber}
                   {trailerNumber ? ` / ${trailerNumber}` : ''}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  ประเภทสินค้า / น้ำหนัก
-                </span>
+                <span className="text-slate-500">สินค้า / น้ำหนัก</span>
                 <span className="font-semibold text-slate-900">
                   {productType} ·{' '}
                   <span className="font-mono tabular-nums">
@@ -451,92 +426,88 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  ต้นทาง → ปลายทาง
-                </span>
+                <span className="text-slate-500">ต้นทาง → ปลายทาง</span>
                 <span className="font-semibold text-slate-900">
                   {origin} → {destination}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  สถานะเริ่มต้น
-                </span>
+                <span className="text-slate-500">สถานะ</span>
                 <span className="font-semibold text-amber-700">อยู่ระว่างการส่ง</span>
               </div>
             </div>
 
-            <div className="mt-6 flex items-center justify-end gap-3">
+            <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setFlowStep('FORM')}
                 disabled={isSubmitting}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
+                className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
               >
-                กลับไปแก้ไข
+                แก้ไข
               </button>
               <button
                 type="button"
                 onClick={handleConfirmStartDelivery}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
                 <span>
-                  {isSubmitting ? 'กำลังบันทึกเริ่มส่งสินค้า...' : 'ยืนยันเริ่มส่งสินค้า'}
+                  {isSubmitting ? 'กำลังบันทึก...' : 'ยืนยันเริ่มส่งสินค้า'}
                 </span>
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP: IN_TRANSIT (Waiting for driver to arrive at destination and press "จบ") */}
+        {/* STEP: IN_TRANSIT */}
         {flowStep === 'IN_TRANSIT' && activeJob && (
-          <div className="overflow-y-auto px-6 py-5">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <div className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-white shrink-0">
-                    <Truck className="h-5 w-5" />
+          <div className="overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white shrink-0">
+                    <Truck className="h-4 w-4" />
                   </div>
-                  <div>
-                    <div className="text-xs font-medium text-amber-700">
-                      สถานะปัจจุบัน: อยู่ระว่างการส่ง
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium text-amber-700">
+                      อยู่ระว่างการส่ง
                     </div>
-                    <div className="text-base font-bold text-slate-900">
+                    <div className="text-sm font-bold text-slate-900 sm:text-base truncate">
                       {activeJob.origin} → {activeJob.destination}
                     </div>
                   </div>
                 </div>
 
-                <div className="text-left sm:text-right">
-                  <div className="text-xs font-medium text-slate-500">
-                    เวลาที่ใช้ขณะนี้
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] font-medium text-slate-500">
+                    เวลาที่ใช้
                   </div>
-                  <div className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
+                  <div className="font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
                     {liveElapsedDuration}
                   </div>
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+              <div className="mt-3 grid grid-cols-2 gap-2.5 text-xs sm:text-sm">
                 <div>
-                  <span className="text-xs text-slate-500">พนักงานขับรถ:</span>
-                  <div className="font-semibold text-slate-900">
+                  <span className="text-[11px] text-slate-500">พนักงานขับรถ</span>
+                  <div className="font-semibold text-slate-900 truncate">
                     {activeJob.employeeId ? `${activeJob.employeeId} · ` : ''}
                     {activeJob.driverName}
                   </div>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-500">เบอร์รถ / เบอร์หาง:</span>
+                  <span className="text-[11px] text-slate-500">เบอร์รถ / หาง</span>
                   <div className="font-mono font-semibold text-slate-900 tabular-nums">
                     {activeJob.vehicleNumber}
                     {activeJob.trailerNumber ? ` / ${activeJob.trailerNumber}` : ''}
                   </div>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-500">ประเภทสินค้า / น้ำหนัก:</span>
-                  <div className="font-semibold text-slate-900">
+                  <span className="text-[11px] text-slate-500">สินค้า / น้ำหนัก</span>
+                  <div className="font-semibold text-slate-900 truncate">
                     {activeJob.productType} ·{' '}
                     <span className="font-mono tabular-nums">
                       {activeJob.weight.toLocaleString('th-TH')} กก.
@@ -544,15 +515,15 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   </div>
                 </div>
                 <div>
-                  <span className="text-xs text-slate-500">เวลาเริ่มส่งสินค้า:</span>
+                  <span className="text-[11px] text-slate-500">เวลาเริ่ม</span>
                   <div className="font-mono font-semibold text-slate-900 tabular-nums">
-                    {activeJob.date} เวลา {activeJob.startTime}
+                    {activeJob.startTime}
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 flex flex-col-reverse items-stretch justify-between gap-3 sm:flex-row sm:items-center">
+            <div className="mt-4 flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -560,19 +531,19 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   setFlowStep('FORM');
                 }}
                 disabled={isSubmitting}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
               >
-                สร้างรายการส่งสินค้าใหม่
+                สร้างรายการใหม่
               </button>
 
               <button
                 type="button"
                 onClick={handleInitiateFinishDelivery}
                 disabled={isSubmitting}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+                className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap"
               >
-                <Square className="h-4 w-4 fill-current" />
-                <span>ถึงที่หมายแล้ว · กดปุ่ม จบ</span>
+                <Square className="h-3.5 w-3.5 fill-current" />
+                <span>จบงานส่งสินค้า</span>
               </button>
             </div>
           </div>
@@ -580,68 +551,46 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
         {/* STEP: CONFIRM_FINISH */}
         {flowStep === 'CONFIRM_FINISH' && activeJob && (
-          <div className="overflow-y-auto px-6 py-5">
-            <p className="text-sm text-slate-700">
-              ยืนยันการ{' '}
-              <strong className="font-semibold text-slate-900">จบงานส่งสินค้า</strong>{' '}
-              เมื่อถึงที่หมายเรียบร้อยแล้ว (ระบบจะบันทึกเวลาจบ เวลาที่ใช้ และอัปเดตสถานะเป็น{' '}
-              <span className="font-semibold text-emerald-700">
-                ส่งสินค้าเรียบร้อยแล้ว
-              </span>
-              ):
-            </p>
-
-            <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-2 text-sm">
+          <div className="overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-1.5 text-xs sm:text-sm">
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  พนักงานขับรถ / เบอร์รถ
-                </span>
+                <span className="text-slate-500">พนักงาน / เบอร์รถ</span>
                 <span className="font-semibold text-slate-900">
                   {activeJob.driverName} ({activeJob.vehicleNumber})
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  เส้นทางขนส่ง
-                </span>
+                <span className="text-slate-500">เส้นทาง</span>
                 <span className="font-semibold text-slate-900">
                   {activeJob.origin} → {activeJob.destination}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">เวลาเริ่ม</span>
-                <span className="font-mono text-slate-900 tabular-nums">
-                  {activeJob.startTime}
-                </span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">เวลาจบ</span>
+                <span className="text-slate-500">เวลาเริ่ม → เวลาจบ</span>
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                  {pendingEndTime}
+                  {activeJob.startTime} → {pendingEndTime}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">เวลาที่ใช้</span>
+                <span className="text-slate-500">เวลาที่ใช้</span>
                 <span className="font-mono font-bold text-slate-900 tabular-nums">
                   {finalConfirmedDuration}
                 </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-xs font-medium text-slate-500">
-                  สถานะหลังกดจบ
-                </span>
+                <span className="text-slate-500">สถานะ</span>
                 <span className="font-semibold text-emerald-700">
                   ส่งสินค้าเรียบร้อยแล้ว
                 </span>
               </div>
             </div>
 
-            <div className="mt-6 flex items-center justify-end gap-3">
+            <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setFlowStep('IN_TRANSIT')}
                 disabled={isSubmitting}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
+                className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
               >
                 ย้อนกลับ
               </button>
@@ -649,42 +598,42 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                 type="button"
                 onClick={handleConfirmFinishDelivery}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-6 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-5 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap shrink-0"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
                 <span>
-                  {isSubmitting ? 'กำลังบันทึกจบงาน...' : 'ยืนยันจบงานส่งสินค้า'}
+                  {isSubmitting ? 'กำลังบันทึก...' : 'ยืนยันจบงาน'}
                 </span>
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP: FORM (Fill details -> click "เริ่มส่งสินค้า") */}
+        {/* STEP: FORM (Compact 2-column grid even on mobile for fast field entry) */}
         {flowStep === 'FORM' && (
           <form
             onSubmit={handleInitiateStartDelivery}
-            className="overflow-y-auto px-6 py-4"
+            className="overflow-y-auto px-4 py-3 sm:px-5 sm:py-4"
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
               {/* วันที่ */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  วันที่ (ว/ด/พ.ศ.) <span className="text-red-600">*</span>
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  วันที่ <span className="text-red-600">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  placeholder="เช่น 5/11/2569"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  placeholder="5/11/2569"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
               </div>
 
               {/* จำนวนรอบ */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   จำนวนรอบ
                 </label>
                 <input
@@ -693,13 +642,13 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   required
                   value={rounds}
                   onChange={(e) => setRounds(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
               </div>
 
               {/* รหัสพนักงาน */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   รหัสพนักงาน
                 </label>
                 <input
@@ -707,8 +656,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-employees"
                   value={employeeId}
                   onChange={(e) => handleEmployeeIdChange(e.target.value)}
-                  placeholder="พิมพ์หรือเลือกรหัสพนักงาน"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  placeholder="รหัสพนักงาน"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-employees">
                   {referenceOptions.employees.map((emp) => {
@@ -726,7 +675,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* ชื่อพนักงานขับรถ */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   ชื่อพนักงานขับรถ <span className="text-red-600">*</span>
                 </label>
                 <input
@@ -735,8 +684,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-drivers"
                   value={driverName}
                   onChange={(e) => handleDriverNameChange(e.target.value)}
-                  placeholder="พิมพ์หรือเลือกชื่อพนักงานขับรถ"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                  placeholder="ชื่อพนักงาน"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-drivers">
                   {referenceOptions.drivers.map((drv) => {
@@ -754,7 +703,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* เบอร์รถ */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   เบอร์รถ <span className="text-red-600">*</span>
                 </label>
                 <input
@@ -763,8 +712,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-vehicles"
                   value={vehicleNumber}
                   onChange={(e) => setVehicleNumber(e.target.value)}
-                  placeholder="เช่น TT-20, FL-10"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  placeholder="TT-20, FL-10"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-vehicles">
                   {referenceOptions.vehicles.map((v) => (
@@ -775,16 +724,16 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* เบอร์หาง */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  เบอร์หาง (ถ้ามี)
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  เบอร์หาง
                 </label>
                 <input
                   type="text"
                   list="datalist-trailers"
                   value={trailerNumber}
                   onChange={(e) => setTrailerNumber(e.target.value)}
-                  placeholder="เช่น TTL-60 หรือเว้นว่าง"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  placeholder="TTL-60"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-trailers">
                   {referenceOptions.trailers.map((t) => (
@@ -795,7 +744,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* ประเภทสินค้า */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   ประเภทสินค้า <span className="text-red-600">*</span>
                 </label>
                 <input
@@ -804,8 +753,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-products"
                   value={productType}
                   onChange={(e) => setProductType(e.target.value)}
-                  placeholder="เลือกหรือพิมพ์ประเภทสินค้า"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                  placeholder="ประเภทสินค้า"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-products">
                   {referenceOptions.products.map((p) => (
@@ -816,8 +765,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* น้ำหนัก (กก.) */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  น้ำหนัก (กิโลกรัม) <span className="text-red-600">*</span>
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  น้ำหนัก (กก.) <span className="text-red-600">*</span>
                 </label>
                 <input
                   type="number"
@@ -826,13 +775,13 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   required
                   value={weight}
                   onChange={(e) => setWeight(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
                 />
               </div>
 
               {/* ต้นทาง */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   ต้นทาง <span className="text-red-600">*</span>
                 </label>
                 <input
@@ -841,8 +790,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-origins"
                   value={origin}
                   onChange={(e) => setOrigin(e.target.value)}
-                  placeholder="เช่น FAC H, FAC E"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                  placeholder="FAC H, FAC E"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-origins">
                   {referenceOptions.origins.map((o) => (
@@ -853,7 +802,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
               {/* ปลายทาง */}
               <div>
-                <label className="block text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                   ปลายทาง <span className="text-red-600">*</span>
                 </label>
                 <input
@@ -862,8 +811,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                   list="datalist-destinations"
                   value={destination}
                   onChange={(e) => setDestination(e.target.value)}
-                  placeholder="เช่น FAC E, FAC G"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                  placeholder="FAC E, FAC G"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
                 <datalist id="datalist-destinations">
                   {referenceOptions.destinations.map((d) => (
@@ -873,31 +822,31 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               </div>
 
               {/* หมายเหตุ */}
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-slate-700">
-                  หมายเหตุเพิ่มเติม
+              <div className="col-span-2">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  หมายเหตุ
                 </label>
                 <input
                   type="text"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="ระบุหมายเหตุ (ถ้ามี)"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                  placeholder="หมายเหตุ (ถ้ามี)"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
+            <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+                className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
               >
                 ยกเลิก
               </button>
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
                 <span>เริ่มส่งสินค้า</span>
