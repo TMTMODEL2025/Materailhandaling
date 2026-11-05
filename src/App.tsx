@@ -24,6 +24,7 @@ import {
   fetchSheetTabData,
   updateDeliveryPointGate,
   updateVehicleRegistration,
+  updateJobTransferNote,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -31,6 +32,22 @@ import { JobTransferModal } from './components/JobTransferModal';
 import { DeliveryPointModal } from './components/DeliveryPointModal';
 
 const PAGE_SIZE = 50;
+
+function isDurationExceeding20Minutes(val: string): boolean {
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  const parts = trimmed.split(':').map((p) => Number(p));
+  if (parts.some((n) => Number.isNaN(n))) return false;
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts;
+    return hours * 3600 + minutes * 60 + seconds > 20 * 60;
+  }
+  if (parts.length === 2) {
+    const [minutes, seconds] = parts;
+    return minutes * 60 + seconds > 20 * 60;
+  }
+  return false;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
@@ -151,11 +168,14 @@ export default function App() {
   const handleConfirmGateUpdate = async (row: SheetRow) => {
     const newValue = editingGateValue.trim();
     const isVehicleTab = activeTab.gid === '378250263';
+    const isJobTransferTab = activeTab.gid === '606634465';
     const oldValue = isVehicleTab
       ? (row.values['A'] ?? '').trim()
-      : (row.values['C'] ?? '').trim();
+      : isJobTransferTab
+        ? (row.values['N'] ?? '').trim()
+        : (row.values['C'] ?? '').trim();
 
-    if (!newValue) return;
+    if (!isJobTransferTab && !newValue) return;
     if (newValue === oldValue) {
       setEditingGateRowNumber(null);
       setConfirmingGateRowNumber(null);
@@ -166,7 +186,29 @@ export default function App() {
     setError(null);
 
     try {
-      if (isVehicleTab) {
+      if (isJobTransferTab) {
+        const date = (row.values['A'] ?? '').trim();
+        const driverName = (row.values['C'] ?? '').trim();
+        const vehicleNumber = (row.values['D'] ?? '').trim();
+        const startTime = (row.values['I'] ?? '').trim();
+
+        await updateJobTransferNote({
+          rowNumber: row.rowNumber,
+          date,
+          driverName,
+          vehicleNumber,
+          startTime,
+          note: newValue,
+        });
+
+        setEditingGateRowNumber(null);
+        setConfirmingGateRowNumber(null);
+        setSaveSuccessMsg(
+          newValue
+            ? `บันทึกหมายเหตุ "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+            : `ล้างหมายเหตุของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+        );
+      } else if (isVehicleTab) {
         const driverName = (row.values['I'] ?? '').trim();
         const shift = (row.values['L'] ?? '').trim();
 
@@ -1066,14 +1108,22 @@ export default function App() {
                           activeTab.gid === '1156877149' && col.id === 'C';
                         const isEditableVehicleRegCell =
                           activeTab.gid === '378250263' && col.id === 'A';
+                        const isEditableJobNoteCell =
+                          activeTab.gid === '606634465' && col.id === 'N';
                         const isEditableInlineCell =
-                          isEditableGateCell || isEditableVehicleRegCell;
+                          isEditableGateCell ||
+                          isEditableVehicleRegCell ||
+                          isEditableJobNoteCell;
                         const isEditingThisRow =
                           isEditableInlineCell &&
                           editingGateRowNumber === row.rowNumber;
                         const isConfirmingThisRow =
                           isEditableInlineCell &&
                           confirmingGateRowNumber === row.rowNumber;
+                        const isOver20MinDuration =
+                          activeTab.gid === '606634465' &&
+                          (col.id === 'L' || col.label === 'เวลาที่ใช้') &&
+                          isDurationExceeding20Minutes(val);
 
                         return (
                           <td
@@ -1083,7 +1133,11 @@ export default function App() {
                                 ? (e) => e.stopPropagation()
                                 : undefined
                             }
-                            className={`px-4 py-2.5 text-slate-800 ${
+                            className={`px-4 py-2.5 ${
+                              isOver20MinDuration
+                                ? 'bg-red-50 font-bold text-red-600'
+                                : 'text-slate-800'
+                            } ${
                               isEditableInlineCell
                                 ? 'min-w-[240px]'
                                 : 'max-w-[260px] truncate'
@@ -1096,9 +1150,9 @@ export default function App() {
                               isConfirmingThisRow ? (
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-xs text-slate-700">
-                                    ยืนยันเปลี่ยนเป็น{' '}
+                                    ยืนยันบันทึกเป็น{' '}
                                     <strong className="font-semibold text-slate-900">
-                                      {editingGateValue.trim()}
+                                      {editingGateValue.trim() || '(ว่าง)'}
                                     </strong>
                                     {isEditableGateCell
                                       ? ' และอัปเดตวันที่วันนี้?'
@@ -1131,11 +1185,15 @@ export default function App() {
                                     autoFocus
                                     value={editingGateValue}
                                     onChange={(e) => setEditingGateValue(e.target.value)}
+                                    placeholder={
+                                      isEditableJobNoteCell ? 'พิมพ์หมายเหตุ...' : undefined
+                                    }
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
                                         e.preventDefault();
                                         if (
-                                          editingGateValue.trim() &&
+                                          (isEditableJobNoteCell ||
+                                            editingGateValue.trim()) &&
                                           editingGateValue.trim() !== val.trim()
                                         ) {
                                           setConfirmingGateRowNumber(row.rowNumber);
@@ -1147,13 +1205,14 @@ export default function App() {
                                         setConfirmingGateRowNumber(null);
                                       }
                                     }}
-                                    className="w-32 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                                    className="w-36 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => {
                                       if (
-                                        editingGateValue.trim() &&
+                                        (isEditableJobNoteCell ||
+                                          editingGateValue.trim()) &&
                                         editingGateValue.trim() !== val.trim()
                                       ) {
                                         setConfirmingGateRowNumber(row.rowNumber);

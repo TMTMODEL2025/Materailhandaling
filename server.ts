@@ -13,6 +13,7 @@ interface StoredJobTransfer {
   rowNumber: number;
   values: Record<string, string>;
   createdAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredDeliveryPoint {
@@ -20,6 +21,7 @@ interface StoredDeliveryPoint {
   rowNumber: number;
   values: Record<string, string>;
   createdAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredDeliveryPointEdit {
@@ -38,11 +40,24 @@ interface StoredVehicleRegEdit {
   updatedAt: string;
 }
 
+interface StoredJobTransferNoteEdit {
+  rowNumber: number;
+  date: string;
+  driverName: string;
+  vehicleNumber: string;
+  startTime: string;
+  note: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
   deliveryPointEdits: StoredDeliveryPointEdit[];
   vehicleRegEdits: StoredVehicleRegEdit[];
+  jobTransferNoteEdits: StoredJobTransferNoteEdit[];
+  googleAccessToken?: string;
+  googleTokenExpiresAt?: number;
 }
 
 function readStore(): MutationsStore {
@@ -59,6 +74,17 @@ function readStore(): MutationsStore {
         vehicleRegEdits: Array.isArray(parsed.vehicleRegEdits)
           ? parsed.vehicleRegEdits
           : [],
+        jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
+          ? parsed.jobTransferNoteEdits
+          : [],
+        googleAccessToken:
+          typeof parsed.googleAccessToken === 'string'
+            ? parsed.googleAccessToken
+            : undefined,
+        googleTokenExpiresAt:
+          typeof parsed.googleTokenExpiresAt === 'number'
+            ? parsed.googleTokenExpiresAt
+            : undefined,
       };
     }
   } catch (err) {
@@ -69,6 +95,7 @@ function readStore(): MutationsStore {
     deliveryPoints: [],
     deliveryPointEdits: [],
     vehicleRegEdits: [],
+    jobTransferNoteEdits: [],
   };
 }
 
@@ -87,6 +114,52 @@ async function startServer() {
   app.get('/api/mutations', (_req, res) => {
     const store = readStore();
     res.json(store);
+  });
+
+  app.get('/api/google-token', (_req, res) => {
+    const store = readStore();
+    if (
+      store.googleAccessToken &&
+      store.googleTokenExpiresAt &&
+      store.googleTokenExpiresAt > Date.now() + 30000
+    ) {
+      res.json({
+        accessToken: store.googleAccessToken,
+        expiresAt: store.googleTokenExpiresAt,
+      });
+      return;
+    }
+    res.json({ accessToken: null, expiresAt: 0 });
+  });
+
+  app.post('/api/google-token', (req, res) => {
+    const store = readStore();
+    const { accessToken, expiresInSec } = req.body ?? {};
+    if (typeof accessToken === 'string' && accessToken.trim()) {
+      const ttl =
+        typeof expiresInSec === 'number' && expiresInSec > 0 ? expiresInSec : 3500;
+      store.googleAccessToken = accessToken.trim();
+      store.googleTokenExpiresAt = Date.now() + ttl * 1000;
+      writeStore(store);
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/mutations/mark-synced', (req, res) => {
+    const store = readStore();
+    const { recordId, sheetRowNumber } = req.body ?? {};
+    if (typeof recordId === 'string') {
+      for (const jt of store.jobTransfers) {
+        if (jt.recordId === recordId) {
+          jt.syncedToSheet = true;
+          if (typeof sheetRowNumber === 'number' && sheetRowNumber > 0) {
+            jt.rowNumber = sheetRowNumber;
+          }
+        }
+      }
+      writeStore(store);
+    }
+    res.json({ ok: true });
   });
 
   app.post('/api/mutations/job-transfer', (req, res) => {
@@ -238,6 +311,57 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true });
+  });
+
+  app.put('/api/mutations/job-transfer-note', (req, res) => {
+    const store = readStore();
+    const { rowNumber, date, driverName, vehicleNumber, startTime, note } =
+      req.body ?? {};
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const dt = String(date ?? '').trim();
+    const drv = String(driverName ?? '').trim();
+    const veh = String(vehicleNumber ?? '').trim();
+    const st = String(startTime ?? '').trim();
+    const nt = String(note ?? '').trim();
+
+    for (const jt of store.jobTransfers) {
+      if (
+        (jt.values['A'] ?? '').trim() === dt &&
+        (jt.values['C'] ?? '').trim() === drv &&
+        (jt.values['D'] ?? '').trim() === veh &&
+        (jt.values['I'] ?? '').trim() === st
+      ) {
+        jt.values['N'] = nt;
+        jt.values['R'] = nt;
+      }
+    }
+
+    const existingIdx = store.jobTransferNoteEdits.findIndex(
+      (e) =>
+        e.date === dt &&
+        e.driverName === drv &&
+        e.vehicleNumber === veh &&
+        e.startTime === st
+    );
+
+    const editEntry: StoredJobTransferNoteEdit = {
+      rowNumber: rn,
+      date: dt,
+      driverName: drv,
+      vehicleNumber: veh,
+      startTime: st,
+      note: nt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.jobTransferNoteEdits[existingIdx] = editEntry;
+    } else {
+      store.jobTransferNoteEdits.push(editEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, edit: editEntry });
   });
 
   const isProd = process.env.NODE_ENV === 'production';
