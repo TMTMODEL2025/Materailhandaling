@@ -91,6 +91,96 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
   },
 };
 
+const LOCAL_STORAGE_KEY = 'tmt_sheet_mutations_v1';
+
+interface StoredJobTransfer {
+  recordId: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  createdAt: string;
+}
+
+interface StoredDeliveryPoint {
+  id: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  createdAt: string;
+}
+
+interface StoredDeliveryPointEdit {
+  deliveryPoint: string;
+  oldGate: string;
+  newGate: string;
+  updatedDate: string;
+  updatedAt: string;
+}
+
+interface StoredVehicleRegEdit {
+  oldRegistration: string;
+  newRegistration: string;
+  driverName: string;
+  shift: string;
+  updatedAt: string;
+}
+
+interface MutationsStore {
+  jobTransfers: StoredJobTransfer[];
+  deliveryPoints: StoredDeliveryPoint[];
+  deliveryPointEdits: StoredDeliveryPointEdit[];
+  vehicleRegEdits: StoredVehicleRegEdit[];
+}
+
+function getLocalMutations(): MutationsStore {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<MutationsStore>;
+      return {
+        jobTransfers: Array.isArray(parsed.jobTransfers) ? parsed.jobTransfers : [],
+        deliveryPoints: Array.isArray(parsed.deliveryPoints)
+          ? parsed.deliveryPoints
+          : [],
+        deliveryPointEdits: Array.isArray(parsed.deliveryPointEdits)
+          ? parsed.deliveryPointEdits
+          : [],
+        vehicleRegEdits: Array.isArray(parsed.vehicleRegEdits)
+          ? parsed.vehicleRegEdits
+          : [],
+      };
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return {
+    jobTransfers: [],
+    deliveryPoints: [],
+    deliveryPointEdits: [],
+    vehicleRegEdits: [],
+  };
+}
+
+function saveLocalMutations(store: MutationsStore): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function fetchMutationsStore(signal?: AbortSignal): Promise<MutationsStore> {
+  try {
+    const res = await fetch('/api/mutations', { signal });
+    if (res.ok) {
+      const data = (await res.json()) as MutationsStore;
+      saveLocalMutations(data);
+      return data;
+    }
+  } catch {
+    // fallback to localStorage if offline or static
+  }
+  return getLocalMutations();
+}
+
 interface GvizCell {
   v?: string | number | boolean | null;
   f?: string | null;
@@ -147,7 +237,11 @@ function formatGvizCellValue(cell: GvizCell | null | undefined): string {
   return raw;
 }
 
-async function queryGviz(gid: string, tq: string, signal?: AbortSignal): Promise<GvizResponse> {
+async function queryGviz(
+  gid: string,
+  tq: string,
+  signal?: AbortSignal
+): Promise<GvizResponse> {
   const params = new URLSearchParams({
     tqx: 'out:json',
     gid,
@@ -163,7 +257,10 @@ async function queryGviz(gid: string, tq: string, signal?: AbortSignal): Promise
   return parseGvizJson(text);
 }
 
-export async function fetchSheetRowCount(gid: string, signal?: AbortSignal): Promise<number> {
+export async function fetchSheetRowCount(
+  gid: string,
+  signal?: AbortSignal
+): Promise<number> {
   try {
     const res = await queryGviz(gid, 'select count(A)', signal);
     const val = res.table?.rows?.[0]?.c?.[0]?.v;
@@ -184,7 +281,10 @@ export async function fetchSheetTabData(
   const limit = options?.limit ?? tab.defaultLimit ?? 250;
   const search = options?.remoteSearchQuery?.trim() ?? '';
 
-  const totalRowsInSheet = await fetchSheetRowCount(tab.gid, options?.signal);
+  const [totalRowsInSheet, mutations] = await Promise.all([
+    fetchSheetRowCount(tab.gid, options?.signal),
+    fetchMutationsStore(options?.signal),
+  ]);
 
   let dataResponse: GvizResponse;
   let rowOffset = 0;
@@ -203,7 +303,11 @@ export async function fetchSheetTabData(
       const searchTq = `select * where ${whereClause} limit ${limit}`;
       dataResponse = await queryGviz(tab.gid, searchTq, options?.signal);
     } else {
-      dataResponse = await queryGviz(tab.gid, `select * limit ${limit}`, options?.signal);
+      dataResponse = await queryGviz(
+        tab.gid,
+        `select * limit ${limit}`,
+        options?.signal
+      );
     }
   } else if (tab.reverseOrder && totalRowsInSheet > limit) {
     rowOffset = Math.max(0, totalRowsInSheet - limit);
@@ -286,9 +390,111 @@ export async function fetchSheetTabData(
     }
   });
 
+  // Merge mutations for บันทึกการย้ายงาน (gid: 606634465)
+  if (tab.gid === '606634465' && mutations.jobTransfers.length > 0) {
+    const maxSheetRow =
+      parsedRows.reduce((max, r) => Math.max(max, r.rowNumber), totalRowsInSheet) ||
+      totalRowsInSheet;
+
+    mutations.jobTransfers.forEach((jt, idx) => {
+      const matchesSearch =
+        !search ||
+        Object.values(jt.values).some((v) =>
+          v.toLowerCase().includes(search.toLowerCase())
+        );
+      if (matchesSearch) {
+        const rawVals: Record<string, string | number | null> = {};
+        Object.entries(jt.values).forEach(([k, v]) => {
+          if (k === 'G' || k === 'U' || k === 'V') {
+            const num = Number(v.replace(/,/g, ''));
+            rawVals[k] = Number.isNaN(num) ? v : num;
+          } else {
+            rawVals[k] = v;
+          }
+        });
+        parsedRows.push({
+          rowNumber: Math.max(jt.rowNumber, maxSheetRow + idx + 1),
+          values: { ...jt.values },
+          rawValues: rawVals,
+        });
+      }
+    });
+  }
+
+  // Merge mutations for จุดส่งสินค้า (gid: 1156877149)
+  if (tab.gid === '1156877149') {
+    if (mutations.deliveryPoints.length > 0) {
+      const maxSheetRow =
+        parsedRows.reduce((max, r) => Math.max(max, r.rowNumber), totalRowsInSheet) ||
+        totalRowsInSheet;
+
+      mutations.deliveryPoints.forEach((dp, idx) => {
+        parsedRows.push({
+          rowNumber: Math.max(dp.rowNumber, maxSheetRow + idx + 1),
+          values: { ...dp.values },
+          rawValues: { ...dp.values },
+        });
+      });
+    }
+
+    if (mutations.deliveryPointEdits.length > 0) {
+      mutations.deliveryPointEdits.forEach((edit) => {
+        for (const row of parsedRows) {
+          if ((row.values['B'] ?? '').trim() === edit.deliveryPoint.trim()) {
+            row.values['C'] = edit.newGate;
+            row.rawValues['C'] = edit.newGate;
+            if (edit.updatedDate) {
+              row.values['A'] = edit.updatedDate;
+              row.rawValues['A'] = edit.updatedDate;
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // Merge mutations for ฐานข้อมูลรถ (gid: 378250263)
+  if (tab.gid === '378250263' && mutations.vehicleRegEdits.length > 0) {
+    mutations.vehicleRegEdits.forEach((edit) => {
+      let matched = false;
+      for (const row of parsedRows) {
+        const reg = (row.values['A'] ?? '').trim();
+        const drv = (row.values['I'] ?? '').trim();
+        const shf = (row.values['L'] ?? '').trim();
+        if (
+          reg === edit.oldRegistration.trim() &&
+          drv === edit.driverName.trim() &&
+          shf === edit.shift.trim()
+        ) {
+          row.values['A'] = edit.newRegistration;
+          row.rawValues['A'] = edit.newRegistration;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        for (const row of parsedRows) {
+          const reg = (row.values['A'] ?? '').trim();
+          if (reg === edit.oldRegistration.trim()) {
+            row.values['A'] = edit.newRegistration;
+            row.rawValues['A'] = edit.newRegistration;
+            break;
+          }
+        }
+      }
+    });
+  }
+
   if (tab.reverseOrder) {
     parsedRows.reverse();
   }
+
+  const addedRowsCount =
+    tab.gid === '606634465'
+      ? mutations.jobTransfers.length
+      : tab.gid === '1156877149'
+        ? mutations.deliveryPoints.length
+        : 0;
 
   return {
     sheetId: GOOGLE_SHEET_ID,
@@ -296,248 +502,238 @@ export async function fetchSheetTabData(
     tabName: tab.name,
     columns: activeColumns,
     rows: parsedRows,
-    totalRowsInSheet: Math.max(totalRowsInSheet, parsedRows.length),
+    totalRowsInSheet: Math.max(totalRowsInSheet + addedRowsCount, parsedRows.length),
     fetchedAt: new Date().toISOString(),
   };
 }
 
 export async function appendJobTransferRecord(
-  payload: JobTransferPayload,
-  accessToken: string
-): Promise<{ recordId: string; rowNumber: number | null }> {
+  payload: JobTransferPayload
+): Promise<{ recordId: string; rowNumber: number }> {
   const recordId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
   const transactionTimestamp = `${payload.date} ${payload.startTime}`;
 
-  const rowValues: Array<string | number> = [
-    payload.date, // A: วันที่
-    payload.employeeId, // B: รหัสพนักงาน
-    payload.driverName, // C: ชื่อพนักงานขับรถ
-    payload.vehicleNumber, // D: เบอร์รถ
-    payload.trailerNumber, // E: เบอร์หาง
-    payload.productType, // F: ประเภทสินค้า
-    payload.weight, // G: น้ำหนัก
-    payload.origin, // H: ต้นทาง
-    payload.startTime, // I: เวลาเริ่ม
-    payload.destination, // J: ปลายทาง
-    payload.endTime, // K: เวลาจบ
-    payload.duration, // L: เวลาที่ใช้
-    payload.status, // M: สถานะ
-    '', // N
-    '', // O
-    transactionTimestamp, // P: วันเวลาทำรายการ
-    recordId, // Q: รหัสรายการ (ID)
-    payload.note || '', // R: หมายเหตุ
-    '', // S: ภาพถ่ายที่ 1
-    '', // T: ภาพถ่ายที่ 2
-    payload.weight > 0 ? payload.weight : '', // U: น้ำหนักสุทธิ
-    payload.rounds || 1, // V: จำนวนรอบ
-  ];
+  const values: Record<string, string> = {
+    A: payload.date,
+    B: payload.employeeId,
+    C: payload.driverName,
+    D: payload.vehicleNumber,
+    E: payload.trailerNumber,
+    F: payload.productType,
+    G: String(payload.weight),
+    H: payload.origin,
+    I: payload.startTime,
+    J: payload.destination,
+    K: payload.endTime,
+    L: payload.duration,
+    M: payload.status,
+    P: transactionTimestamp,
+    Q: recordId,
+    R: payload.note || '',
+    S: '',
+    T: '',
+    U: payload.weight > 0 ? String(payload.weight) : '',
+    V: String(payload.rounds || 1),
+  };
 
-  const range = encodeURIComponent('บันทึกการย้ายงาน!A:A');
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const baseRowNumber = await fetchSheetRowCount('606634465');
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [rowValues],
-    }),
-  });
-
-  if (!response.ok) {
-    let errorMsg = `ไม่สามารถบันทึกข้อมูลลง Google Sheets (HTTP ${response.status})`;
-    try {
-      const errJson = await response.json();
-      if (errJson?.error?.message) {
-        errorMsg = errJson.error.message;
-      }
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMsg);
-  }
-
-  let rowNumber: number | null = null;
   try {
-    const resJson = await response.json();
-    const updatedRange: string = resJson?.updates?.updatedRange ?? '';
-    const match = updatedRange.match(/![A-Z]+(\d+)/i);
-    if (match && match[1]) {
-      rowNumber = parseInt(match[1], 10);
+    const res = await fetch('/api/mutations/job-transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, baseRowNumber, values }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        recordId: data.recordId || recordId,
+        rowNumber: data.rowNumber || baseRowNumber + 1,
+      };
     }
   } catch {
-    // ignore parse error
+    // fallback to localStorage
   }
+
+  const local = getLocalMutations();
+  const rowNumber = baseRowNumber + local.jobTransfers.length + 1;
+  local.jobTransfers.push({
+    recordId,
+    rowNumber,
+    values,
+    createdAt: new Date().toISOString(),
+  });
+  saveLocalMutations(local);
 
   return { recordId, rowNumber };
 }
 
-export async function completeJobTransferRecord(
-  params: {
-    rowNumber: number;
-    endTime: string;
-    duration: string;
-    status?: string;
-  },
-  accessToken: string
-): Promise<void> {
+export async function completeJobTransferRecord(params: {
+  recordId: string;
+  rowNumber: number | null;
+  endTime: string;
+  duration: string;
+  status?: string;
+}): Promise<void> {
   const finalStatus = params.status || 'ส่งสินค้าเรียบร้อยแล้ว';
-  const targetRange = encodeURIComponent(
-    `บันทึกการย้ายงาน!K${params.rowNumber}:M${params.rowNumber}`
-  );
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${targetRange}?valueInputOption=USER_ENTERED`;
 
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [[params.endTime, params.duration, finalStatus]],
-    }),
-  });
-
-  if (!response.ok) {
-    let errorMsg = `ไม่สามารถอัปเดตสถานะจบงานลง Google Sheets (HTTP ${response.status})`;
-    try {
-      const errJson = await response.json();
-      if (errJson?.error?.message) {
-        errorMsg = errJson.error.message;
+  try {
+    const res = await fetch(
+      `/api/mutations/job-transfer/${encodeURIComponent(params.recordId)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowNumber: params.rowNumber,
+          endTime: params.endTime,
+          duration: params.duration,
+          status: finalStatus,
+        }),
       }
-    } catch {
-      // ignore json parse error
+    );
+    if (res.ok) {
+      return;
     }
-    throw new Error(errorMsg);
-  }
-}
-
-export async function appendDeliveryPointRecord(
-  payload: DeliveryPointPayload,
-  accessToken: string
-): Promise<void> {
-  const rowValues: Array<string> = [
-    payload.date, // A: วันที่
-    payload.deliveryPoint, // B: จุดส่งสินค้า
-    payload.gate, // C: ประตู
-  ];
-
-  const range = encodeURIComponent('จุดส่งสินค้า!A:A');
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [rowValues],
-    }),
-  });
-
-  if (!response.ok) {
-    let errorMsg = `ไม่สามารถบันทึกจุดส่งสินค้าลง Google Sheets (HTTP ${response.status})`;
-    try {
-      const errJson = await response.json();
-      if (errJson?.error?.message) {
-        errorMsg = errJson.error.message;
-      }
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMsg);
-  }
-}
-
-export async function updateDeliveryPointGate(
-  params: {
-    deliveryPoint: string;
-    oldGate: string;
-    newGate: string;
-    updatedDate: string;
-  },
-  accessToken: string
-): Promise<void> {
-  const readRange = encodeURIComponent('จุดส่งสินค้า!A:C');
-  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
-
-  const readRes = await fetch(readUrl, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!readRes.ok) {
-    throw new Error(`ไม่สามารถอ่านตำแหน่งแถวของจุดส่งสินค้าได้ (HTTP ${readRes.status})`);
+  } catch {
+    // fallback to localStorage
   }
 
-  const readJson = await readRes.json();
-  const rows: string[][] = readJson?.values ?? [];
-
-  let matchedIndex = -1;
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i] ?? [];
-    const pt = (row[1] ?? '').trim();
-    const gt = (row[2] ?? '').trim();
-    if (pt === params.deliveryPoint.trim() && gt === params.oldGate.trim()) {
-      matchedIndex = i;
+  const local = getLocalMutations();
+  for (const item of local.jobTransfers) {
+    if (
+      item.recordId === params.recordId ||
+      (params.rowNumber !== null && item.rowNumber === params.rowNumber)
+    ) {
+      item.values['K'] = params.endTime;
+      item.values['L'] = params.duration;
+      item.values['M'] = finalStatus;
       break;
     }
   }
-
-  if (matchedIndex === -1) {
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i] ?? [];
-      const pt = (row[1] ?? '').trim();
-      if (pt === params.deliveryPoint.trim()) {
-        matchedIndex = i;
-        break;
-      }
-    }
-  }
-
-  if (matchedIndex === -1) {
-    throw new Error(`ไม่พบรายการจุดส่งสินค้า "${params.deliveryPoint}" ในชีต`);
-  }
-
-  const sheetRowNumber = matchedIndex + 1;
-  const updateRange = encodeURIComponent(
-    `จุดส่งสินค้า!A${sheetRowNumber}:C${sheetRowNumber}`
-  );
-  const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-
-  const updateRes = await fetch(updateUrl, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [[params.updatedDate, params.deliveryPoint.trim(), params.newGate.trim()]],
-    }),
-  });
-
-  if (!updateRes.ok) {
-    let errorMsg = `ไม่สามารถอัปเดตข้อมูลประตูลง Google Sheets (HTTP ${updateRes.status})`;
-    try {
-      const errJson = await updateRes.json();
-      if (errJson?.error?.message) {
-        errorMsg = errJson.error.message;
-      }
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMsg);
-  }
+  saveLocalMutations(local);
 }
 
+export async function appendDeliveryPointRecord(
+  payload: DeliveryPointPayload
+): Promise<void> {
+  const values: Record<string, string> = {
+    A: payload.date,
+    B: payload.deliveryPoint,
+    C: payload.gate,
+  };
 
+  const baseRowNumber = await fetchSheetRowCount('1156877149');
 
+  try {
+    const res = await fetch('/api/mutations/delivery-point', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseRowNumber, values }),
+    });
+    if (res.ok) {
+      return;
+    }
+  } catch {
+    // fallback to localStorage
+  }
 
+  const local = getLocalMutations();
+  local.deliveryPoints.push({
+    id: Math.random().toString(16).slice(2, 10),
+    rowNumber: baseRowNumber + local.deliveryPoints.length + 1,
+    values,
+    createdAt: new Date().toISOString(),
+  });
+  saveLocalMutations(local);
+}
+
+export async function updateDeliveryPointGate(params: {
+  deliveryPoint: string;
+  oldGate: string;
+  newGate: string;
+  updatedDate: string;
+}): Promise<void> {
+  try {
+    const res = await fetch('/api/mutations/delivery-point-gate', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (res.ok) {
+      return;
+    }
+  } catch {
+    // fallback to localStorage
+  }
+
+  const local = getLocalMutations();
+  const pt = params.deliveryPoint.trim();
+  for (const dp of local.deliveryPoints) {
+    if ((dp.values['B'] ?? '').trim() === pt) {
+      dp.values['C'] = params.newGate.trim();
+      dp.values['A'] = params.updatedDate.trim();
+    }
+  }
+  const existingIdx = local.deliveryPointEdits.findIndex(
+    (e) => e.deliveryPoint === pt
+  );
+  const editEntry: StoredDeliveryPointEdit = {
+    deliveryPoint: pt,
+    oldGate: params.oldGate.trim(),
+    newGate: params.newGate.trim(),
+    updatedDate: params.updatedDate.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (existingIdx >= 0) {
+    local.deliveryPointEdits[existingIdx] = editEntry;
+  } else {
+    local.deliveryPointEdits.push(editEntry);
+  }
+  saveLocalMutations(local);
+}
+
+export async function updateVehicleRegistration(params: {
+  oldRegistration: string;
+  newRegistration: string;
+  driverName: string;
+  shift: string;
+}): Promise<void> {
+  try {
+    const res = await fetch('/api/mutations/vehicle-registration', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (res.ok) {
+      return;
+    }
+  } catch {
+    // fallback to localStorage
+  }
+
+  const local = getLocalMutations();
+  const oldReg = params.oldRegistration.trim();
+  const newReg = params.newRegistration.trim();
+  const drv = params.driverName.trim();
+  const shf = params.shift.trim();
+
+  const chainedIdx = local.vehicleRegEdits.findIndex(
+    (e) => e.newRegistration === oldReg && e.driverName === drv && e.shift === shf
+  );
+  if (chainedIdx >= 0) {
+    local.vehicleRegEdits[chainedIdx].newRegistration = newReg;
+    local.vehicleRegEdits[chainedIdx].updatedAt = new Date().toISOString();
+  } else {
+    local.vehicleRegEdits.push({
+      oldRegistration: oldReg,
+      newRegistration: newReg,
+      driverName: drv,
+      shift: shf,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  saveLocalMutations(local);
+}

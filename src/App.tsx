@@ -18,14 +18,13 @@ import {
   Pencil,
   Check,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
 import {
   GOOGLE_SHEET_ID,
   SHEET_TABS,
   fetchSheetTabData,
   updateDeliveryPointGate,
+  updateVehicleRegistration,
 } from './services/googleSheets';
-import { initAuth, googleSignIn, logout } from './services/auth';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
 import { JobTransferModal } from './components/JobTransferModal';
@@ -60,16 +59,13 @@ export default function App() {
   // Selected row for detail modal
   const [selectedRow, setSelectedRow] = useState<SheetRow | null>(null);
 
-  // Job Transfer & Delivery Point creation modals & Google OAuth states
+  // Job Transfer & Delivery Point creation modals
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [authUser, setAuthUser] = useState<User | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
-  // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู
+  // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู and ฐานข้อมูลรถ -> คอลัมน์ ทะเบียนรถ
   const [editingGateRowNumber, setEditingGateRowNumber] = useState<number | null>(null);
   const [editingGateValue, setEditingGateValue] = useState<string>('');
   const [confirmingGateRowNumber, setConfirmingGateRowNumber] = useState<number | null>(
@@ -78,41 +74,6 @@ export default function App() {
   const [isUpdatingGate, setIsUpdatingGate] = useState<boolean>(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, token) => {
-        setAuthUser(user);
-        setAuthToken(token);
-      },
-      () => {
-        setAuthUser(null);
-        setAuthToken(null);
-      }
-    );
-    return () => unsubscribe();
-  }, []);
-
-  const handleRequestGoogleLogin = async (): Promise<string | null> => {
-    setIsLoggingIn(true);
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setAuthUser(result.user);
-        setAuthToken(result.accessToken);
-        return result.accessToken;
-      }
-      return null;
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleGoogleLogout = async () => {
-    await logout();
-    setAuthUser(null);
-    setAuthToken(null);
-  };
 
   const loadData = useCallback(
     async (options?: { silent?: boolean; remoteSearch?: string }) => {
@@ -188,12 +149,14 @@ export default function App() {
   };
 
   const handleConfirmGateUpdate = async (row: SheetRow) => {
-    const newGate = editingGateValue.trim();
-    const oldGate = (row.values['C'] ?? '').trim();
-    const deliveryPoint = (row.values['B'] ?? '').trim();
+    const newValue = editingGateValue.trim();
+    const isVehicleTab = activeTab.gid === '378250263';
+    const oldValue = isVehicleTab
+      ? (row.values['A'] ?? '').trim()
+      : (row.values['C'] ?? '').trim();
 
-    if (!newGate) return;
-    if (newGate === oldGate) {
+    if (!newValue) return;
+    if (newValue === oldValue) {
       setEditingGateRowNumber(null);
       setConfirmingGateRowNumber(null);
       return;
@@ -203,34 +166,43 @@ export default function App() {
     setError(null);
 
     try {
-      let token = authToken;
-      if (!token) {
-        token = await handleRequestGoogleLogin();
-      }
-      if (!token) {
-        throw new Error('กรุณาเข้าสู่ระบบด้วยบัญชี Google ก่อนแก้ไขข้อมูลประตู');
-      }
+      if (isVehicleTab) {
+        const driverName = (row.values['I'] ?? '').trim();
+        const shift = (row.values['L'] ?? '').trim();
 
-      const now = new Date();
-      const updatedDate = `${now.getDate()}/${now.getMonth() + 1}/${
-        now.getFullYear() + 543
-      }`;
+        await updateVehicleRegistration({
+          oldRegistration: oldValue,
+          newRegistration: newValue,
+          driverName,
+          shift,
+        });
 
-      await updateDeliveryPointGate(
-        {
+        setEditingGateRowNumber(null);
+        setConfirmingGateRowNumber(null);
+        setSaveSuccessMsg(
+          `อัปเดตทะเบียนรถจาก "${oldValue}" เป็น "${newValue}" เรียบร้อยแล้ว`
+        );
+      } else {
+        const deliveryPoint = (row.values['B'] ?? '').trim();
+        const now = new Date();
+        const updatedDate = `${now.getDate()}/${now.getMonth() + 1}/${
+          now.getFullYear() + 543
+        }`;
+
+        await updateDeliveryPointGate({
           deliveryPoint,
-          oldGate,
-          newGate,
+          oldGate: oldValue,
+          newGate: newValue,
           updatedDate,
-        },
-        token
-      );
+        });
 
-      setEditingGateRowNumber(null);
-      setConfirmingGateRowNumber(null);
-      setSaveSuccessMsg(
-        `อัปเดตประตูของจุดส่งสินค้า ${deliveryPoint} เป็น "${newGate}" และอัปเดตวันที่เป็น ${updatedDate} เรียบร้อยแล้ว`
-      );
+        setEditingGateRowNumber(null);
+        setConfirmingGateRowNumber(null);
+        setSaveSuccessMsg(
+          `อัปเดตประตูของจุดส่งสินค้า ${deliveryPoint} เป็น "${newValue}" และอัปเดตวันที่เป็น ${updatedDate} เรียบร้อยแล้ว`
+        );
+      }
+
       loadData({ silent: true });
       setTimeout(() => {
         setSaveSuccessMsg(null);
@@ -239,7 +211,7 @@ export default function App() {
       setError(
         err instanceof Error
           ? err.message
-          : 'เกิดข้อผิดพลาดในการอัปเดตข้อมูลประตูลง Google Sheets'
+          : 'เกิดข้อผิดพลาดในการอัปเดตข้อมูล'
       );
     } finally {
       setIsUpdatingGate(false);
@@ -1092,36 +1064,45 @@ export default function App() {
 
                         const isEditableGateCell =
                           activeTab.gid === '1156877149' && col.id === 'C';
+                        const isEditableVehicleRegCell =
+                          activeTab.gid === '378250263' && col.id === 'A';
+                        const isEditableInlineCell =
+                          isEditableGateCell || isEditableVehicleRegCell;
                         const isEditingThisRow =
-                          isEditableGateCell && editingGateRowNumber === row.rowNumber;
+                          isEditableInlineCell &&
+                          editingGateRowNumber === row.rowNumber;
                         const isConfirmingThisRow =
-                          isEditableGateCell &&
+                          isEditableInlineCell &&
                           confirmingGateRowNumber === row.rowNumber;
 
                         return (
                           <td
                             key={col.id}
                             onClick={
-                              isEditableGateCell
+                              isEditableInlineCell
                                 ? (e) => e.stopPropagation()
                                 : undefined
                             }
                             className={`px-4 py-2.5 text-slate-800 ${
-                              isEditableGateCell ? 'min-w-[240px]' : 'max-w-[260px] truncate'
+                              isEditableInlineCell
+                                ? 'min-w-[240px]'
+                                : 'max-w-[260px] truncate'
                             } ${isNumeric ? 'text-right' : 'text-left'} ${
                               isMono ? 'font-mono text-xs tabular-nums' : 'text-sm'
                             }`}
-                            title={!isEditableGateCell ? val : undefined}
+                            title={!isEditableInlineCell ? val : undefined}
                           >
-                            {isEditableGateCell ? (
+                            {isEditableInlineCell ? (
                               isConfirmingThisRow ? (
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-xs text-slate-700">
                                     ยืนยันเปลี่ยนเป็น{' '}
                                     <strong className="font-semibold text-slate-900">
                                       {editingGateValue.trim()}
-                                    </strong>{' '}
-                                    และอัปเดตวันที่วันนี้?
+                                    </strong>
+                                    {isEditableGateCell
+                                      ? ' และอัปเดตวันที่วันนี้?'
+                                      : ' ?'}
                                   </span>
                                   <button
                                     type="button"
@@ -1291,13 +1272,8 @@ export default function App() {
         isOpen={isJobModalOpen}
         onClose={() => setIsJobModalOpen(false)}
         existingRows={activeTab.gid === '606634465' ? sheetData?.rows ?? [] : []}
-        accessToken={authToken}
-        currentUser={authUser}
-        isLoggingIn={isLoggingIn}
-        onRequestLogin={handleRequestGoogleLogin}
-        onLogout={handleGoogleLogout}
         onSavedSuccess={() => {
-          setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานลงฐานข้อมูล Google Sheets เรียบร้อยแล้ว');
+          setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานลงฐานข้อมูลเรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);
@@ -1310,13 +1286,8 @@ export default function App() {
         isOpen={isDeliveryPointModalOpen}
         onClose={() => setIsDeliveryPointModalOpen(false)}
         existingRows={activeTab.gid === '1156877149' ? sheetData?.rows ?? [] : []}
-        accessToken={authToken}
-        currentUser={authUser}
-        isLoggingIn={isLoggingIn}
-        onRequestLogin={handleRequestGoogleLogin}
-        onLogout={handleGoogleLogout}
         onSavedSuccess={() => {
-          setSaveSuccessMsg('เพิ่มข้อมูลจุดส่งสินค้าลงฐานข้อมูล Google Sheets เรียบร้อยแล้ว');
+          setSaveSuccessMsg('เพิ่มข้อมูลจุดส่งสินค้าลงฐานข้อมูลเรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);

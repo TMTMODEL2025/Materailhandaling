@@ -1,14 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
-  CheckCircle2,
   AlertCircle,
-  LogOut,
   Play,
   Square,
   Truck,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
 import { JobTransferPayload, SheetRow } from '../types';
 import {
   appendJobTransferRecord,
@@ -19,11 +16,6 @@ interface JobTransferModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingRows: SheetRow[];
-  accessToken: string | null;
-  currentUser: User | null;
-  isLoggingIn: boolean;
-  onRequestLogin: () => Promise<string | null>;
-  onLogout: () => Promise<void>;
   onSavedSuccess: () => void;
 }
 
@@ -89,11 +81,6 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   isOpen,
   onClose,
   existingRows,
-  accessToken,
-  currentUser,
-  isLoggingIn,
-  onRequestLogin,
-  onLogout,
   onSavedSuccess,
 }) => {
   const [date, setDate] = useState<string>(getCurrentThaiDateString());
@@ -247,20 +234,12 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     setFlowStep('CONFIRM_START');
   };
 
-  // Confirm "เริ่มส่งสินค้า" -> append row with status "อยู่ระว่างการส่ง" to Google Sheets
+  // Confirm "เริ่มส่งสินค้า" -> append row with status "อยู่ระว่างการส่ง"
   const handleConfirmStartDelivery = async () => {
     setSubmitError(null);
     setIsSubmitting(true);
 
     try {
-      let token = accessToken;
-      if (!token) {
-        token = await onRequestLogin();
-      }
-      if (!token) {
-        throw new Error('กรุณาเข้าสู่ระบบด้วยบัญชี Google ก่อนเริ่มส่งสินค้า');
-      }
-
       const startT = pendingStartTime || getCurrentTimeString();
       const numericWeight = parseFloat(weight.replace(/,/g, ''));
       const cleanWeight = Number.isNaN(numericWeight) ? 0 : numericWeight;
@@ -286,7 +265,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         rounds: cleanRounds,
       };
 
-      const { recordId, rowNumber } = await appendJobTransferRecord(payload, token);
+      const { recordId, rowNumber } = await appendJobTransferRecord(payload);
 
       const startedJob: ActiveDeliveryJob = {
         rowNumber,
@@ -327,57 +306,23 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     setFlowStep('CONFIRM_FINISH');
   };
 
-  // Confirm "จบ" -> update row in Google Sheets with เวลาจบ, เวลาที่ใช้, and สถานะ="ส่งสินค้าเรียบร้อยแล้ว"
+  // Confirm "จบ" -> update row with เวลาจบ, เวลาที่ใช้, and สถานะ="ส่งสินค้าเรียบร้อยแล้ว"
   const handleConfirmFinishDelivery = async () => {
     if (!activeJob) return;
     setSubmitError(null);
     setIsSubmitting(true);
 
     try {
-      let token = accessToken;
-      if (!token) {
-        token = await onRequestLogin();
-      }
-      if (!token) {
-        throw new Error('กรุณาเข้าสู่ระบบด้วยบัญชี Google ก่อนกดจบงาน');
-      }
-
       const endT = pendingEndTime || getCurrentTimeString();
       const totalDuration = calculateDurationString(activeJob.startTime, endT);
 
-      if (activeJob.rowNumber !== null) {
-        await completeJobTransferRecord(
-          {
-            rowNumber: activeJob.rowNumber,
-            endTime: endT,
-            duration: totalDuration,
-            status: 'ส่งสินค้าเรียบร้อยแล้ว',
-          },
-          token
-        );
-      } else {
-        // Fallback if rowNumber was not returned
-        await appendJobTransferRecord(
-          {
-            date: activeJob.date,
-            employeeId: activeJob.employeeId,
-            driverName: activeJob.driverName,
-            vehicleNumber: activeJob.vehicleNumber,
-            trailerNumber: activeJob.trailerNumber,
-            productType: activeJob.productType,
-            weight: activeJob.weight,
-            origin: activeJob.origin,
-            startTime: activeJob.startTime,
-            destination: activeJob.destination,
-            endTime: endT,
-            duration: totalDuration,
-            status: 'ส่งสินค้าเรียบร้อยแล้ว',
-            note: activeJob.note,
-            rounds: activeJob.rounds,
-          },
-          token
-        );
-      }
+      await completeJobTransferRecord({
+        recordId: activeJob.recordId,
+        rowNumber: activeJob.rowNumber,
+        endTime: endT,
+        duration: totalDuration,
+        status: 'ส่งสินค้าเรียบร้อยแล้ว',
+      });
 
       // Reset form and active job
       setActiveJob(null);
@@ -448,73 +393,6 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
           >
             <X className="h-4 w-4" />
           </button>
-        </div>
-
-        {/* Google Account Connection Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-6 py-3">
-          {accessToken && currentUser ? (
-            <div className="flex w-full items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-xs text-slate-700">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span>
-                  เชื่อมต่อบัญชี:{' '}
-                  <strong className="font-semibold text-slate-900">
-                    {currentUser.email || currentUser.displayName}
-                  </strong>
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={onLogout}
-                className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900 whitespace-nowrap shrink-0"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                <span>สลับบัญชี</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flex w-full flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div className="text-xs text-slate-600">
-                เข้าสู่ระบบด้วย Google เพื่อรับสิทธิ์บันทึกข้อมูลลงตาราง บันทึกการย้ายงาน
-              </div>
-              <button
-                type="button"
-                onClick={() => onRequestLogin()}
-                disabled={isLoggingIn}
-                className="gsi-material-button inline-flex items-center gap-2.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 shadow-2xs transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap shrink-0"
-              >
-                <div className="gsi-material-button-icon h-4 w-4 shrink-0">
-                  <svg
-                    version="1.1"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 48 48"
-                    className="block h-full w-full"
-                  >
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    />
-                    <path fill="none" d="M0 0h48v48H0z" />
-                  </svg>
-                </div>
-                <span className="gsi-material-button-contents">
-                  {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'Sign in with Google'}
-                </span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Error Banner */}
