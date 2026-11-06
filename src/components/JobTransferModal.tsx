@@ -151,6 +151,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const [vehicleNumber, setVehicleNumber] = useState<string>('');
   const [trailerNumber, setTrailerNumber] = useState<string>('');
   const [productType, setProductType] = useState<string>('');
+  const [bundleCount, setBundleCount] = useState<string>('');
+  const [weightPerBundle, setWeightPerBundle] = useState<string>('');
+  const [extraWeight, setExtraWeight] = useState<string>('');
   const [weight, setWeight] = useState<string>('0');
   const [origin, setOrigin] = useState<string>('');
   const [destination, setDestination] = useState<string>('');
@@ -310,6 +313,32 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     }
   };
 
+  const recalculateTotalWeight = (
+    nextBundles: string,
+    nextPerBundle: string,
+    nextExtra: string
+  ) => {
+    if (
+      !nextBundles.trim() &&
+      !nextPerBundle.trim() &&
+      !nextExtra.trim()
+    ) {
+      setWeight('0');
+      return;
+    }
+    const parsedBundles = parseFloat(nextBundles.replace(/,/g, ''));
+    const parsedPerBundle = parseFloat(nextPerBundle.replace(/,/g, ''));
+    const parsedExtra = parseFloat(nextExtra.replace(/,/g, ''));
+
+    const cleanBundles = Number.isNaN(parsedBundles) ? 0 : parsedBundles;
+    const cleanPerBundle = Number.isNaN(parsedPerBundle) ? 0 : parsedPerBundle;
+    const cleanExtra = Number.isNaN(parsedExtra) ? 0 : parsedExtra;
+
+    const total = cleanBundles * cleanPerBundle + cleanExtra;
+    const rounded = Math.round(total * 100) / 100;
+    setWeight(String(rounded));
+  };
+
   // Step 1: Validate form and prepare to press "เริ่มส่งสินค้า"
   const handleInitiateStartDelivery = (e: React.FormEvent) => {
     e.preventDefault();
@@ -441,6 +470,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       // Reset form and active job
       updateActiveJob(null);
       setProductType('');
+      setBundleCount('');
+      setWeightPerBundle('');
+      setExtraWeight('');
       setWeight('0');
       setOrigin('');
       setDestination('');
@@ -883,8 +915,68 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                 required
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs sm:text-sm font-semibold text-slate-900 tabular-nums focus:border-slate-900 focus:bg-white focus:outline-none"
               />
+            </div>
+
+            {/* ฟิลด์คำนวณน้ำหนักจริงอัตโนมัติ: (จำนวนมัด × น้ำหนักต่อมัด) + น้ำหนักเศษ */}
+            <div className="col-span-2 grid grid-cols-3 gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2 sm:p-2.5">
+              <div>
+                <label className="block text-[10px] sm:text-xs font-medium text-slate-700 truncate">
+                  จำนวนมัด
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={bundleCount}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBundleCount(val);
+                    recalculateTotalWeight(val, weightPerBundle, extraWeight);
+                  }}
+                  placeholder="0"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] sm:text-xs font-medium text-slate-700 truncate">
+                  น้ำหนักต่อมัด (กก.)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={weightPerBundle}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setWeightPerBundle(val);
+                    recalculateTotalWeight(bundleCount, val, extraWeight);
+                  }}
+                  placeholder="0"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] sm:text-xs font-medium text-slate-700 truncate">
+                  น้ำหนักเศษ (กก.)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={extraWeight}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setExtraWeight(val);
+                    recalculateTotalWeight(bundleCount, weightPerBundle, val);
+                  }}
+                  placeholder="0"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                />
+              </div>
             </div>
 
             {/* ต้นทาง */}
