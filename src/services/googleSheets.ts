@@ -9,6 +9,7 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
   DeliveryPointPayload,
+  FuelRecordPayload,
   JobTransferPayload,
   SheetColumn,
   SheetDataResult,
@@ -502,6 +503,17 @@ function doPost(e) {
         }
       }
       return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
+    if (action === 'appendFuelRecord') {
+      const sheet = ss.getSheetByName('บันทึกน้ำมัน');
+      if (sheet) {
+        const rowValues = body.rowValues || [];
+        sheet.appendRow(rowValues);
+        const rowNumber = sheet.getLastRow();
+        return jsonResponse({ ok: true, rowNumber: rowNumber });
+      }
+      return jsonResponse({ ok: false, error: 'Sheet บันทึกน้ำมัน not found' });
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action' });
@@ -1263,6 +1275,14 @@ interface StoredRepairInspection {
   updatedAt: string;
 }
 
+interface StoredFuelRecord {
+  id: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  createdAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -1277,6 +1297,7 @@ interface MutationsStore {
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
   repairFinancialEdits: StoredRepairFinancialEdit[];
+  fuelRecords: StoredFuelRecord[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -1294,6 +1315,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairDetailEdits: [],
     repairReplyEdits: [],
     repairFinancialEdits: [],
+    fuelRecords: [],
   };
 }
 
@@ -1340,6 +1362,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
         ? parsed.repairFinancialEdits
+        : [],
+      fuelRecords: Array.isArray(parsed.fuelRecords)
+        ? parsed.fuelRecords
         : [],
     };
   } catch {
@@ -1533,6 +1558,23 @@ async function fetchCombinedMutationsStore(
         )
       );
 
+      const mergedFuelMap = new Map<string, StoredFuelRecord>();
+      (remote.fuelRecords ?? []).forEach((f) => mergedFuelMap.set(f.id, f));
+      (local.fuelRecords ?? []).forEach((f) => {
+        const existing = mergedFuelMap.get(f.id);
+        mergedFuelMap.set(
+          f.id,
+          existing
+            ? {
+                ...existing,
+                ...f,
+                syncedToSheet: Boolean(existing.syncedToSheet || f.syncedToSheet),
+                values: { ...existing.values, ...f.values },
+              }
+            : f
+        );
+      });
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -1547,6 +1589,7 @@ async function fetchCombinedMutationsStore(
         repairDetailEdits: Array.from(mergedDetailEditMap.values()),
         repairReplyEdits: Array.from(mergedReplyEditMap.values()),
         repairFinancialEdits: Array.from(mergedFinancialEditMap.values()),
+        fuelRecords: Array.from(mergedFuelMap.values()),
       };
     }
   } catch {
@@ -2354,6 +2397,24 @@ export async function fetchSheetTabData(
           target.values['N'] = fe.sparePartsCost;
           target.values['O'] = fe.laborCost;
         }
+      }
+    }
+  } else if (tab.gid === '1733355146') {
+    for (const fuel of mutationsStore.fuelRecords ?? []) {
+      const exists = parsedRows.some(
+        (r) =>
+          (fuel.id && (r.values['A'] ?? '').trim() === fuel.id) ||
+          ((r.values['B'] ?? '').trim() === (fuel.values['B'] ?? '').trim() &&
+            (r.values['C'] ?? '').trim() === (fuel.values['C'] ?? '').trim() &&
+            (r.values['D'] ?? '').trim() === (fuel.values['D'] ?? '').trim() &&
+            (r.values['S'] ?? '').trim() === (fuel.values['S'] ?? '').trim())
+      );
+      if (!exists && !search) {
+        parsedRows.push({
+          rowNumber: fuel.rowNumber || totalRowsInSheet + parsedRows.length + 1,
+          values: { ...fuel.values },
+          rawValues: { ...fuel.values },
+        });
       }
     }
   }
@@ -3875,6 +3936,171 @@ export async function updateRepairFinancialDetails(params: {
     }
   }
 }
+
+export async function appendFuelRecord(
+  payload: FuelRecordPayload
+): Promise<{ id: string; rowNumber: number | null }> {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  const isReceive = payload.transactionType === 'รับเข้า';
+  const litersInVal =
+    isReceive && payload.litersIn !== undefined && payload.litersIn !== ''
+      ? Number(payload.litersIn)
+      : '';
+  const priceVal =
+    payload.pricePerLiter !== undefined && payload.pricePerLiter !== ''
+      ? Number(payload.pricePerLiter)
+      : '';
+  const litersOutVal =
+    !isReceive && payload.litersOut !== undefined && payload.litersOut !== ''
+      ? Number(payload.litersOut)
+      : '';
+  const amountVal =
+    payload.amountBaht !== undefined && payload.amountBaht !== ''
+      ? Number(payload.amountBaht)
+      : 0;
+  const mileageVal =
+    !isReceive && payload.mileage !== undefined && payload.mileage !== ''
+      ? Number(payload.mileage)
+      : '';
+
+  const staffIssuerOrReceiver = isReceive
+    ? (payload.receiverName || payload.issuerName || '').trim()
+    : (payload.issuerName || '').trim();
+
+  // Columns A..X of บันทึกน้ำมัน (gid: 1733355146)
+  const rowValues: Array<string | number> = [
+    id, // A: ID
+    payload.date, // B: วันที่
+    payload.time, // C: เวลา
+    payload.fuelType, // D: ชนิดน้ำมัน
+    litersInVal, // E: รับเข้า / ลิตร
+    priceVal, // F: ราคา
+    litersOutVal, // G: จ่ายออก /ลิตร
+    amountVal, // H: มูลค่า / บาท
+    payload.totalInDiesel, // I: รวมรับเข้า ดีเซล
+    payload.totalInBenzene, // J: รวมรับเข้า เบนซิล
+    payload.totalOutDiesel, // K: รวมเบิกออก ดีเซล
+    payload.totalOutBenzene, // L: รวมเบิกออก เบนซิล
+    payload.balanceDiesel, // M: คงเหลือ ดีเซล / ลิตร
+    payload.balanceBenzene, // N: คงเหลือ เบนซิล / ลิตร
+    isReceive ? '' : (payload.vehicleNumber || '').trim(), // O: เบอร์รถ
+    mileageVal, // P: เลขไมล์
+    isReceive ? '' : (payload.driverName || '').trim(), // Q: พนักงานขับรถ
+    staffIssuerOrReceiver, // R: ผู้จ่ายน้ำมัน
+    payload.transactionType, // S: STATUS (รับเข้า / เบิกออก)
+    isReceive ? (payload.receiverName || staffIssuerOrReceiver) : '', // T: ผู้รับเข้า
+    (payload.requisitionNo || '').trim(), // U: เลขที่ใบเบิก
+    (payload.note || '').trim(), // V: หมายเหตุ
+    '', // W: Update3
+    payload.monthLabel, // X: MONTH
+  ];
+
+  const colLetters = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+  ];
+  const valuesMap: Record<string, string> = {};
+  colLetters.forEach((col, idx) => {
+    const v = rowValues[idx];
+    valuesMap[col] = v !== undefined && v !== null && v !== '' ? String(v) : '';
+  });
+
+  let rowNumber: number | null = null;
+  let syncedToSheet = false;
+
+  // 1. Try Google Apps Script Webhook
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'appendFuelRecord',
+        rowValues,
+      });
+      if (res.ok !== false) {
+        rowNumber = res.rowNumber ?? null;
+        syncedToSheet = true;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // 2. Try Google Sheets REST API v4
+  if (!syncedToSheet) {
+    const token = await getOrConnectAccessToken(true);
+    if (token) {
+      try {
+        const range = encodeURIComponent('บันทึกน้ำมัน!A:A');
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [rowValues],
+          }),
+        });
+        if (response.ok) {
+          syncedToSheet = true;
+          try {
+            const resJson = await response.json();
+            const updatedRange: string = resJson?.updates?.updatedRange ?? '';
+            const match = updatedRange.match(/![A-Z]+(\d+)/i);
+            if (match && match[1]) {
+              rowNumber = parseInt(match[1], 10);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // fall through
+      }
+    }
+  }
+
+  // 3. Persist to local & backend store
+  const currentSheetCount = await fetchSheetRowCount('1733355146');
+  const localStore = readLocalMutationsStore();
+  if (!localStore.fuelRecords) {
+    localStore.fuelRecords = [];
+  }
+  const fallbackRowNumber =
+    rowNumber ?? Math.max(currentSheetCount, 1) + localStore.fuelRecords.length + 1;
+
+  localStore.fuelRecords.push({
+    id,
+    rowNumber: fallbackRowNumber,
+    values: valuesMap,
+    createdAt: new Date().toISOString(),
+    syncedToSheet,
+  });
+  writeLocalMutationsStore(localStore);
+
+  try {
+    await fetch('/api/mutations/fuel-record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        rowNumber: fallbackRowNumber,
+        values: valuesMap,
+        syncedToSheet,
+      }),
+    });
+  } catch {
+    // ignore
+  }
+
+  return { id, rowNumber: fallbackRowNumber };
+}
+
 
 
 

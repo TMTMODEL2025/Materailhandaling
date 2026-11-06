@@ -97,3 +97,29 @@ export interface RepairInspectionPayload {
   laborCost?: string;
   note?: string;
 }
+
+export interface FuelRecordPayload {
+  transactionType: 'รับเข้า' | 'เบิกออก';
+  date: string;
+  time: string;
+  fuelType: 'ดีเซล' | 'เบนซิน' | string;
+  litersIn?: number | string;
+  pricePerLiter?: number | string;
+  litersOut?: number | string;
+  amountBaht?: number | string;
+  totalInDiesel: number;
+  totalInBenzene: number;
+  totalOutDiesel: number;
+  totalOutBenzene: number;
+  balanceDiesel: number;
+  balanceBenzene: number;
+  vehicleNumber?: string;
+  mileage?: number | string;
+  driverName?: string;
+  issuerName?: string;
+  receiverName?: string;
+  requisitionNo?: string;
+  note?: string;
+  monthLabel: string;
+}
+

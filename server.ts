@@ -125,6 +125,14 @@ interface StoredRepairInspection {
   updatedAt: string;
 }
 
+interface StoredFuelRecord {
+  id: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  createdAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -139,6 +147,7 @@ interface MutationsStore {
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
   repairFinancialEdits: StoredRepairFinancialEdit[];
+  fuelRecords: StoredFuelRecord[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -173,6 +182,7 @@ function readStore(): MutationsStore {
         repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
           ? parsed.repairFinancialEdits
           : [],
+        fuelRecords: Array.isArray(parsed.fuelRecords) ? parsed.fuelRecords : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -204,6 +214,7 @@ function readStore(): MutationsStore {
     repairDetailEdits: [],
     repairReplyEdits: [],
     repairFinancialEdits: [],
+    fuelRecords: [],
   };
 }
 
@@ -912,6 +923,35 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true, edit: editEntry });
+  });
+
+  app.post('/api/mutations/fuel-record', (req, res) => {
+    const store = readStore();
+    const { id, rowNumber, values, syncedToSheet } = req.body ?? {};
+    const recId = String(id ?? '').trim() || `fuel-${Date.now()}`;
+    const rn = typeof rowNumber === 'number' ? rowNumber : store.fuelRecords.length + 1;
+
+    if (!store.fuelRecords) {
+      store.fuelRecords = [];
+    }
+
+    const existingIdx = store.fuelRecords.findIndex((f) => f.id === recId);
+    const entry: StoredFuelRecord = {
+      id: recId,
+      rowNumber: rn,
+      values: typeof values === 'object' && values ? values : {},
+      createdAt: new Date().toISOString(),
+      syncedToSheet: Boolean(syncedToSheet),
+    };
+
+    if (existingIdx >= 0) {
+      store.fuelRecords[existingIdx] = entry;
+    } else {
+      store.fuelRecords.push(entry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, id: recId, rowNumber: rn });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

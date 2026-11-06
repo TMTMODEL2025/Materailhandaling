@@ -49,6 +49,7 @@ import { SheetWebhookModal } from './components/SheetWebhookModal';
 import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
+import { FuelRecordModal } from './components/FuelRecordModal';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { APP_VERSION } from './version';
 import { showSuccessToast } from './utils/swal';
@@ -147,6 +148,15 @@ function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string
   return trimmed || 'ไม่ระบุสถานะ';
 }
 
+function getRowVehicleShift(row: SheetRow, columns?: SheetColumn[]): string {
+  const shiftCol = columns?.find(
+    (c) => c.label.trim() === 'กะทำงาน' || c.label.trim() === 'กะ'
+  );
+  const raw = (shiftCol ? row.values[shiftCol.id] : row.values['L']) ?? row.values['L'] ?? '';
+  const trimmed = raw.trim();
+  return trimmed ? `กะ: ${trimmed}` : 'ไม่ระบุกะทำงาน';
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
@@ -183,6 +193,7 @@ export default function App() {
   // Job Transfer & Delivery Point creation modals
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
+  const [isFuelModalOpen, setIsFuelModalOpen] = useState<boolean>(false);
   const [isRepairModalOpen, setIsRepairModalOpen] = useState<boolean>(false);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
@@ -612,12 +623,20 @@ export default function App() {
   }, [sortedRows, currentPage]);
 
   const repairGroupedRows = useMemo(() => {
-    if (activeTab.gid !== '944294225' && activeTab.gid !== '606634465') return null;
+    if (
+      activeTab.gid !== '944294225' &&
+      activeTab.gid !== '606634465' &&
+      activeTab.gid !== '378250263'
+    ) {
+      return null;
+    }
     const groups = new Map<string, SheetRow[]>();
     sortedRows.forEach((row) => {
       const status =
         activeTab.gid === '944294225'
           ? getRowApprovalStatus(row)
+          : activeTab.gid === '378250263'
+          ? getRowVehicleShift(row, sheetData?.columns)
           : getRowJobTransferStatus(row, sheetData?.columns);
       if (!groups.has(status)) {
         groups.set(status, []);
@@ -908,6 +927,24 @@ export default function App() {
                   <span>+ บันทึกแจ้งซ่อม</span>
                 </div>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  const fuelTab = SHEET_TABS.find((t) => t.gid === '1733355146');
+                  if (fuelTab && activeTab.gid !== '1733355146') {
+                    handleSelectTab(fuelTab);
+                  }
+                  setIsFuelModalOpen(true);
+                }}
+                className="flex w-full items-center justify-between rounded-lg bg-sky-50 px-3 py-2 text-left text-xs font-semibold text-sky-900 transition-colors hover:bg-sky-100"
+              >
+                <div className="flex items-center gap-2">
+                  <Fuel className="h-4 w-4 text-sky-700" />
+                  <span>+ บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
+                </div>
+              </button>
             </div>
           </div>
         </div>
@@ -961,6 +998,17 @@ export default function App() {
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>เพิ่มจุดส่งสินค้า</span>
+              </button>
+            )}
+
+            {activeTab.gid === '1733355146' && (
+              <button
+                type="button"
+                onClick={() => setIsFuelModalOpen(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
               </button>
             )}
 
@@ -1480,10 +1528,15 @@ export default function App() {
                       </div>
                     </td>
                   </tr>
-                ) : (activeTab.gid === '944294225' || activeTab.gid === '606634465') && repairGroupedRows ? (
+                ) : (activeTab.gid === '944294225' ||
+                    activeTab.gid === '606634465' ||
+                    activeTab.gid === '378250263') &&
+                  repairGroupedRows ? (
                   Array.from(repairGroupedRows.entries()).map(([status, rows]) => {
                     const isCollapsed = collapsedGroups[status] ?? true;
-                    const colSpan = (sheetData?.columns.length ?? 5) + 1;
+                    const colSpan =
+                      (sheetData?.columns.length ?? 5) +
+                      (activeTab.gid === '378250263' ? 2 : 1);
                     const groupPageSize = 15;
                     const currentGroupPage = groupPages[status] ?? 1;
                     const groupTotalPages = Math.max(1, Math.ceil(rows.length / groupPageSize));
@@ -1773,6 +1826,22 @@ export default function App() {
                                         <span>แนบรูป</span>
                                       </button>
                                     </div>
+                                  </td>
+                                )}
+                                {activeTab.gid === '378250263' && (
+                                  <td
+                                    className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedRow(row)}
+                                      title="ดูข้อมูลเพิ่มเติมและแก้ไข"
+                                      className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                                    >
+                                      <Eye className="h-3.5 w-3.5" />
+                                      <span>เพิ่มเติม</span>
+                                    </button>
                                   </td>
                                 )}
                               </tr>
@@ -2540,6 +2609,20 @@ export default function App() {
         existingRows={activeTab.gid === '1156877149' ? sheetData?.rows ?? [] : []}
         onSavedSuccess={() => {
           setSaveSuccessMsg('เพิ่มข้อมูลจุดส่งสินค้าลงฐานข้อมูลเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* Fuel Receive/Issue Modal */}
+      <FuelRecordModal
+        isOpen={isFuelModalOpen}
+        onClose={() => setIsFuelModalOpen(false)}
+        existingRows={activeTab.gid === '1733355146' ? sheetData?.rows ?? [] : []}
+        onSavedSuccess={() => {
+          setSaveSuccessMsg('บันทึกข้อมูลน้ำมัน (รับเข้า-เบิกออก) ลงฐานข้อมูลเรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);
