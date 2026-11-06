@@ -2176,7 +2176,7 @@ export async function appendRepairRecord(
   }
   rowValues[26] = payload.reporterName; // AA: ผู้แจ้งซ่อม
   rowValues[33] = payload.note || ''; // AH: หมายเหตุ
-  rowValues[34] = '2.⚠️รอพิจารณา'; // AI: สถานะการอนุมัติ
+  rowValues[34] = '2.⚠️รออนุมัติ'; // AI: สถานะการอนุมัติ
   rowValues[35] = id; // AJ: ID
 
   const valuesMap: Record<string, string> = {
@@ -2190,7 +2190,7 @@ export async function appendRepairRecord(
     P: 'รอคิวซ่อม',
     AA: payload.reporterName,
     AH: payload.note || '',
-    AI: '2.⚠️รอพิจารณา',
+    AI: '2.⚠️รออนุมัติ',
     AJ: id,
   };
 

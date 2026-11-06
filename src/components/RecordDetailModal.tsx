@@ -151,7 +151,13 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 return null;
               }
 
-              const val = rawVal || '-';
+              let val = rawVal || '-';
+              if (
+                (col.id === 'AI' || col.label.includes('สถานะการอนุมัติ')) &&
+                (!rawVal || rawVal === '-' || rawVal === '2.⚠️รอพิจารณา' || rawVal === 'รอพิจารณา')
+              ) {
+                val = '2.⚠️รออนุมัติ';
+              }
               const isNumericOrDate =
                 col.type === 'number' ||
                 col.type === 'date' ||

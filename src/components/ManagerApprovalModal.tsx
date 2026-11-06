@@ -52,13 +52,15 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
       const status = (r.values['AI'] ?? '').trim();
       const replyText = (r.values['AM'] ?? '').trim();
       return (
+        status === '2.⚠️รออนุมัติ' ||
+        status === 'รออนุมัติ' ||
         status === '2.⚠️รอพิจารณา' ||
         status === 'รอพิจารณา' ||
-        status === 'รออนุมัติ' ||
         status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
         status === '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
         status.includes('ขอข้อมูล') ||
         status.includes('ตอบกลับ') ||
+        status.includes('รอ') ||
         Boolean(replyText) ||
         !status
       );
@@ -460,6 +462,8 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
 
                 const displayStatusLabel = isReplied
                   ? '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว'
+                  : appStatus === '2.⚠️รอพิจารณา' || appStatus === 'รอพิจารณา' || !appStatus
+                  ? '2.⚠️รออนุมัติ'
                   : appStatus;
 
                 return (
