@@ -71,6 +71,14 @@ interface StoredRepairApproval {
   updatedAt: string;
 }
 
+interface StoredRepairPhotoEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  photos: string[];
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -79,6 +87,7 @@ interface MutationsStore {
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
   repairRequests: StoredRepairRequest[];
   repairApprovals: StoredRepairApproval[];
+  repairPhotoEdits: StoredRepairPhotoEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -103,6 +112,7 @@ function readStore(): MutationsStore {
           : [],
         repairRequests: Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [],
         repairApprovals: Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [],
+        repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -128,6 +138,7 @@ function readStore(): MutationsStore {
     jobTransferNoteEdits: [],
     repairRequests: [],
     repairApprovals: [],
+    repairPhotoEdits: [],
   };
 }
 
@@ -508,6 +519,54 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true, approval: approvalEntry });
+  });
+
+  app.put('/api/mutations/repair-photos', (req, res) => {
+    const store = readStore();
+    const { rowNumber, sequenceNo, repairRequestNo, photos } = req.body ?? {};
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const seq = String(sequenceNo ?? '').trim();
+    const reqNo = String(repairRequestNo ?? '').trim();
+    const photoList = Array.isArray(photos) ? photos : [];
+
+    const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+
+    // Update if it was previously in repairRequests
+    for (const reqItem of store.repairRequests) {
+      if (
+        (seq && reqItem.sequenceNo === seq) ||
+        (reqNo && reqItem.values['G'] === reqNo) ||
+        (rn > 0 && reqItem.rowNumber === rn)
+      ) {
+        photoList.slice(0, 9).forEach((photo, idx) => {
+          reqItem.values[photoCols[idx]] = photo;
+        });
+      }
+    }
+
+    const existingIdx = store.repairPhotoEdits.findIndex(
+      (p) =>
+        (seq && p.sequenceNo === seq) ||
+        (reqNo && p.repairRequestNo === reqNo) ||
+        (rn > 0 && p.rowNumber === rn)
+    );
+
+    const editEntry: StoredRepairPhotoEdit = {
+      rowNumber: rn,
+      sequenceNo: seq,
+      repairRequestNo: reqNo,
+      photos: photoList,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.repairPhotoEdits[existingIdx] = editEntry;
+    } else {
+      store.repairPhotoEdits.push(editEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, edit: editEntry });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

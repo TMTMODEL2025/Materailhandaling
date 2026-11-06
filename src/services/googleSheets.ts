@@ -39,7 +39,7 @@ onAuthStateChanged(auth, (user: User | null) => {
 });
 
 const APPS_SCRIPT_URL_STORAGE_KEY = 'gsheets_apps_script_url_v1';
-const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v1';
+const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v2';
 
 export const DEFAULT_APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
@@ -273,6 +273,38 @@ function doPost(e) {
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
 
+    if (action === 'updateRepairPhotos') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+      const repairRequestNo = String(body.repairRequestNo || '').trim();
+
+      if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (let i = checkData.length - 1; i >= 0; i--) {
+          const rowSeq = String(checkData[i][0] || '').trim();
+          const rowReqNo = String(checkData[i][6] || '').trim();
+          if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2 && Array.isArray(body.photos)) {
+        for (let j = 0; j < 9; j++) {
+          const p = body.photos[j];
+          if (p !== undefined) {
+            sheet.getRange(targetRow, 17 + j).setValue(String(p || ''));
+          }
+        }
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -498,6 +530,46 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
     U: 'น้ำหนักสุทธิ',
     V: 'จำนวนรอบ',
   },
+  '944294225': {
+    A: 'ลำดับ',
+    B: 'วันที่แจ้งซ่อม',
+    C: 'เวลาแจ้งซ่อม',
+    D: 'เบอร์รถ',
+    E: 'ประเภทการซ่อม',
+    F: 'อาการเสีย',
+    G: 'เลขที่ขอซ่อม',
+    H: 'เลขที่แจ้งซ่อม SAP',
+    I: 'กำหนดการ',
+    J: 'วันที่ซ่อมเสร็จ',
+    K: 'ระยะเวลาซ่อม',
+    L: 'เลขที่ PR',
+    M: 'เลขที่ใบกำกับภาษี',
+    N: 'ค่าอะไหล่',
+    O: 'ค่าแรง',
+    P: 'สถานะ',
+    Q: 'รูปถ่ายที่ 1',
+    R: 'รูปถ่ายที่ 2',
+    S: 'รูปถ่ายที่ 3',
+    T: 'รูปถ่ายที่ 4',
+    U: 'รูปถ่ายที่ 5',
+    V: 'รูปถ่ายที่ 6',
+    W: 'รูปถ่ายที่ 7',
+    X: 'รูปถ่ายที่ 8',
+    Y: 'รูปถ่ายที่ 9',
+    Z: 'ใบกำกับภาษี',
+    AA: 'ผู้แจ้งซ่อม',
+    AB: 'ผู้ตรวจสอบ',
+    AC: 'วันที่ตรวจสอบ',
+    AD: 'เวลาตรวจสอบ',
+    AE: 'ผู้อนุมัติ',
+    AF: 'วันที่อนุมัติ',
+    AG: 'เวลาอนุมัติ',
+    AH: 'หมายเหตุ',
+    AI: 'สถานะการอนุมัติ',
+    AJ: 'ID',
+    AK: 'รายละเอียดเพิ่มเติม',
+    AL: 'สถานะการเปลี่ยนแปลง',
+  },
   '1295975917': {
     A: 'หมายเลขหางพ่วง',
   },
@@ -506,6 +578,12 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
 const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '606634465': new Set(['P', 'Q', 'R', 'S', 'T', 'U', 'V']),
   '1156877149': new Set(['D', 'Z']),
+  '944294225': new Set([
+    'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
+    'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
+    'AJ', 'AK', 'AL',
+  ]),
 };
 
 const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
@@ -516,6 +594,47 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'ภาพถ่ายที่ 2',
     'น้ำหนักสุทธิ',
     'จำนวนรอบ',
+  ]),
+  '944294225': new Set([
+    'เลขที่แจ้งซ่อม SAP',
+    'กำหนดการ',
+    'วันที่ซ่อมเสร็จ',
+    'ระยะเวลาซ่อม',
+    'เลขที่ PR',
+    'เลขที่ใบกำกับภาษี',
+    'ค่าอะไหล่',
+    'ค่าแรง',
+    'รูปถ่ายที่ 1',
+    'รูปถ่ายที่ 2',
+    'รูปถ่ายที่ 3',
+    'รูปถ่ายที่ 4',
+    'รูปถ่ายที่ 5',
+    'รูปถ่ายที่ 6',
+    'รูปถ่ายที่ 7',
+    'รูปถ่ายที่ 8',
+    'รูปถ่ายที่ 9',
+    'ภาพถ่ายที่ 1',
+    'ภาพถ่ายที่ 2',
+    'ภาพถ่ายที่ 3',
+    'ภาพถ่ายที่ 4',
+    'ภาพถ่ายที่ 5',
+    'ภาพถ่ายที่ 6',
+    'ภาพถ่ายที่ 7',
+    'ภาพถ่ายที่ 8',
+    'ภาพถ่ายที่ 9',
+    'ใบกำกับภาษี',
+    'ผู้แจ้งซ่อม',
+    'ผู้ตรวจสอบ',
+    'วันที่ตรวจสอบ',
+    'เวลาตรวจสอบ',
+    'ผู้อนุมัติ',
+    'วันที่อนุมัติ',
+    'เวลาอนุมัติ',
+    'หมายเหตุ',
+    'ID',
+    'id',
+    'รายละเอียดเพิ่มเติม',
+    'สถานะการเปลี่ยนแปลง',
   ]),
 };
 
@@ -582,6 +701,14 @@ interface StoredRepairApproval {
   updatedAt: string;
 }
 
+interface StoredRepairPhotoEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  photos: string[];
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -590,6 +717,7 @@ interface MutationsStore {
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
   repairRequests: StoredRepairRequest[];
   repairApprovals: StoredRepairApproval[];
+  repairPhotoEdits: StoredRepairPhotoEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -601,11 +729,13 @@ function createEmptyMutationsStore(): MutationsStore {
     jobTransferNoteEdits: [],
     repairRequests: [],
     repairApprovals: [],
+    repairPhotoEdits: [],
   };
 }
 
 function readLocalMutationsStore(): MutationsStore {
   try {
+    localStorage.removeItem('gsheets_local_mutations_v1');
     const raw = localStorage.getItem(LOCAL_MUTATIONS_STORAGE_KEY);
     if (!raw) return createEmptyMutationsStore();
     const parsed = JSON.parse(raw) as Partial<MutationsStore>;
@@ -628,6 +758,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       repairApprovals: Array.isArray(parsed.repairApprovals)
         ? parsed.repairApprovals
+        : [],
+      repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
+        ? parsed.repairPhotoEdits
         : [],
     };
   } catch {
@@ -702,6 +835,20 @@ async function fetchCombinedMutationsStore(
         mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
       );
 
+      const mergedPhotoEditMap = new Map<string, StoredRepairPhotoEdit>();
+      (remote.repairPhotoEdits ?? []).forEach((p) =>
+        mergedPhotoEditMap.set(
+          p.sequenceNo || p.repairRequestNo || String(p.rowNumber),
+          p
+        )
+      );
+      local.repairPhotoEdits.forEach((p) =>
+        mergedPhotoEditMap.set(
+          p.sequenceNo || p.repairRequestNo || String(p.rowNumber),
+          p
+        )
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -710,6 +857,7 @@ async function fetchCombinedMutationsStore(
         jobTransferNoteEdits: Array.from(mergedNoteMap.values()),
         repairRequests: Array.from(mergedRepReqMap.values()),
         repairApprovals: Array.from(mergedRepAppMap.values()),
+        repairPhotoEdits: Array.from(mergedPhotoEditMap.values()),
       };
     }
   } catch {
@@ -1017,20 +1165,14 @@ export async function fetchSheetTabData(
     rawRows = rawRows.slice(1);
   }
 
+  const allColumns: SheetColumn[] = [];
   const activeColumns: SheetColumn[] = [];
   rawCols.forEach((col, colIndex) => {
-    if (HIDDEN_COLUMN_IDS[tab.gid]?.has(col.id)) {
-      return;
-    }
-
     const fallbackLabel =
       FALLBACK_COLUMN_LABELS[tab.gid]?.[col.id] ?? promotedHeaderRow[col.id] ?? '';
     const label = (col.label?.trim() || fallbackLabel).trim();
 
-    if (
-      HIDDEN_COLUMN_LABELS[tab.gid]?.has(label) ||
-      label.startsWith('https://script.google.com/')
-    ) {
+    if (label.startsWith('https://script.google.com/')) {
       return;
     }
 
@@ -1039,12 +1181,20 @@ export async function fetchSheetTabData(
       return formatGvizCellValue(cell) !== '';
     });
 
-    if (label !== '' && (col.label?.trim() !== '' || hasDataInRows)) {
-      activeColumns.push({
+    if (label !== '' && (col.label?.trim() !== '' || fallbackLabel !== '' || hasDataInRows)) {
+      const colObj: SheetColumn = {
         id: col.id,
         label,
         type: col.type || 'string',
-      });
+      };
+      allColumns.push(colObj);
+
+      const isHiddenById = HIDDEN_COLUMN_IDS[tab.gid]?.has(col.id);
+      const isHiddenByLabel = HIDDEN_COLUMN_LABELS[tab.gid]?.has(label);
+
+      if (!isHiddenById && !isHiddenByLabel) {
+        activeColumns.push(colObj);
+      }
     }
   });
 
@@ -1078,7 +1228,7 @@ export async function fetchSheetTabData(
       if (qVal) existingRecordIds.add(qVal);
     }
 
-    activeColumns.forEach((col) => {
+    allColumns.forEach((col) => {
       const colIdx = rawCols.findIndex((c) => c.id === col.id);
       const cell = colIdx >= 0 ? r.c?.[colIdx] : null;
       let formatted = formatGvizCellValue(cell);
@@ -1212,6 +1362,20 @@ export async function fetchSheetTabData(
         if (app.note) target.values['AH'] = app.note;
       }
     }
+    for (const pe of mutationsStore.repairPhotoEdits) {
+      const target = parsedRows.find(
+        (r) =>
+          (pe.sequenceNo && (r.values['A'] ?? '').trim() === pe.sequenceNo) ||
+          (pe.repairRequestNo && (r.values['G'] ?? '').trim() === pe.repairRequestNo) ||
+          (pe.rowNumber > 0 && r.rowNumber === pe.rowNumber)
+      );
+      if (target) {
+        const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+        pe.photos.slice(0, 9).forEach((photo, idx) => {
+          target.values[photoCols[idx]] = photo;
+        });
+      }
+    }
   }
 
   if (tab.reverseOrder) {
@@ -1223,6 +1387,7 @@ export async function fetchSheetTabData(
     gid: tab.gid,
     tabName: tab.name,
     columns: activeColumns,
+    allColumns,
     rows: parsedRows,
     totalRowsInSheet: Math.max(totalRowsInSheet, parsedRows.length),
     fetchedAt: new Date().toISOString(),
@@ -1940,6 +2105,95 @@ export async function approveRepairRecord(
           }),
         });
       }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function updateRepairPhotos(
+  payload: import('../types').RepairPhotoUpdatePayload
+): Promise<void> {
+  const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+
+  // 1. Update local store
+  const localStore = readLocalMutationsStore();
+  for (const reqItem of localStore.repairRequests) {
+    if (
+      (payload.sequenceNo && reqItem.sequenceNo === payload.sequenceNo) ||
+      (payload.repairRequestNo && reqItem.values['G'] === payload.repairRequestNo) ||
+      (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
+    ) {
+      payload.photos.slice(0, 9).forEach((photo, idx) => {
+        reqItem.values[photoCols[idx]] = photo;
+      });
+    }
+  }
+
+  const existingIdx = localStore.repairPhotoEdits.findIndex(
+    (p) =>
+      (payload.sequenceNo && p.sequenceNo === payload.sequenceNo) ||
+      (payload.repairRequestNo && p.repairRequestNo === payload.repairRequestNo) ||
+      (payload.rowNumber > 0 && p.rowNumber === payload.rowNumber)
+  );
+
+  const editEntry: StoredRepairPhotoEdit = {
+    rowNumber: payload.rowNumber,
+    sequenceNo: payload.sequenceNo,
+    repairRequestNo: payload.repairRequestNo,
+    photos: payload.photos,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    localStore.repairPhotoEdits[existingIdx] = editEntry;
+  } else {
+    localStore.repairPhotoEdits.push(editEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Persist to server store
+  void fetch('/api/mutations/repair-photos', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+
+  // 3. Webhook update on existing row
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateRepairPhotos',
+        ...payload,
+      });
+      return;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. Update via Google Sheets API (if token available) on exact existing row
+  const token = getSilentAccessToken();
+  if (token && payload.rowNumber > 0) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!Q${payload.rowNumber}:Y${payload.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      const rowValues: string[] = new Array(9).fill('');
+      payload.photos.slice(0, 9).forEach((photo, idx) => {
+        rowValues[idx] = photo;
+      });
+
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [rowValues],
+        }),
+      });
     } catch {
       // ignore
     }

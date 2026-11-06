@@ -24,6 +24,7 @@ export interface SheetDataResult {
   gid: string;
   tabName: string;
   columns: SheetColumn[];
+  allColumns?: SheetColumn[];
   rows: SheetRow[];
   totalRowsInSheet: number;
   fetchedAt: string;
@@ -74,6 +75,13 @@ export interface RepairApprovalPayload {
   approvalTime: string;
   repairStatus?: string;
   note?: string;
+}
+
+export interface RepairPhotoUpdatePayload {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  photos: string[];
 }
 
 

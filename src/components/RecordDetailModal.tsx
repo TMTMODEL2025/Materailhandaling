@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Copy, Check } from 'lucide-react';
+import { X, Copy, Check, Camera } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
 
 interface RecordDetailModalProps {
@@ -7,6 +7,7 @@ interface RecordDetailModalProps {
   columns: SheetColumn[];
   tabName: string;
   onClose: () => void;
+  onOpenAttachPhotos?: (row: SheetRow) => void;
 }
 
 export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
@@ -14,6 +15,7 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   columns,
   tabName,
   onClose,
+  onOpenAttachPhotos,
 }) => {
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
 
@@ -71,9 +73,14 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                     {col.label}
                   </div>
                   <div className="flex min-w-0 flex-col items-end gap-1.5 text-right">
-                    {val.startsWith('data:image/') || val.includes('.jpg') || val.includes('.png') || val.includes('.jpeg') ? (
+                    {val.startsWith('data:image/') ||
+                    val.includes('.jpg') ||
+                    val.includes('.png') ||
+                    val.includes('.jpeg') ||
+                    ((val.startsWith('http://') || val.startsWith('https://')) &&
+                      (col.label.includes('รูป') || col.label.includes('ภาพ'))) ? (
                       <div className="flex flex-col items-end gap-1">
-                        {val.startsWith('data:image/') ? (
+                        {val.startsWith('data:image/') || val.startsWith('http') ? (
                           <img
                             src={val}
                             alt={col.label}
@@ -113,7 +120,19 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-end border-t border-slate-200 px-4 py-2.5 sm:px-5">
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2.5 sm:px-5">
+          {tabName.includes('ซ่อม') && onOpenAttachPhotos ? (
+            <button
+              type="button"
+              onClick={() => onOpenAttachPhotos(row)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+            >
+              <Camera className="h-3.5 w-3.5" />
+              <span>แนบรูปเพิ่ม / แก้ไขรูปถ่าย</span>
+            </button>
+          ) : (
+            <div />
+          )}
           <button
             type="button"
             onClick={onClose}

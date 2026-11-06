@@ -21,6 +21,8 @@ import {
   Wrench,
   CheckCircle,
   Calendar,
+  Camera,
+  Eye,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -37,6 +39,7 @@ import { DeliveryPointModal } from './components/DeliveryPointModal';
 import { SheetWebhookModal } from './components/SheetWebhookModal';
 import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
+import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { APP_VERSION } from './version';
 
 const PAGE_SIZE = 30;
@@ -114,6 +117,7 @@ export default function App() {
   const [isRepairModalOpen, setIsRepairModalOpen] = useState<boolean>(false);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
+  const [attachingPhotoRow, setAttachingPhotoRow] = useState<SheetRow | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
@@ -1198,12 +1202,18 @@ export default function App() {
                     >
                       <div className="mx-auto max-w-md">
                         <div className="text-base font-semibold text-slate-900">
-                          ไม่พบรายการข้อมูลที่ตรงกับเงื่อนไขการค้นหา
+                          {sheetData && sheetData.rows.length === 0
+                            ? 'ไม่มีรายการข้อมูล'
+                            : 'ไม่พบข้อมูล'}
                         </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          {searchQuery
+                          {sheetData && sheetData.rows.length === 0
+                            ? 'ไม่พบข้อมูลในตารางนี้จาก Google Sheets'
+                            : searchQuery
                             ? `ไม่พบข้อมูลที่มีคำว่า "${searchQuery}" ในชุดข้อมูลที่เลือก`
-                            : 'ไม่มีข้อมูลในตารางนี้'}
+                            : startDateFilter || endDateFilter
+                            ? 'ไม่พบข้อมูลในช่วงวันที่ระบุ'
+                            : 'ไม่พบรายการข้อมูลที่ตรงกับเงื่อนไขการค้นหา'}
                         </p>
                         <div className="mt-4 flex items-center justify-center gap-2">
                           {(searchQuery !== '' ||
@@ -1242,7 +1252,37 @@ export default function App() {
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >
                       <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                        #{row.rowNumber.toLocaleString('th-TH')}
+                        <div className="flex items-center gap-1.5">
+                          <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
+                          {activeTab.gid === '944294225' && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedRow(row);
+                                }}
+                                title="ดูรายละเอียดทั้งหมด"
+                                className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2 py-0.5 text-[10px] font-semibold transition-colors"
+                              >
+                                <Eye className="h-3 w-3" />
+                                <span>รายละเอียด</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAttachingPhotoRow(row);
+                                }}
+                                title="แนบรูปเพิ่ม / แก้ไขรูปถ่าย"
+                                className="inline-flex items-center gap-1 rounded bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 transition-colors"
+                              >
+                                <Camera className="h-3 w-3 text-slate-600" />
+                                <span className="hidden sm:inline">แนบรูป</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       {sheetData?.columns.map((col) => {
                         const val = row.values[col.id] ?? '';
@@ -1466,9 +1506,39 @@ export default function App() {
       {/* Record Detail Modal */}
       <RecordDetailModal
         row={selectedRow}
-        columns={sheetData?.columns ?? []}
+        columns={sheetData?.allColumns ?? sheetData?.columns ?? []}
         tabName={activeTab.name}
         onClose={() => setSelectedRow(null)}
+        onOpenAttachPhotos={(row) => setAttachingPhotoRow(row)}
+      />
+
+      {/* Attach / Edit Repair Photos Modal */}
+      <AttachRepairPhotosModal
+        isOpen={attachingPhotoRow !== null}
+        row={attachingPhotoRow}
+        onClose={() => setAttachingPhotoRow(null)}
+        onPhotosUpdated={(updatedPhotos) => {
+          setSaveSuccessMsg('อัปเดตรูปถ่ายเพิ่มเติมในแถวเดิมเรียบร้อยแล้ว');
+          if (
+            selectedRow &&
+            attachingPhotoRow &&
+            selectedRow.rowNumber === attachingPhotoRow.rowNumber
+          ) {
+            const updatedValues = { ...selectedRow.values };
+            const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+            updatedPhotos.slice(0, 9).forEach((photo, idx) => {
+              updatedValues[photoCols[idx]] = photo;
+            });
+            setSelectedRow({
+              ...selectedRow,
+              values: updatedValues,
+            });
+          }
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
       />
 
       {/* Job Transfer Creation Modal */}

@@ -33,7 +33,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   onApprovedSuccess,
 }) => {
   const [filterMode, setFilterMode] = useState<'PENDING' | 'ALL'>('PENDING');
-  const [approverName, setApproverName] = useState<string>('นายกฤษฎา  เกิดเสม');
+  const [approverName, setApproverName] = useState<string>(
+    () => localStorage.getItem('gsheets_manager_approver_name') || ''
+  );
   const [selectedRow, setSelectedRow] = useState<SheetRow | null>(null);
   const [decision, setDecision] = useState<'3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ'>('3.✔️อนุมัติ');
   const [note, setNote] = useState<string>('');
@@ -149,7 +151,14 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
             <input
               type="text"
               value={approverName}
-              onChange={(e) => setApproverName(e.target.value)}
+              onChange={(e) => {
+                setApproverName(e.target.value);
+                try {
+                  localStorage.setItem('gsheets_manager_approver_name', e.target.value);
+                } catch {
+                  // ignore storage error
+                }
+              }}
               placeholder="ระบุชื่อผู้จัดการอนุมัติ"
               className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
             />
@@ -314,10 +323,12 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
             <div className="py-12 text-center text-slate-500">
               <Clock className="mx-auto h-8 w-8 text-slate-300" />
               <div className="mt-2 text-sm font-semibold text-slate-800">
-                ไม่มีรายการรอการอนุมัติในขณะนี้
+                ไม่มีรายการข้อมูล
               </div>
               <div className="text-xs text-slate-400">
-                ทุกรายการได้รับการพิจารณาเรียบร้อยแล้ว
+                {filterMode === 'PENDING'
+                  ? 'ไม่พบรายการรอการอนุมัติในระบบ'
+                  : 'ไม่พบรายการข้อมูลในตาราง'}
               </div>
             </div>
           ) : (
