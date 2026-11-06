@@ -71,6 +71,38 @@ function compressImageFile(file: File): Promise<string> {
   });
 }
 
+function generateNextRepairRequestNo(existingRows: SheetRow[]): string {
+  const now = new Date();
+  const monthStr = String(now.getMonth() + 1).padStart(2, '0');
+  const prefix = `TMT-FL${monthStr}`;
+
+  let maxSeq = 0;
+  existingRows.forEach((r) => {
+    const val = (r.values['G'] ?? '').trim();
+    if (!val) return;
+
+    // Pattern 1: TMT-FL{month}-{seq} or TMT-FL{month}{seq}
+    const matchFl = val.match(new RegExp(`^TMT-FL${monthStr}-?(\\d+)$`, 'i'));
+    if (matchFl && matchFl[1]) {
+      const num = parseInt(matchFl[1], 10);
+      if (num > maxSeq) maxSeq = num;
+      return;
+    }
+
+    // Pattern 2: Existing sheet pattern TMT{year}-{month}-{seq} e.g. TMT2026-11-0012
+    const matchTmt = val.match(new RegExp(`^TMT\\d{4}-${monthStr}-(\\d+)$`, 'i'));
+    if (matchTmt && matchTmt[1]) {
+      const num = parseInt(matchTmt[1], 10);
+      if (num > maxSeq) maxSeq = num;
+      return;
+    }
+  });
+
+  const nextSeq = maxSeq + 1;
+  const seqStr = String(nextSeq).padStart(4, '0');
+  return `TMT-FL${monthStr}-${seqStr}`;
+}
+
 export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
   isOpen,
   onClose,
@@ -135,8 +167,9 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
       setDate(getCurrentThaiDateString());
       setTime(getCurrentTimeString());
       setSubmitError(null);
+      setRepairRequestNo(generateNextRepairRequestNo(existingRows));
     }
-  }, [isOpen]);
+  }, [isOpen, existingRows]);
 
   if (!isOpen) return null;
 
@@ -356,17 +389,22 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
               </datalist>
             </div>
 
-            {/* เลขที่ขอซ่อม (ถ้ามี) */}
+            {/* เลขที่ขอซ่อม (รันอัตโนมัติ) */}
             <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                เลขที่ขอซ่อม
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  เลขที่ขอซ่อม
+                </label>
+                <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded">
+                  รันอัตโนมัติ
+                </span>
+              </div>
               <input
                 type="text"
                 value={repairRequestNo}
                 onChange={(e) => setRepairRequestNo(e.target.value)}
-                placeholder="เช่น REQ-001 (ถ้ามี)"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                placeholder="TMT-FL11-0013"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs sm:text-sm font-semibold text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
               />
             </div>
 
