@@ -71,6 +71,62 @@ function compressImageFile(file: File): Promise<string> {
   });
 }
 
+function recompressDataUrlIfOversized(src: string): Promise<string> {
+  const trimmed = (src || '').trim();
+  if (!trimmed.startsWith('data:image/') || trimmed.length <= 45000) {
+    return Promise.resolve(trimmed);
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve(trimmed);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_CHARS = 45000;
+      let maxDim = 800;
+      let quality = 0.65;
+      let compressedDataUrl = trimmed;
+
+      while (maxDim >= 280) {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(trimmed);
+          return;
+        }
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+
+        if (compressedDataUrl.length <= MAX_CHARS) {
+          break;
+        }
+        maxDim = Math.round(maxDim * 0.78);
+        quality = Math.max(0.42, quality - 0.08);
+      }
+
+      resolve(compressedDataUrl);
+    };
+    img.src = trimmed;
+  });
+}
+
 export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = ({
   isOpen,
   onClose,
@@ -138,24 +194,31 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
     setError(null);
 
     try {
+      const cleanedPhotos = await Promise.all(
+        photos.slice(0, 9).map((p) => recompressDataUrlIfOversized(p))
+      );
+      const paddedPhotos = Array.from({ length: 9 }, (_, idx) =>
+        (cleanedPhotos[idx] || '').trim()
+      );
+
       await updateRepairPhotos({
         rowNumber: row.rowNumber,
         sequenceNo,
         repairRequestNo,
-        photos,
+        photos: paddedPhotos,
       });
 
-      // Update row.values directly for immediate responsiveness
+      // Update row.values directly for immediate responsiveness across all 9 photo columns
       PHOTO_COLS.forEach((col, idx) => {
-        row.values[col] = photos[idx] || '';
+        row.values[col] = paddedPhotos[idx] || '';
       });
 
       showSuccessToast(
         'บันทึกรูปถ่ายสำเร็จ!',
-        'ระบบอัปเดตรูปถ่ายเพิ่มเติมในแถวเดิมเรียบร้อยแล้ว'
+        'ระบบอัปเดตรูปถ่ายในฐานข้อมูลเรียบร้อยแล้ว'
       );
 
-      onPhotosUpdated(photos);
+      onPhotosUpdated(paddedPhotos);
       onClose();
     } catch (err: unknown) {
       setError(

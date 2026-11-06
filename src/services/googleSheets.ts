@@ -321,7 +321,7 @@ function doPost(e) {
       const repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
+        const startRow = 2;
         const numRows = lastRow - startRow + 1;
         const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
         for (let i = checkData.length - 1; i >= 0; i--) {
@@ -336,19 +336,23 @@ function doPost(e) {
 
       const photoUrls = [];
       if (targetRow >= 2 && Array.isArray(body.photos)) {
+        const rowPhotos = [];
         for (let j = 0; j < 9; j++) {
           let p = body.photos[j];
-          if (p !== undefined && p !== null) {
-            if (typeof p === 'string' && p.indexOf('data:image') === 0) {
+          if (p !== undefined && p !== null && String(p).trim() !== '') {
+            p = String(p).trim();
+            if (p.indexOf('data:image') === 0) {
               const driveUrl = saveBase64ImageToDrive(p, 'repair_' + (repairRequestNo || sequenceNo || targetRow) + '_' + (j + 1));
               p = driveUrl || p;
             }
-            sheet.getRange(targetRow, 17 + j).setValue(String(p || ''));
-            photoUrls.push(String(p || ''));
+            rowPhotos.push(p);
+            photoUrls.push(p);
           } else {
+            rowPhotos.push('');
             photoUrls.push('');
           }
         }
+        sheet.getRange(targetRow, 17, 1, 9).setValues([rowPhotos]);
       }
       return jsonResponse({ ok: true, rowNumber: targetRow, photoUrls: photoUrls });
     }
@@ -1137,6 +1141,7 @@ interface StoredRepairPhotoEdit {
   repairRequestNo?: string;
   photos: string[];
   updatedAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredRepairDetailEdit {
@@ -2127,6 +2132,14 @@ export async function fetchSheetTabData(
       }
     }
     for (const pe of mutationsStore.repairPhotoEdits) {
+      // Once synced to Google Sheets, only overlay for 15 seconds while GViz cache refreshes
+      // so all devices always see the exact same Google Sheets source-of-truth photos
+      if (pe.syncedToSheet && pe.updatedAt) {
+        const ageMs = Date.now() - new Date(pe.updatedAt).getTime();
+        if (ageMs > 15000) {
+          continue;
+        }
+      }
       const target = parsedRows.find(
         (r) =>
           (pe.sequenceNo && (r.values['A'] ?? '').trim() === pe.sequenceNo) ||
@@ -2135,8 +2148,8 @@ export async function fetchSheetTabData(
       );
       if (target) {
         const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
-        pe.photos.slice(0, 9).forEach((photo, idx) => {
-          target.values[photoCols[idx]] = photo;
+        photoCols.forEach((col, idx) => {
+          target.values[col] = (pe.photos[idx] ?? '').trim();
         });
       }
     }
@@ -2995,8 +3008,12 @@ export async function updateRepairPhotos(
   payload: import('../types').RepairPhotoUpdatePayload
 ): Promise<void> {
   const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+  // Always normalize to 9 string elements so deleted photo slots are explicitly '' (never undefined)
+  const normalizedPhotos: string[] = Array.from({ length: 9 }, (_, idx) =>
+    String(payload.photos[idx] ?? '').trim()
+  );
 
-  // 1. Update local store
+  // 1. Update local store across all 9 photo columns
   const localStore = readLocalMutationsStore();
   for (const reqItem of localStore.repairRequests) {
     if (
@@ -3004,8 +3021,8 @@ export async function updateRepairPhotos(
       (payload.repairRequestNo && reqItem.values['G'] === payload.repairRequestNo) ||
       (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
     ) {
-      payload.photos.slice(0, 9).forEach((photo, idx) => {
-        reqItem.values[photoCols[idx]] = photo;
+      photoCols.forEach((col, idx) => {
+        reqItem.values[col] = normalizedPhotos[idx];
       });
     }
   }
@@ -3021,8 +3038,9 @@ export async function updateRepairPhotos(
     rowNumber: payload.rowNumber,
     sequenceNo: payload.sequenceNo,
     repairRequestNo: payload.repairRequestNo,
-    photos: payload.photos,
+    photos: normalizedPhotos,
     updatedAt: new Date().toISOString(),
+    syncedToSheet: false,
   };
 
   if (existingIdx >= 0) {
@@ -3036,38 +3054,62 @@ export async function updateRepairPhotos(
   void fetch('/api/mutations/repair-photos', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...payload,
+      photos: normalizedPhotos,
+    }),
   }).catch(() => {});
 
-  // 3. Webhook update on existing row
+  // 3. Webhook update on existing row (sending all 9 slots so '' clears deleted cells in Google Sheets)
   const scriptUrl = getConfiguredAppsScriptUrl();
   if (scriptUrl) {
     try {
       const res = await callAppsScriptWebhook(scriptUrl, {
         action: 'updateRepairPhotos',
         ...payload,
+        photos: normalizedPhotos,
       });
-      if (res.ok !== false && Array.isArray(res.photoUrls) && res.photoUrls.length > 0) {
-        const updatedUrls = res.photoUrls;
+      if (res.ok !== false && (!res.rowNumber || res.rowNumber >= 2)) {
+        const updatedUrls = Array.isArray(res.photoUrls) && res.photoUrls.length > 0
+          ? Array.from({ length: 9 }, (_, idx) => String(res.photoUrls![idx] ?? '').trim())
+          : normalizedPhotos;
+
         for (const reqItem of localStore.repairRequests) {
           if (
             (payload.sequenceNo && reqItem.sequenceNo === payload.sequenceNo) ||
             (payload.repairRequestNo && reqItem.values['G'] === payload.repairRequestNo) ||
             (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
           ) {
-            updatedUrls.slice(0, 9).forEach((photo, idx) => {
-              if (photo) reqItem.values[photoCols[idx]] = photo;
+            photoCols.forEach((col, idx) => {
+              reqItem.values[col] = updatedUrls[idx];
             });
           }
         }
-        if (existingIdx >= 0) {
-          localStore.repairPhotoEdits[existingIdx].photos = updatedUrls;
+        const targetIdx = localStore.repairPhotoEdits.findIndex(
+          (p) =>
+            (payload.sequenceNo && p.sequenceNo === payload.sequenceNo) ||
+            (payload.repairRequestNo && p.repairRequestNo === payload.repairRequestNo) ||
+            (payload.rowNumber > 0 && p.rowNumber === payload.rowNumber)
+        );
+        if (targetIdx >= 0) {
+          localStore.repairPhotoEdits[targetIdx].photos = updatedUrls;
+          localStore.repairPhotoEdits[targetIdx].syncedToSheet = true;
+          localStore.repairPhotoEdits[targetIdx].updatedAt = new Date().toISOString();
         }
         writeLocalMutationsStore(localStore);
+        void fetch('/api/mutations/repair-photos', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...payload,
+            photos: updatedUrls,
+            syncedToSheet: true,
+          }),
+        }).catch(() => {});
+        return;
       }
-      return;
     } catch {
-      // fall through
+      // fall through to Google Sheets REST API v4
     }
   }
 
@@ -3086,12 +3128,11 @@ export async function updateRepairPhotos(
           `บันทึกงานซ่อม!Q${targetRow}:Y${targetRow}`
         );
         const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-        const rowValues: string[] = new Array(9).fill('');
-        payload.photos.slice(0, 9).forEach((photo, idx) => {
-          rowValues[idx] = photo && photo.length <= 48000 ? photo : '';
-        });
+        const rowValues: string[] = normalizedPhotos.map((photo) =>
+          photo && photo.length <= 48000 ? photo : ''
+        );
 
-        await fetch(updateUrl, {
+        const putRes = await fetch(updateUrl, {
           method: 'PUT',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -3101,6 +3142,19 @@ export async function updateRepairPhotos(
             values: [rowValues],
           }),
         });
+        if (putRes.ok) {
+          const targetIdx = localStore.repairPhotoEdits.findIndex(
+            (p) =>
+              (payload.sequenceNo && p.sequenceNo === payload.sequenceNo) ||
+              (payload.repairRequestNo && p.repairRequestNo === payload.repairRequestNo) ||
+              (payload.rowNumber > 0 && p.rowNumber === payload.rowNumber)
+          );
+          if (targetIdx >= 0) {
+            localStore.repairPhotoEdits[targetIdx].syncedToSheet = true;
+            localStore.repairPhotoEdits[targetIdx].updatedAt = new Date().toISOString();
+            writeLocalMutationsStore(localStore);
+          }
+        }
       }
     } catch {
       // ignore

@@ -77,6 +77,7 @@ interface StoredRepairPhotoEdit {
   repairRequestNo?: string;
   photos: string[];
   updatedAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredRepairDetailEdit {
@@ -583,11 +584,14 @@ async function startServer() {
 
   app.put('/api/mutations/repair-photos', (req, res) => {
     const store = readStore();
-    const { rowNumber, sequenceNo, repairRequestNo, photos } = req.body ?? {};
+    const { rowNumber, sequenceNo, repairRequestNo, photos, syncedToSheet } = req.body ?? {};
     const rn = typeof rowNumber === 'number' ? rowNumber : 0;
     const seq = String(sequenceNo ?? '').trim();
     const reqNo = String(repairRequestNo ?? '').trim();
-    const photoList = Array.isArray(photos) ? photos : [];
+    const rawList = Array.isArray(photos) ? photos : [];
+    const photoList = Array.from({ length: 9 }, (_, idx) =>
+      String(rawList[idx] ?? '').trim()
+    );
 
     const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
 
@@ -598,8 +602,8 @@ async function startServer() {
         (reqNo && reqItem.values['G'] === reqNo) ||
         (rn > 0 && reqItem.rowNumber === rn)
       ) {
-        photoList.slice(0, 9).forEach((photo, idx) => {
-          reqItem.values[photoCols[idx]] = photo;
+        photoCols.forEach((col, idx) => {
+          reqItem.values[col] = photoList[idx];
         });
       }
     }
@@ -617,6 +621,7 @@ async function startServer() {
       repairRequestNo: reqNo,
       photos: photoList,
       updatedAt: new Date().toISOString(),
+      syncedToSheet: Boolean(syncedToSheet),
     };
 
     if (existingIdx >= 0) {

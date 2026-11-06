@@ -2154,8 +2154,8 @@ export default function App() {
           ) {
             const updatedValues = { ...selectedRow.values };
             const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
-            updatedPhotos.slice(0, 9).forEach((photo, idx) => {
-              updatedValues[photoCols[idx]] = photo;
+            photoCols.forEach((col, idx) => {
+              updatedValues[col] = (updatedPhotos[idx] ?? '').trim();
             });
             setSelectedRow({
               ...selectedRow,
