@@ -62,11 +62,20 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
     }
   }, [isOpen]);
 
-  // Filter rows based on approval status
+  // Filter rows based on approval status (exclude 'รอตรวจสอบ' until passed 'ผู้ตรวจสอบ')
   const pendingRows = useMemo(() => {
     return rows.filter((r) => {
       const status = (r.values['AI'] ?? '').trim();
+      const repairStatus = (r.values['P'] ?? '').trim();
+      const inspector = (r.values['AB'] ?? '').trim();
       const replyText = (r.values['AM'] ?? '').trim();
+      if (
+        status === 'รอตรวจสอบ' ||
+        repairStatus === 'รอตรวจสอบ' ||
+        (!status && !inspector)
+      ) {
+        return false;
+      }
       return (
         status === '2.⚠️รออนุมัติ' ||
         status === 'รออนุมัติ' ||
@@ -554,10 +563,16 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                 const sym = r.values['F'] || '';
                 const rep = r.values['AA'] || '';
                 const appStatus = (r.values['AI'] ?? '').trim();
+                const repairStatus = (r.values['P'] ?? '').trim();
+                const inspector = (r.values['AB'] ?? '').trim();
                 const approver = r.values['AE'] || '';
                 const reqInfoText = (r.values['AK'] ?? '').trim();
                 const replyText = (r.values['AM'] ?? '').trim();
 
+                const isWaitingInspection =
+                  appStatus === 'รอตรวจสอบ' ||
+                  repairStatus === 'รอตรวจสอบ' ||
+                  (!appStatus && !inspector);
                 const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
                 const isApproved =
                   appStatus.includes('อนุมัติ') &&
@@ -568,7 +583,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                 const isNeedInfo =
                   (appStatus.includes('ขอข้อมูล') || Boolean(reqInfoText)) && !isReplied;
 
-                const displayStatusLabel = isReplied
+                const displayStatusLabel = isWaitingInspection
+                  ? 'รอตรวจสอบ'
+                  : isReplied
                   ? '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว'
                   : appStatus === '2.⚠️รอพิจารณา' || appStatus === 'รอพิจารณา' || !appStatus
                   ? '2.⚠️รออนุมัติ'
@@ -591,7 +608,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                         {displayStatusLabel && (
                           <span
                             className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                              isReplied
+                              isWaitingInspection
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : isReplied
                                 ? 'bg-emerald-100 text-emerald-950 border border-emerald-400 shadow-2xs'
                                 : isApproved
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -630,7 +649,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                       )}
 
                       <div className="mt-1 text-[11px] text-slate-400">
-                        ผู้แจ้ง: {rep || '-'} {approver ? `· ผู้อนุมัติ: ${approver}` : ''}
+                        ผู้แจ้ง: {rep || '-'} {inspector ? `· ผู้ตรวจสอบ: ${inspector}` : ''} {approver ? `· ผู้อนุมัติ: ${approver}` : ''}
                       </div>
                     </div>
 

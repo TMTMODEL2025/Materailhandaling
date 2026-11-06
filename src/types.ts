@@ -86,4 +86,14 @@ export interface RepairPhotoUpdatePayload {
   photos: string[];
 }
 
-
+export interface RepairInspectionPayload {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  inspectorName: string;
+  inspectionDate: string;
+  inspectionTime: string;
+  sparePartsCost?: string;
+  laborCost?: string;
+  note?: string;
+}

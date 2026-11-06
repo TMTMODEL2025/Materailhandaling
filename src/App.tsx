@@ -33,10 +33,12 @@ import {
   fetchSheetTabData,
   updateDeliveryPointGate,
   updateVehicleRegistration,
+  updateVehicleField,
   updateJobTransferNote,
   updateRepairAdditionalDetails,
   updateRepairReplyDetails,
   updateRepairFinancialDetails,
+  inspectRepairRecord,
   isPhotoValue,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
@@ -94,7 +96,16 @@ function parseIsoInputDateToTimestamp(isoDate: string): number | null {
 function calculatePendingApprovalCount(rows: SheetRow[]): number {
   return rows.filter((r) => {
     const status = (r.values['AI'] ?? '').trim();
+    const repairStatus = (r.values['P'] ?? '').trim();
+    const inspector = (r.values['AB'] ?? '').trim();
     const replyText = (r.values['AM'] ?? '').trim();
+    if (
+      status === 'รอตรวจสอบ' ||
+      repairStatus === 'รอตรวจสอบ' ||
+      (!status && !inspector)
+    ) {
+      return false;
+    }
     return (
       status === '2.⚠️รออนุมัติ' ||
       status === 'รออนุมัติ' ||
@@ -113,7 +124,16 @@ function calculatePendingApprovalCount(rows: SheetRow[]): number {
 
 function getRowApprovalStatus(row: SheetRow): string {
   const appStatus = (row.values['AI'] ?? '').trim();
+  const repairStatus = (row.values['P'] ?? '').trim();
+  const inspector = (row.values['AB'] ?? '').trim();
   const replyText = (row.values['AM'] ?? '').trim();
+  if (
+    appStatus === 'รอตรวจสอบ' ||
+    repairStatus === 'รอตรวจสอบ' ||
+    (!appStatus && !inspector)
+  ) {
+    return 'รอตรวจสอบ';
+  }
   const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
   if (isReplied) return '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
   if (!appStatus || appStatus === '2.⚠️รอพิจารณา' || appStatus === 'รอพิจารณา') return '2.⚠️รออนุมัติ';
@@ -443,6 +463,7 @@ export default function App() {
   const quickFilterOptions = useMemo<string[]>(() => {
     if (activeTab.gid === '944294225') {
       return [
+        'รอตรวจสอบ',
         'รอคิวซ่อม',
         'ซ่อมเสร็จแล้ว',
         'กำลังซ่อม',
@@ -496,7 +517,9 @@ export default function App() {
           const detailVal = (row.values['AK'] ?? '').trim();
           const appVal = (row.values['AI'] ?? '').trim();
 
-          if (quickFilterValue === 'ผู้ใช้งานแจ้งซ่อม') {
+          if (quickFilterValue === 'รอตรวจสอบ') {
+            if (getRowApprovalStatus(row) !== 'รอตรวจสอบ' && statusVal !== 'รอตรวจสอบ' && appVal !== 'รอตรวจสอบ') return false;
+          } else if (quickFilterValue === 'ผู้ใช้งานแจ้งซ่อม') {
             if (!reporterVal) return false;
           } else if (quickFilterValue === 'รอข้อมูลเพิ่มเติม') {
             if (!statusVal.includes('ข้อมูลเพิ่มเติม') && !detailVal && !appVal.includes('ข้อมูลเพิ่มเติม')) return false;
@@ -518,9 +541,9 @@ export default function App() {
         return cellVal.includes(q);
       }
 
-      // Search across row number and all active columns
+      // Search across row number and all columns
       if (String(row.rowNumber).includes(q)) return true;
-      return sheetData.columns.some((col) =>
+      return (sheetData.allColumns ?? sheetData.columns).some((col) =>
         (row.values[col.id] ?? '').toLowerCase().includes(q)
       );
     });
@@ -1378,6 +1401,11 @@ export default function App() {
                         จัดการ
                       </th>
                     )}
+                    {activeTab.gid === '378250263' && (
+                      <th className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap">
+                        เพิ่มเติม
+                      </th>
+                    )}
                   </tr>
                 </thead>
 
@@ -1395,7 +1423,7 @@ export default function App() {
                           <div className="h-4 w-28 rounded bg-slate-200" />
                         </td>
                       ))}
-                      {activeTab.gid === '944294225' && (
+                      {(activeTab.gid === '944294225' || activeTab.gid === '378250263') && (
                         <td className="px-4 py-3 text-center">
                           <div className="mx-auto h-4 w-20 rounded bg-slate-200" />
                         </td>
@@ -1524,8 +1552,7 @@ export default function App() {
 
                                   const isEditableGateCell =
                                     activeTab.gid === '1156877149' && col.id === 'C';
-                                  const isEditableVehicleRegCell =
-                                    activeTab.gid === '378250263' && col.id === 'A';
+                                  const isEditableVehicleRegCell = false;
                                   const isEditableJobNoteCell =
                                     activeTab.gid === '606634465' && col.id === 'N';
                                   const isEditableInlineCell =
@@ -1716,6 +1743,17 @@ export default function App() {
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <div className="flex items-center justify-center gap-1.5">
+                                      {getRowApprovalStatus(row) === 'รอตรวจสอบ' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedRow(row)}
+                                          title="ผู้ตรวจสอบยืนยันข้อมูลเพื่อส่งต่ออนุมัติ"
+                                          className="inline-flex items-center gap-1 rounded bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                                        >
+                                          <CheckCircle2 className="h-3.5 w-3.5" />
+                                          <span>ผู้ตรวจสอบ</span>
+                                        </button>
+                                      )}
                                       <button
                                         type="button"
                                         onClick={() => setSelectedRow(row)}
@@ -1825,8 +1863,7 @@ export default function App() {
 
                         const isEditableGateCell =
                           activeTab.gid === '1156877149' && col.id === 'C';
-                        const isEditableVehicleRegCell =
-                          activeTab.gid === '378250263' && col.id === 'A';
+                        const isEditableVehicleRegCell = false;
                         const isEditableJobNoteCell =
                           activeTab.gid === '606634465' && col.id === 'N';
                         const isEditableInlineCell =
@@ -2017,6 +2054,17 @@ export default function App() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="flex items-center justify-center gap-1.5">
+                            {getRowApprovalStatus(row) === 'รอตรวจสอบ' && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedRow(row)}
+                                title="ผู้ตรวจสอบยืนยันข้อมูลเพื่อส่งต่ออนุมัติ"
+                                className="inline-flex items-center gap-1 rounded bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>ผู้ตรวจสอบ</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => setSelectedRow(row)}
@@ -2036,6 +2084,22 @@ export default function App() {
                               <span>แนบรูป</span>
                             </button>
                           </div>
+                        </td>
+                      )}
+                      {activeTab.gid === '378250263' && (
+                        <td
+                          className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRow(row)}
+                            title="ดูข้อมูลเพิ่มเติมและแก้ไข"
+                            className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            <span>เพิ่มเติม</span>
+                          </button>
                         </td>
                       )}
                     </tr>
@@ -2371,6 +2435,56 @@ export default function App() {
           row.values['N'] = spareParts;
           row.values['O'] = labor;
           setSaveSuccessMsg('อัปเดตค่าอะไหล่และค่าแรงเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+        }}
+        onUpdateVehicleField={async (row, colId, newValue) => {
+          const oldReg = (row.values['A'] ?? '').trim();
+          const drvName = (row.values['I'] ?? '').trim();
+          const shf = (row.values['L'] ?? '').trim();
+          const saved = await updateVehicleField({
+            rowNumber: row.rowNumber,
+            colId,
+            newValue,
+            oldRegistration: oldReg,
+            driverName: drvName,
+            shift: shf,
+          });
+          row.values[colId] = saved;
+          row.rawValues[colId] = saved;
+          setSaveSuccessMsg('อัปเดตข้อมูลฐานข้อมูลรถเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+          return saved;
+        }}
+        onInspectRepair={async (row, inspectorName) => {
+          const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
+          const repairRequestNo = (row.values['G'] ?? '').trim();
+          const now = new Date();
+          const dd = String(now.getDate()).padStart(2, '0');
+          const mm = String(now.getMonth() + 1).padStart(2, '0');
+          const yyyy = String(now.getFullYear());
+          const inspectionDate = `${dd}/${mm}/${yyyy}`;
+          const hh = String(now.getHours()).padStart(2, '0');
+          const min = String(now.getMinutes()).padStart(2, '0');
+          const ss = String(now.getSeconds()).padStart(2, '0');
+          const inspectionTime = `${hh}:${min}:${ss}`;
+
+          await inspectRepairRecord({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            inspectorName,
+            inspectionDate,
+            inspectionTime,
+          });
+
+          row.values['AB'] = inspectorName;
+          row.values['AC'] = inspectionDate;
+          row.values['AD'] = inspectionTime;
+          row.values['P'] = 'ตรวจสอบแล้ว';
+          row.values['AI'] = '2.⚠️รออนุมัติ';
+          setSaveSuccessMsg('ผู้ตรวจสอบยืนยันข้อมูลแล้ว ส่งต่อไปยังสถานะ รออนุมัติ เรียบร้อย');
           loadData({ silent: true });
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}

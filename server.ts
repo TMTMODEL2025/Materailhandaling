@@ -40,6 +40,13 @@ interface StoredVehicleRegEdit {
   updatedAt: string;
 }
 
+interface StoredVehicleFieldEdit {
+  rowNumber: number;
+  colId: string;
+  value: string;
+  updatedAt: string;
+}
+
 interface StoredJobTransferNoteEdit {
   rowNumber: number;
   date: string;
@@ -105,14 +112,29 @@ interface StoredRepairFinancialEdit {
   updatedAt: string;
 }
 
+interface StoredRepairInspection {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  inspectorName: string;
+  inspectionDate: string;
+  inspectionTime: string;
+  sparePartsCost?: string;
+  laborCost?: string;
+  note?: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
   deliveryPointEdits: StoredDeliveryPointEdit[];
   vehicleRegEdits: StoredVehicleRegEdit[];
+  vehicleFieldEdits: StoredVehicleFieldEdit[];
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
   repairRequests: StoredRepairRequest[];
   repairApprovals: StoredRepairApproval[];
+  repairInspections: StoredRepairInspection[];
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
@@ -136,11 +158,15 @@ function readStore(): MutationsStore {
         vehicleRegEdits: Array.isArray(parsed.vehicleRegEdits)
           ? parsed.vehicleRegEdits
           : [],
+        vehicleFieldEdits: Array.isArray(parsed.vehicleFieldEdits)
+          ? parsed.vehicleFieldEdits
+          : [],
         jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
           ? parsed.jobTransferNoteEdits
           : [],
         repairRequests: Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [],
         repairApprovals: Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [],
+        repairInspections: Array.isArray(parsed.repairInspections) ? parsed.repairInspections : [],
         repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [],
         repairDetailEdits: Array.isArray(parsed.repairDetailEdits) ? parsed.repairDetailEdits : [],
         repairReplyEdits: Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [],
@@ -169,9 +195,11 @@ function readStore(): MutationsStore {
     deliveryPoints: [],
     deliveryPointEdits: [],
     vehicleRegEdits: [],
+    vehicleFieldEdits: [],
     jobTransferNoteEdits: [],
     repairRequests: [],
     repairApprovals: [],
+    repairInspections: [],
     repairPhotoEdits: [],
     repairDetailEdits: [],
     repairReplyEdits: [],
@@ -440,6 +468,38 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  app.put('/api/mutations/vehicle-field', (req, res) => {
+    const store = readStore();
+    const { rowNumber, colId, newValue } = req.body ?? {};
+    const rn = typeof rowNumber === 'number' ? rowNumber : Number(rowNumber) || 0;
+    const cid = String(colId ?? '').trim().toUpperCase();
+    const val = String(newValue ?? '').trim();
+
+    if (rn <= 0 || !cid) {
+      res.status(400).json({ error: 'ข้อมูลแถวหรือคอลัมน์ไม่ครบถ้วน' });
+      return;
+    }
+
+    const existingIdx = store.vehicleFieldEdits.findIndex(
+      (e) => e.rowNumber === rn && e.colId === cid
+    );
+    const entry: StoredVehicleFieldEdit = {
+      rowNumber: rn,
+      colId: cid,
+      value: val,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.vehicleFieldEdits[existingIdx] = entry;
+    } else {
+      store.vehicleFieldEdits.push(entry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, entry });
+  });
+
   app.put('/api/mutations/job-transfer-note', (req, res) => {
     const store = readStore();
     const { rowNumber, date, driverName, vehicleNumber, startTime, note } =
@@ -580,6 +640,81 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true, approval: approvalEntry });
+  });
+
+  app.put('/api/mutations/repair-inspection', (req, res) => {
+    const store = readStore();
+    const {
+      rowNumber,
+      sequenceNo,
+      repairRequestNo,
+      inspectorName,
+      inspectionDate,
+      inspectionTime,
+      sparePartsCost,
+      laborCost,
+      note,
+    } = req.body ?? {};
+
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const seq = String(sequenceNo ?? '').trim();
+    const reqNo = String(repairRequestNo ?? '').trim();
+    const inspector = String(inspectorName ?? '').trim();
+    const inspDate = String(inspectionDate ?? '').trim();
+    const inspTime = String(inspectionTime ?? '').trim();
+    const spare = sparePartsCost !== undefined ? String(sparePartsCost).trim() : undefined;
+    const labor = laborCost !== undefined ? String(laborCost).trim() : undefined;
+    const nt = note !== undefined ? String(note).trim() : undefined;
+
+    for (const reqItem of store.repairRequests) {
+      if (
+        (seq && reqItem.sequenceNo === seq) ||
+        (reqNo && reqItem.values['G'] === reqNo) ||
+        (rn > 0 && reqItem.rowNumber === rn)
+      ) {
+        reqItem.values['AB'] = inspector;
+        reqItem.values['AC'] = inspDate;
+        reqItem.values['AD'] = inspTime;
+        reqItem.values['P'] = 'ตรวจสอบแล้ว';
+        reqItem.values['AI'] = '2.⚠️รออนุมัติ';
+        if (spare !== undefined) reqItem.values['N'] = spare;
+        if (labor !== undefined) reqItem.values['O'] = labor;
+        if (nt !== undefined && nt !== '') reqItem.values['AH'] = nt;
+      }
+    }
+
+    if (!store.repairInspections) {
+      store.repairInspections = [];
+    }
+
+    const existingIdx = store.repairInspections.findIndex(
+      (i) =>
+        (seq && i.sequenceNo === seq) ||
+        (reqNo && i.repairRequestNo === reqNo) ||
+        (rn > 0 && i.rowNumber === rn)
+    );
+
+    const inspectionEntry: StoredRepairInspection = {
+      rowNumber: rn,
+      sequenceNo: seq,
+      repairRequestNo: reqNo || undefined,
+      inspectorName: inspector,
+      inspectionDate: inspDate,
+      inspectionTime: inspTime,
+      sparePartsCost: spare,
+      laborCost: labor,
+      note: nt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.repairInspections[existingIdx] = inspectionEntry;
+    } else {
+      store.repairInspections.push(inspectionEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, inspection: inspectionEntry });
   });
 
   app.put('/api/mutations/repair-photos', (req, res) => {

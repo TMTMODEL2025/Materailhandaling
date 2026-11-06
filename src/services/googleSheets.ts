@@ -238,6 +238,22 @@ function doPost(e) {
       return jsonResponse({ ok: true });
     }
 
+    if (action === 'updateVehicleField') {
+      const sheet = ss.getSheetByName('ฐานข้อมูลรถ');
+      const targetRow = (Number(body.rowNumber) || 0) + 1;
+      const colId = String(body.colId || '').trim().toUpperCase();
+      const colIndex = colId.charCodeAt(0) - 64;
+      let valToSave = String(body.newValue || '').trim();
+      if (valToSave.indexOf('data:image') === 0) {
+        const driveUrl = saveBase64ImageToDrive(valToSave, 'vehicle_' + colId + '_row' + targetRow);
+        valToSave = driveUrl || (valToSave.length <= 48000 ? valToSave : '');
+      }
+      if (targetRow >= 2 && colIndex >= 1 && colIndex <= 26) {
+        sheet.getRange(targetRow, colIndex).setValue(valToSave);
+      }
+      return jsonResponse({ ok: true, value: valToSave });
+    }
+
     if (action === 'updateJobTransferNote') {
       const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
       const lastRow = sheet.getLastRow();
@@ -303,12 +319,53 @@ function doPost(e) {
       }
 
       if (targetRow >= 2) {
+        if (body.inspectorName) sheet.getRange(targetRow, 28).setValue(String(body.inspectorName).trim());
+        if (body.inspectionDate) sheet.getRange(targetRow, 29).setValue(String(body.inspectionDate).trim());
+        if (body.inspectionTime) sheet.getRange(targetRow, 30).setValue(String(body.inspectionTime).trim());
         if (body.approverName) sheet.getRange(targetRow, 31).setValue(String(body.approverName).trim());
         if (body.approvalDate) sheet.getRange(targetRow, 32).setValue(String(body.approvalDate).trim());
         if (body.approvalTime) sheet.getRange(targetRow, 33).setValue(String(body.approvalTime).trim());
         if (body.note) sheet.getRange(targetRow, 34).setValue(String(body.note).trim());
         if (body.approvalStatus) sheet.getRange(targetRow, 35).setValue(String(body.approvalStatus).trim());
         if (body.repairStatus) sheet.getRange(targetRow, 16).setValue(String(body.repairStatus).trim());
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
+    if (action === 'inspectRepairRequest') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+      const repairRequestNo = String(body.repairRequestNo || '').trim();
+
+      if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (let i = checkData.length - 1; i >= 0; i--) {
+          const rowSeq = String(checkData[i][0] || '').trim();
+          const rowReqNo = String(checkData[i][6] || '').trim();
+          if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        if (body.inspectorName) sheet.getRange(targetRow, 28).setValue(String(body.inspectorName).trim());
+        if (body.inspectionDate) sheet.getRange(targetRow, 29).setValue(String(body.inspectionDate).trim());
+        if (body.inspectionTime) sheet.getRange(targetRow, 30).setValue(String(body.inspectionTime).trim());
+        sheet.getRange(targetRow, 16).setValue('ตรวจสอบแล้ว');
+        sheet.getRange(targetRow, 35).setValue('2.⚠️รออนุมัติ');
+        if (body.sparePartsCost !== undefined || body.laborCost !== undefined) {
+          if (body.sparePartsCost !== undefined) sheet.getRange(targetRow, 14).setValue(String(body.sparePartsCost).trim());
+          if (body.laborCost !== undefined) sheet.getRange(targetRow, 15).setValue(String(body.laborCost).trim());
+        }
+        if (body.note !== undefined && String(body.note).trim() !== '') {
+          sheet.getRange(targetRow, 34).setValue(String(body.note).trim());
+        }
       }
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
@@ -996,6 +1053,23 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
     AL: 'สถานะการเปลี่ยนแปลง',
     AM: 'ตอบกลับข้อมูลเพิ่มเติม',
   },
+  '378250263': {
+    A: 'ทะเบียนรถ',
+    B: 'รูปรถ',
+    C: 'ประเภทรถ',
+    D: 'รุ่น',
+    E: 'พิกัด',
+    F: 'การใช้งาน',
+    G: 'สถานะการใช้งาน',
+    H: 'หมายเหตุ',
+    I: 'ชื่อพนักงานประจำรถ',
+    J: 'พื้นที่ปฎิบัติงาน',
+    K: 'หมายเลขโทรศัพท์',
+    L: 'กะทำงาน',
+    M: 'รูปพนักงาน',
+    N: 'เวลาเลิกงาน',
+    O: 'ทีม',
+  },
   '1295975917': {
     A: 'หมายเลขหางพ่วง',
   },
@@ -1104,6 +1178,13 @@ interface StoredVehicleRegEdit {
   updatedAt: string;
 }
 
+interface StoredVehicleFieldEdit {
+  rowNumber: number;
+  colId: string;
+  value: string;
+  updatedAt: string;
+}
+
 interface StoredJobTransferNoteEdit {
   rowNumber: number;
   date: string;
@@ -1169,14 +1250,29 @@ interface StoredRepairFinancialEdit {
   updatedAt: string;
 }
 
+interface StoredRepairInspection {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  inspectorName: string;
+  inspectionDate: string;
+  inspectionTime: string;
+  sparePartsCost?: string;
+  laborCost?: string;
+  note?: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
   deliveryPointEdits: StoredDeliveryPointEdit[];
   vehicleRegEdits: StoredVehicleRegEdit[];
+  vehicleFieldEdits: StoredVehicleFieldEdit[];
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
   repairRequests: StoredRepairRequest[];
   repairApprovals: StoredRepairApproval[];
+  repairInspections: StoredRepairInspection[];
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
@@ -1189,9 +1285,11 @@ function createEmptyMutationsStore(): MutationsStore {
     deliveryPoints: [],
     deliveryPointEdits: [],
     vehicleRegEdits: [],
+    vehicleFieldEdits: [],
     jobTransferNoteEdits: [],
     repairRequests: [],
     repairApprovals: [],
+    repairInspections: [],
     repairPhotoEdits: [],
     repairDetailEdits: [],
     repairReplyEdits: [],
@@ -1216,6 +1314,9 @@ function readLocalMutationsStore(): MutationsStore {
       vehicleRegEdits: Array.isArray(parsed.vehicleRegEdits)
         ? parsed.vehicleRegEdits
         : [],
+      vehicleFieldEdits: Array.isArray(parsed.vehicleFieldEdits)
+        ? parsed.vehicleFieldEdits
+        : [],
       jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
         ? parsed.jobTransferNoteEdits
         : [],
@@ -1224,6 +1325,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       repairApprovals: Array.isArray(parsed.repairApprovals)
         ? parsed.repairApprovals
+        : [],
+      repairInspections: Array.isArray(parsed.repairInspections)
+        ? parsed.repairInspections
         : [],
       repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
         ? parsed.repairPhotoEdits
@@ -1407,14 +1511,38 @@ async function fetchCombinedMutationsStore(
         )
       );
 
+      const mergedVehFieldMap = new Map<string, StoredVehicleFieldEdit>();
+      (remote.vehicleFieldEdits ?? []).forEach((e) =>
+        mergedVehFieldMap.set(`${e.rowNumber}|${e.colId}`, e)
+      );
+      (local.vehicleFieldEdits ?? []).forEach((e) =>
+        mergedVehFieldMap.set(`${e.rowNumber}|${e.colId}`, e)
+      );
+
+      const mergedRepInspMap = new Map<string, StoredRepairInspection>();
+      (remote.repairInspections ?? []).forEach((i) =>
+        mergedRepInspMap.set(
+          i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
+          i
+        )
+      );
+      (local.repairInspections ?? []).forEach((i) =>
+        mergedRepInspMap.set(
+          i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
+          i
+        )
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
         deliveryPointEdits: Array.from(mergedDpEditMap.values()),
         vehicleRegEdits: mergedVehEdits,
+        vehicleFieldEdits: Array.from(mergedVehFieldMap.values()),
         jobTransferNoteEdits: Array.from(mergedNoteMap.values()),
         repairRequests: Array.from(mergedRepReqMap.values()),
         repairApprovals: Array.from(mergedRepAppMap.values()),
+        repairInspections: Array.from(mergedRepInspMap.values()),
         repairPhotoEdits: Array.from(mergedPhotoEditMap.values()),
         repairDetailEdits: Array.from(mergedDetailEditMap.values()),
         repairReplyEdits: Array.from(mergedReplyEditMap.values()),
@@ -1681,16 +1809,19 @@ export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
       rowValues[6] = v['G'] ?? '';
       rowValues[13] = v['N'] ?? '';
       rowValues[14] = v['O'] ?? '';
-      rowValues[15] = v['P'] || 'รอคิวซ่อม';
+      rowValues[15] = v['P'] || 'รอตรวจสอบ';
       photoCols.forEach((col, idx) => {
         rowValues[16 + idx] = v[col] ?? '';
       });
       rowValues[26] = v['AA'] ?? '';
+      rowValues[27] = v['AB'] ?? '';
+      rowValues[28] = v['AC'] ?? '';
+      rowValues[29] = v['AD'] ?? '';
       rowValues[30] = v['AE'] ?? '';
       rowValues[31] = v['AF'] ?? '';
       rowValues[32] = v['AG'] ?? '';
       rowValues[33] = v['AH'] ?? '';
-      rowValues[34] = v['AI'] || '2.⚠️รออนุมัติ';
+      rowValues[34] = v['AI'] || 'รอตรวจสอบ';
       rowValues[35] = v['AJ'] || req.id;
 
       let sheetRowNumber: number | null = null;
@@ -1964,15 +2095,19 @@ export async function fetchSheetTabData(
     }
   });
 
-  // In ฐานข้อมูลรถ (gid: 378250263), place employee name column (Col I: ชื่อพนักงานประจำรถ) right after ทะเบียนรถ (Col A)
+  // In ฐานข้อมูลรถ (gid: 378250263), display only the 6 requested columns in table:
+  // รูปพนักงาน (M), ชื่อพนักงานประจำรถ (I), ทะเบียนรถ (A), พื้นที่ปฎิบัติงาน (J), กะทำงาน (L), ทีม (O)
   if (tab.gid === '378250263') {
-    const regIdx = activeColumns.findIndex((c) => c.id === 'A');
-    const empIdx = activeColumns.findIndex((c) => c.id === 'I');
-    if (regIdx !== -1 && empIdx !== -1 && empIdx !== regIdx + 1) {
-      const [empCol] = activeColumns.splice(empIdx, 1);
-      const targetIdx = activeColumns.findIndex((c) => c.id === 'A');
-      activeColumns.splice(targetIdx + 1, 0, empCol);
-    }
+    const orderedActiveIds = ['M', 'I', 'A', 'J', 'L', 'O'];
+    const colMap = new Map(allColumns.map((c) => [c.id, c]));
+    activeColumns.length = 0;
+    orderedActiveIds.forEach((id) => {
+      const col = colMap.get(id);
+      if (col) activeColumns.push(col);
+    });
+    const remainingCols = allColumns.filter((c) => !orderedActiveIds.includes(c.id));
+    allColumns.length = 0;
+    allColumns.push(...activeColumns, ...remainingCols);
   }
 
   const parsedRows: SheetRow[] = [];
@@ -2096,6 +2231,13 @@ export async function fetchSheetTabData(
         target.values['A'] = edit.newRegistration;
       }
     }
+    for (const fieldEdit of mutationsStore.vehicleFieldEdits ?? []) {
+      const target = parsedRows.find((r) => r.rowNumber === fieldEdit.rowNumber);
+      if (target && fieldEdit.colId) {
+        target.values[fieldEdit.colId] = fieldEdit.value;
+        target.rawValues[fieldEdit.colId] = fieldEdit.value;
+      }
+    }
   } else if (tab.gid === '944294225') {
     for (const req of mutationsStore.repairRequests) {
       const reqG = (req.values['G'] ?? '').trim();
@@ -2114,6 +2256,24 @@ export async function fetchSheetTabData(
           values: { ...req.values },
           rawValues: { ...req.values, A: Number(req.sequenceNo) || req.rowNumber },
         });
+      }
+    }
+    for (const insp of mutationsStore.repairInspections ?? []) {
+      const target = parsedRows.find(
+        (r) =>
+          (insp.sequenceNo && (r.values['A'] ?? '').trim() === insp.sequenceNo) ||
+          (insp.repairRequestNo && (r.values['G'] ?? '').trim() === insp.repairRequestNo) ||
+          (insp.rowNumber > 0 && r.rowNumber === insp.rowNumber)
+      );
+      if (target) {
+        target.values['AB'] = insp.inspectorName;
+        target.values['AC'] = insp.inspectionDate;
+        target.values['AD'] = insp.inspectionTime;
+        target.values['P'] = 'ตรวจสอบแล้ว';
+        target.values['AI'] = '2.⚠️รออนุมัติ';
+        if (insp.sparePartsCost !== undefined) target.values['N'] = insp.sparePartsCost;
+        if (insp.laborCost !== undefined) target.values['O'] = insp.laborCost;
+        if (insp.note !== undefined && insp.note !== '') target.values['AH'] = insp.note;
       }
     }
     for (const app of mutationsStore.repairApprovals) {
@@ -2669,6 +2829,114 @@ export async function updateVehicleRegistration(params: {
   }
 }
 
+export async function updateVehicleField(params: {
+  rowNumber: number;
+  colId: string;
+  newValue: string;
+  oldRegistration?: string;
+  driverName?: string;
+  shift?: string;
+}): Promise<string> {
+  const cleanColId = params.colId.trim().toUpperCase();
+  let cleanValue = params.newValue.trim();
+
+  const localStore = readLocalMutationsStore();
+  const existingIdx = localStore.vehicleFieldEdits.findIndex(
+    (e) => e.rowNumber === params.rowNumber && e.colId === cleanColId
+  );
+  const entry: StoredVehicleFieldEdit = {
+    rowNumber: params.rowNumber,
+    colId: cleanColId,
+    value: cleanValue,
+    updatedAt: new Date().toISOString(),
+  };
+  if (existingIdx >= 0) {
+    localStore.vehicleFieldEdits[existingIdx] = entry;
+  } else {
+    localStore.vehicleFieldEdits.push(entry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/vehicle-field', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      rowNumber: params.rowNumber,
+      colId: cleanColId,
+      newValue: cleanValue,
+    }),
+  }).catch(() => {});
+
+  if (
+    cleanColId === 'A' &&
+    params.oldRegistration &&
+    params.oldRegistration.trim() &&
+    params.oldRegistration.trim() !== cleanValue &&
+    cleanValue
+  ) {
+    void updateVehicleRegistration({
+      oldRegistration: params.oldRegistration.trim(),
+      newRegistration: cleanValue,
+      driverName: params.driverName ?? '',
+      shift: params.shift ?? '',
+    }).catch(() => {});
+  }
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const resp = (await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateVehicleField',
+        rowNumber: params.rowNumber,
+        colId: cleanColId,
+        newValue: cleanValue,
+      })) as { value?: string };
+      if (resp && typeof resp.value === 'string' && resp.value.trim()) {
+        cleanValue = resp.value.trim();
+        entry.value = cleanValue;
+        writeLocalMutationsStore(localStore);
+        void fetch('/api/mutations/vehicle-field', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rowNumber: params.rowNumber,
+            colId: cleanColId,
+            newValue: cleanValue,
+          }),
+        }).catch(() => {});
+      }
+      return cleanValue;
+    } catch {
+      // fall through
+    }
+  }
+
+  const token = getSilentAccessToken();
+  if (token && params.rowNumber >= 1 && /^[A-Z]$/.test(cleanColId)) {
+    try {
+      const sheetRowNumber = params.rowNumber + 1;
+      const updateRange = encodeURIComponent(
+        `ฐานข้อมูลรถ!${cleanColId}${sheetRowNumber}`
+      );
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[cleanValue]],
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  return cleanValue;
+}
+
 export async function updateJobTransferNote(params: {
   rowNumber: number;
   date: string;
@@ -2796,7 +3064,7 @@ export async function appendRepairRecord(
   rowValues[6] = payload.repairRequestNo || ''; // G: เลขที่ขอซ่อม
   rowValues[13] = payload.sparePartsCost || ''; // N: ค่าอะไหล่
   rowValues[14] = payload.laborCost || ''; // O: ค่าแรง
-  rowValues[15] = 'รอคิวซ่อม'; // P: สถานะ
+  rowValues[15] = 'รอตรวจสอบ'; // P: สถานะ
   // Q to Y: รูปถ่ายที่ 1 - 9 (indices 16 to 24)
   const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
   if (Array.isArray(payload.photos)) {
@@ -2806,7 +3074,7 @@ export async function appendRepairRecord(
   }
   rowValues[26] = payload.reporterName; // AA: ผู้แจ้งซ่อม
   rowValues[33] = payload.note || ''; // AH: หมายเหตุ
-  rowValues[34] = '2.⚠️รออนุมัติ'; // AI: สถานะการอนุมัติ
+  rowValues[34] = 'รอตรวจสอบ'; // AI: สถานะการอนุมัติ
   rowValues[35] = id; // AJ: ID
 
   const valuesMap: Record<string, string> = {
@@ -2819,10 +3087,10 @@ export async function appendRepairRecord(
     G: payload.repairRequestNo || '',
     N: payload.sparePartsCost || '',
     O: payload.laborCost || '',
-    P: 'รอคิวซ่อม',
+    P: 'รอตรวจสอบ',
     AA: payload.reporterName,
     AH: payload.note || '',
-    AI: '2.⚠️รออนุมัติ',
+    AI: 'รอตรวจสอบ',
     AJ: id,
   };
 
@@ -2997,6 +3265,150 @@ export async function approveRepairRecord(
             }),
           });
         }
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function inspectRepairRecord(
+  payload: import('../types').RepairInspectionPayload
+): Promise<void> {
+  const localStore = readLocalMutationsStore();
+  for (const reqItem of localStore.repairRequests) {
+    if (
+      (payload.sequenceNo && reqItem.sequenceNo === payload.sequenceNo) ||
+      (payload.repairRequestNo && reqItem.values['G'] === payload.repairRequestNo) ||
+      (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
+    ) {
+      reqItem.values['AB'] = payload.inspectorName;
+      reqItem.values['AC'] = payload.inspectionDate;
+      reqItem.values['AD'] = payload.inspectionTime;
+      reqItem.values['P'] = 'ตรวจสอบแล้ว';
+      reqItem.values['AI'] = '2.⚠️รออนุมัติ';
+      if (payload.sparePartsCost !== undefined) reqItem.values['N'] = payload.sparePartsCost;
+      if (payload.laborCost !== undefined) reqItem.values['O'] = payload.laborCost;
+      if (payload.note !== undefined && payload.note !== '') reqItem.values['AH'] = payload.note;
+    }
+  }
+
+  const existingIdx = localStore.repairInspections.findIndex(
+    (i) =>
+      (payload.sequenceNo && i.sequenceNo === payload.sequenceNo) ||
+      (payload.repairRequestNo && i.repairRequestNo === payload.repairRequestNo) ||
+      (payload.rowNumber > 0 && i.rowNumber === payload.rowNumber)
+  );
+
+  const inspectionEntry: StoredRepairInspection = {
+    rowNumber: payload.rowNumber,
+    sequenceNo: payload.sequenceNo,
+    repairRequestNo: payload.repairRequestNo,
+    inspectorName: payload.inspectorName,
+    inspectionDate: payload.inspectionDate,
+    inspectionTime: payload.inspectionTime,
+    sparePartsCost: payload.sparePartsCost,
+    laborCost: payload.laborCost,
+    note: payload.note,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    localStore.repairInspections[existingIdx] = inspectionEntry;
+  } else {
+    localStore.repairInspections.push(inspectionEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/repair-inspection', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'inspectRepairRequest',
+        ...payload,
+      });
+    } catch {
+      // ignore
+    }
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'approveRepairRequest',
+        rowNumber: payload.rowNumber,
+        sequenceNo: payload.sequenceNo,
+        inspectorName: payload.inspectorName,
+        inspectionDate: payload.inspectionDate,
+        inspectionTime: payload.inspectionTime,
+        approvalStatus: '2.⚠️รออนุมัติ',
+        repairStatus: 'ตรวจสอบแล้ว',
+        note: payload.note,
+      });
+      return;
+    } catch {
+      // fall through
+    }
+  }
+
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
+    try {
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        payload.rowNumber,
+        payload.sequenceNo
+      );
+      if (targetRow >= 2) {
+        const inspRange = encodeURIComponent(
+          `บันทึกงานซ่อม!AB${targetRow}:AD${targetRow}`
+        );
+        const inspUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${inspRange}?valueInputOption=USER_ENTERED`;
+        await fetch(inspUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [
+              [
+                payload.inspectorName,
+                payload.inspectionDate,
+                payload.inspectionTime,
+              ],
+            ],
+          }),
+        });
+
+        const statusRange = encodeURIComponent(`บันทึกงานซ่อม!P${targetRow}`);
+        const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
+        await fetch(statusUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [['ตรวจสอบแล้ว']],
+          }),
+        });
+
+        const appStatusRange = encodeURIComponent(`บันทึกงานซ่อม!AI${targetRow}`);
+        const appStatusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${appStatusRange}?valueInputOption=USER_ENTERED`;
+        await fetch(appStatusUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [['2.⚠️รออนุมัติ']],
+          }),
+        });
       }
     } catch {
       // ignore
