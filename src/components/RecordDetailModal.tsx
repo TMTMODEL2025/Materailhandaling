@@ -128,6 +128,29 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 return null;
               }
 
+              // Hide optional repair fields when they have no data (empty or '-')
+              const isHideIfEmptyField =
+                col.id === 'H' ||
+                col.id === 'I' ||
+                col.id === 'J' ||
+                col.id === 'K' ||
+                col.id === 'L' ||
+                col.id === 'M' ||
+                col.id === 'N' ||
+                col.id === 'O' ||
+                col.label.includes('SAP') ||
+                col.label.includes('กำหนดการ') ||
+                col.label.includes('ซ่อมเสร็จ') ||
+                col.label.includes('ระยะเวลาซ่อม') ||
+                col.label.includes('PR') ||
+                col.label.includes('ใบกำกับภาษี') ||
+                col.label.includes('ค่าอะไหล่') ||
+                col.label.includes('ค่าแรง');
+
+              if (isRepairTab && isHideIfEmptyField && (!rawVal || rawVal === '-')) {
+                return null;
+              }
+
               const val = rawVal || '-';
               const isNumericOrDate =
                 col.type === 'number' ||
