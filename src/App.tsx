@@ -24,6 +24,8 @@ import {
   Calendar,
   Camera,
   Eye,
+  Home,
+  Fuel,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -982,7 +984,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="w-full px-2.5 py-2.5 sm:px-6 sm:py-4 lg:px-8">
+        <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
           {/* Save Success Notification */}
           {saveSuccessMsg && (
             <div className="mb-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
@@ -2077,6 +2079,225 @@ export default function App() {
         </div>
         </div>
         </main>
+
+        {/* Android-Style Mobile Bottom Navigation Bar */}
+        <nav
+          aria-label="แถบเมนูด้านล่างสำหรับมือถือ"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/90 bg-white/95 backdrop-blur-md shadow-[0_-4px_16px_rgba(15,23,42,0.08)] pb-[env(safe-area-inset-bottom)] lg:hidden"
+        >
+          <div className="mx-auto grid h-16 max-w-lg grid-cols-5 items-center px-1">
+            {/* 1. หน้าหลัก / แดชบอร์ด */}
+            {(() => {
+              const isHomeActive =
+                !isApprovalModalOpen &&
+                activeTab.gid !== '944294225' &&
+                activeTab.gid !== '606634465' &&
+                activeTab.gid !== '1733355146';
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const dashboardTab =
+                      SHEET_TABS.find((t) => t.gid === '378250263') ?? SHEET_TABS[0];
+                    if (activeTab.gid === dashboardTab.gid) {
+                      setIsSidebarOpen((prev) => !prev);
+                    } else {
+                      handleSelectTab(dashboardTab);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className={`group flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                    isHomeActive
+                      ? 'text-blue-700'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <div
+                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                      isHomeActive
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'group-hover:bg-slate-100'
+                    }`}
+                  >
+                    <Home className="h-4 w-4" />
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight tracking-tight ${
+                      isHomeActive ? 'font-bold text-blue-700' : 'font-medium'
+                    }`}
+                  >
+                    หน้าหลัก
+                  </span>
+                </button>
+              );
+            })()}
+
+            {/* 2. บันทึกงานซ่อม */}
+            {(() => {
+              const isRepairActive =
+                !isApprovalModalOpen && activeTab.gid === '944294225';
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const repairTab = SHEET_TABS.find((t) => t.gid === '944294225');
+                    if (repairTab) {
+                      handleSelectTab(repairTab);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className={`group relative flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                    isRepairActive
+                      ? 'text-amber-700'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <div
+                    className={`relative flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                      isRepairActive
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'group-hover:bg-slate-100'
+                    }`}
+                  >
+                    <Wrench className="h-4 w-4" />
+                    {pendingApprovalCount > 0 && (
+                      <span className="absolute -top-1 -right-0.5 inline-flex min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 py-0.2 font-mono text-[9px] font-bold leading-tight text-white shadow-xs">
+                        {pendingApprovalCount > 99
+                          ? '99+'
+                          : pendingApprovalCount.toLocaleString('th-TH')}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight tracking-tight ${
+                      isRepairActive ? 'font-bold text-amber-700' : 'font-medium'
+                    }`}
+                  >
+                    บันทึกงานซ่อม
+                  </span>
+                </button>
+              );
+            })()}
+
+            {/* 3. บันทึกการย้ายงาน */}
+            {(() => {
+              const isTransferActive =
+                !isApprovalModalOpen && activeTab.gid === '606634465';
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const transferTab = SHEET_TABS.find((t) => t.gid === '606634465');
+                    if (transferTab) {
+                      handleSelectTab(transferTab);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className={`group flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                    isTransferActive
+                      ? 'text-indigo-700'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <div
+                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                      isTransferActive
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'group-hover:bg-slate-100'
+                    }`}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight tracking-tight ${
+                      isTransferActive ? 'font-bold text-indigo-700' : 'font-medium'
+                    }`}
+                  >
+                    ย้ายงาน
+                  </span>
+                </button>
+              );
+            })()}
+
+            {/* 4. บันทึกน้ำมัน */}
+            {(() => {
+              const isFuelActive =
+                !isApprovalModalOpen && activeTab.gid === '1733355146';
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fuelTab = SHEET_TABS.find((t) => t.gid === '1733355146');
+                    if (fuelTab) {
+                      handleSelectTab(fuelTab);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className={`group flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                    isFuelActive
+                      ? 'text-sky-700'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <div
+                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                      isFuelActive
+                        ? 'bg-sky-100 text-sky-700'
+                        : 'group-hover:bg-slate-100'
+                    }`}
+                  >
+                    <Fuel className="h-4 w-4" />
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight tracking-tight ${
+                      isFuelActive ? 'font-bold text-sky-700' : 'font-medium'
+                    }`}
+                  >
+                    บันทึกน้ำมัน
+                  </span>
+                </button>
+              );
+            })()}
+
+            {/* 5. เมนูจัดการอนุมัติ (ผู้จัดการ) */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsSidebarOpen(false);
+                setIsApprovalModalOpen(true);
+              }}
+              className={`group relative flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                isApprovalModalOpen
+                  ? 'text-emerald-700'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <div
+                className={`relative flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                  isApprovalModalOpen
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'group-hover:bg-slate-100'
+                }`}
+              >
+                <CheckCircle className="h-4 w-4" />
+                {pendingApprovalCount > 0 && (
+                  <span className="absolute -top-1 -right-0.5 inline-flex min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 py-0.2 font-mono text-[9px] font-bold leading-tight text-white animate-pulse shadow-xs">
+                    {pendingApprovalCount > 99
+                      ? '99+'
+                      : pendingApprovalCount.toLocaleString('th-TH')}
+                  </span>
+                )}
+              </div>
+              <span
+                className={`text-[10px] leading-tight tracking-tight ${
+                  isApprovalModalOpen ? 'font-bold text-emerald-700' : 'font-medium'
+                }`}
+              >
+                อนุมัติซ่อม
+              </span>
+            </button>
+          </div>
+        </nav>
       </div>
 
       {/* Record Detail Modal */}
