@@ -41,20 +41,26 @@ onAuthStateChanged(auth, (user: User | null) => {
 const APPS_SCRIPT_URL_STORAGE_KEY = 'gsheets_apps_script_url_v1';
 const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v1';
 
+export const DEFAULT_APPS_SCRIPT_URL =
+  'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
+
 let configuredAppsScriptUrl: string =
-  (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined)?.trim() || '';
+  (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined)?.trim() ||
+  DEFAULT_APPS_SCRIPT_URL;
 
 try {
   const savedUrl = localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY)?.trim();
   if (savedUrl && savedUrl.startsWith('https://script.google.com/')) {
     configuredAppsScriptUrl = savedUrl;
+  } else if (!savedUrl) {
+    localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, DEFAULT_APPS_SCRIPT_URL);
   }
 } catch {
   // ignore storage errors
 }
 
 export function getConfiguredAppsScriptUrl(): string {
-  return configuredAppsScriptUrl;
+  return configuredAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL;
 }
 
 export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {

@@ -20,6 +20,7 @@ import {
   Link2,
   Wrench,
   CheckCircle,
+  Calendar,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -55,6 +56,28 @@ function isDurationExceeding20Minutes(val: string): boolean {
   return false;
 }
 
+function parseThaiDateToTimestamp(val: string): number | null {
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (!match) return null;
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  let year = parseInt(match[3], 10);
+  // Convert Buddhist Era (พ.ศ.) to Common Era (ค.ศ.)
+  if (year > 2400) {
+    year -= 543;
+  }
+  return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
+}
+
+function parseIsoInputDateToTimestamp(isoDate: string): number | null {
+  if (!isoDate) return null;
+  const [y, m, d] = isoDate.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).setHours(0, 0, 0, 0);
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
@@ -66,6 +89,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedColumnId, setSelectedColumnId] = useState<string>('ALL');
   const [quickFilterValue, setQuickFilterValue] = useState<string>('ALL');
+  const [startDateFilter, setStartDateFilter] = useState<string>('');
+  const [endDateFilter, setEndDateFilter] = useState<string>('');
   const [rowLimit, setRowLimit] = useState<number>(SHEET_TABS[0].defaultLimit ?? 250);
   const [deepSearchTerm, setDeepSearchTerm] = useState<string>('');
 
@@ -168,6 +193,8 @@ export default function App() {
     setDeepSearchTerm('');
     setSelectedColumnId('ALL');
     setQuickFilterValue('ALL');
+    setStartDateFilter('');
+    setEndDateFilter('');
     setSortConfig(null);
     setCurrentPage(1);
     setEditingGateRowNumber(null);
@@ -306,12 +333,29 @@ export default function App() {
       .map(([val]) => val);
   }, [sheetData, quickFilterColumn]);
 
-  // Filter rows by search query, selected column, and quick filter
+  // Filter rows by date range, search query, selected column, and quick filter
   const filteredRows = useMemo<SheetRow[]>(() => {
     if (!sheetData) return [];
     const q = searchQuery.trim().toLowerCase();
+    const startTs = parseIsoInputDateToTimestamp(startDateFilter);
+    const endTs = parseIsoInputDateToTimestamp(endDateFilter);
+
+    // Identify primary date column (Col A for บันทึกการย้ายงาน or any column with 'วัน' or 'date')
+    const dateCol =
+      sheetData.columns.find((c) => c.id === 'A' && (c.type === 'date' || c.label.includes('วัน'))) ||
+      sheetData.columns.find((c) => c.label.includes('วันที่') || c.type === 'date');
 
     return sheetData.rows.filter((row) => {
+      // Date range filtering
+      if (startTs !== null || endTs !== null) {
+        const rawDateStr = dateCol ? (row.values[dateCol.id] ?? '') : (row.values['A'] ?? '');
+        const rowTs = parseThaiDateToTimestamp(rawDateStr);
+        if (rowTs !== null) {
+          if (startTs !== null && rowTs < startTs) return false;
+          if (endTs !== null && rowTs > endTs) return false;
+        }
+      }
+
       if (
         quickFilterValue !== 'ALL' &&
         quickFilterColumn &&
@@ -333,7 +377,15 @@ export default function App() {
         (row.values[col.id] ?? '').toLowerCase().includes(q)
       );
     });
-  }, [sheetData, searchQuery, selectedColumnId, quickFilterValue, quickFilterColumn]);
+  }, [
+    sheetData,
+    searchQuery,
+    selectedColumnId,
+    quickFilterValue,
+    quickFilterColumn,
+    startDateFilter,
+    endDateFilter,
+  ]);
 
   // Sort filtered rows
   const sortedRows = useMemo<SheetRow[]>(() => {
@@ -374,7 +426,14 @@ export default function App() {
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedColumnId, quickFilterValue, activeTab.gid]);
+  }, [
+    searchQuery,
+    selectedColumnId,
+    quickFilterValue,
+    activeTab.gid,
+    startDateFilter,
+    endDateFilter,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
   const paginatedRows = useMemo<SheetRow[]>(() => {
@@ -477,6 +536,8 @@ export default function App() {
     setSearchQuery('');
     setSelectedColumnId('ALL');
     setQuickFilterValue('ALL');
+    setStartDateFilter('');
+    setEndDateFilter('');
     if (deepSearchTerm !== '') {
       setDeepSearchTerm('');
     }
@@ -848,6 +909,42 @@ export default function App() {
 
               {/* Controls Row */}
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                {/* Date Range Filter (Available for tables with dates, especially บันทึกการย้ายงาน) */}
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
+                  <Calendar className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                  <span className="hidden sm:inline text-[11px] font-medium text-slate-500">วันที่:</span>
+                  <input
+                    type="date"
+                    aria-label="วันที่เริ่มต้น"
+                    title="วันที่เริ่มต้น"
+                    value={startDateFilter}
+                    onChange={(e) => setStartDateFilter(e.target.value)}
+                    className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
+                  />
+                  <span className="text-slate-400">-</span>
+                  <input
+                    type="date"
+                    aria-label="วันที่สิ้นสุด"
+                    title="วันที่สิ้นสุด"
+                    value={endDateFilter}
+                    onChange={(e) => setEndDateFilter(e.target.value)}
+                    className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
+                  />
+                  {(startDateFilter || endDateFilter) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStartDateFilter('');
+                        setEndDateFilter('');
+                      }}
+                      title="ล้างช่วงวันที่"
+                      className="rounded p-0.5 text-slate-400 hover:text-slate-700"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
                   <SlidersHorizontal className="h-3 w-3 text-slate-500 shrink-0" />
                   <select
@@ -904,6 +1001,8 @@ export default function App() {
                 {(searchQuery !== '' ||
                   selectedColumnId !== 'ALL' ||
                   quickFilterValue !== 'ALL' ||
+                  startDateFilter !== '' ||
+                  endDateFilter !== '' ||
                   deepSearchTerm !== '') && (
                   <button
                     type="button"

@@ -148,9 +148,17 @@ async function startServer() {
     res.json(store);
   });
 
+  const DEFAULT_APPS_SCRIPT_URL =
+    'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
+
   app.get('/api/script-url', (_req, res) => {
     const store = readStore();
-    res.json({ scriptUrl: store.googleScriptUrl ?? process.env.VITE_GOOGLE_SCRIPT_URL ?? null });
+    res.json({
+      scriptUrl:
+        store.googleScriptUrl ??
+        process.env.VITE_GOOGLE_SCRIPT_URL ??
+        DEFAULT_APPS_SCRIPT_URL,
+    });
   });
 
   app.post('/api/script-url', (req, res) => {
