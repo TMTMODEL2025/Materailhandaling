@@ -461,7 +461,7 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
 };
 
 const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
-  '606634465': new Set(['P', 'Q', 'R', 'S', 'T']),
+  '606634465': new Set(['P', 'Q', 'R', 'S', 'T', 'U', 'V']),
   '1156877149': new Set(['D', 'Z']),
 };
 
@@ -471,6 +471,8 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'รหัสรายการ',
     'ภาพถ่ายที่ 1',
     'ภาพถ่ายที่ 2',
+    'น้ำหนักสุทธิ',
+    'จำนวนรอบ',
   ]),
 };
 

@@ -33,7 +33,7 @@ import { JobTransferModal } from './components/JobTransferModal';
 import { DeliveryPointModal } from './components/DeliveryPointModal';
 import { SheetWebhookModal } from './components/SheetWebhookModal';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 30;
 
 function isDurationExceeding20Minutes(val: string): boolean {
   const trimmed = val.trim();
@@ -674,7 +674,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-[1440px] px-2.5 py-2.5 sm:px-6 sm:py-4 lg:px-8">
+        <main className="w-full px-2.5 py-2.5 sm:px-6 sm:py-4 lg:px-8">
           {/* Save Success Notification */}
           {saveSuccessMsg && (
             <div className="mb-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
