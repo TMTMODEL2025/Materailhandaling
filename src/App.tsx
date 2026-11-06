@@ -37,6 +37,7 @@ import { DeliveryPointModal } from './components/DeliveryPointModal';
 import { SheetWebhookModal } from './components/SheetWebhookModal';
 import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
+import { APP_VERSION } from './version';
 
 const PAGE_SIZE = 30;
 
@@ -706,6 +707,13 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        <div className="border-t border-slate-200 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs">
+          <span className="text-[11px] font-medium text-slate-500">เวอร์ชันระบบ</span>
+          <span className="font-mono font-semibold px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 text-[11px]">
+            v{APP_VERSION}
+          </span>
+        </div>
       </aside>
 
       {/* Main Content Area */}
@@ -724,6 +732,9 @@ export default function App() {
             <h1 className="text-sm font-bold text-slate-900 sm:text-base truncate">
               {activeTab.name}
             </h1>
+            <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-mono font-medium text-slate-600 border border-slate-200 shrink-0">
+              v{APP_VERSION}
+            </span>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
