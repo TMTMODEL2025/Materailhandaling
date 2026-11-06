@@ -17,6 +17,7 @@ import {
   Menu,
   Pencil,
   Check,
+  Link2,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -30,6 +31,7 @@ import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types'
 import { RecordDetailModal } from './components/RecordDetailModal';
 import { JobTransferModal } from './components/JobTransferModal';
 import { DeliveryPointModal } from './components/DeliveryPointModal';
+import { SheetWebhookModal } from './components/SheetWebhookModal';
 
 const PAGE_SIZE = 50;
 
@@ -79,6 +81,7 @@ export default function App() {
   // Job Transfer & Delivery Point creation modals
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
+  const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
@@ -626,7 +629,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsJobModalOpen(true)}
-                className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                className="hidden md:inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>บันทึกย้ายงาน</span>
@@ -646,6 +649,16 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => setIsWebhookModalOpen(true)}
+              title="ตั้งค่าเชื่อมต่อชีต (ไม่ต้องล็อกอิน)"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">เชื่อมต่อชีต</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => loadData({ silent: true })}
               disabled={isLoading || isRefreshing}
               title="ซิงค์ข้อมูลล่าสุด"
@@ -662,6 +675,44 @@ export default function App() {
         </header>
 
         <main className="mx-auto w-full max-w-[1440px] px-2.5 py-2.5 sm:px-6 sm:py-4 lg:px-8">
+          {/* Save Success Notification */}
+          {saveSuccessMsg && (
+            <div className="mb-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
+              <div className="flex items-center gap-2 min-w-0">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span className="font-medium truncate">{saveSuccessMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSaveSuccessMsg(null)}
+                className="ml-2 text-xs font-medium text-emerald-800 hover:underline shrink-0"
+              >
+                ปิด
+              </button>
+            </div>
+          )}
+
+          {/* Mobile-Only Direct Job Transfer Form (when on הבันทึกการย้ายงาน tab) */}
+          {activeTab.gid === '606634465' && (
+            <div className="md:hidden">
+              <JobTransferModal
+                isOpen={true}
+                inlineMode={true}
+                onClose={() => {}}
+                existingRows={sheetData?.rows ?? []}
+                onSavedSuccess={() => {
+                  setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานเรียบร้อยแล้ว');
+                  loadData({ silent: true });
+                  setTimeout(() => {
+                    setSaveSuccessMsg(null);
+                  }, 5000);
+                }}
+              />
+            </div>
+          )}
+
+          {/* Dashboard KPI, Search & Table (Hidden on mobile when on บันทึกการย้ายงาน so mobile shows ONLY the form) */}
+          <div className={activeTab.gid === '606634465' ? 'hidden md:block' : 'block'}>
           {/* Compact KPI Summary Strip (2x2 on mobile, 4 cols on desktop, no verbose subtext) */}
           <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
@@ -873,23 +924,7 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Save Success Notification */}
-          {saveSuccessMsg && (
-            <div className="mt-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
-              <div className="flex items-center gap-2 min-w-0">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span className="font-medium truncate">{saveSuccessMsg}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSaveSuccessMsg(null)}
-                className="ml-2 text-xs font-medium text-emerald-800 hover:underline shrink-0"
-              >
-                ปิด
-              </button>
-            </div>
-          )}
+          {false && saveSuccessMsg && <div />}
 
           {/* Error State */}
           {error && (
@@ -1252,6 +1287,7 @@ export default function App() {
             </div>
           )}
         </div>
+        </div>
         </main>
       </div>
 
@@ -1284,6 +1320,19 @@ export default function App() {
         existingRows={activeTab.gid === '1156877149' ? sheetData?.rows ?? [] : []}
         onSavedSuccess={() => {
           setSaveSuccessMsg('เพิ่มข้อมูลจุดส่งสินค้าลงฐานข้อมูลเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* No-Login Google Sheets Webhook Setup Modal */}
+      <SheetWebhookModal
+        isOpen={isWebhookModalOpen}
+        onClose={() => setIsWebhookModalOpen(false)}
+        onSaved={() => {
+          setSaveSuccessMsg('บันทึกการเชื่อมต่อ Google Sheets (ไม่ต้องล็อกอิน) เรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);

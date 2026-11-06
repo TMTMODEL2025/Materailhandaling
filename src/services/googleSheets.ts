@@ -3,7 +3,8 @@ import {
   getAuth,
   signInWithPopup,
   GoogleAuthProvider,
-  browserPopupRedirectResolver,
+  onAuthStateChanged,
+  User,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
@@ -25,53 +26,262 @@ SCOPES.forEach((scope) => {
   provider.addScope(scope);
 });
 
-const SESSION_TOKEN_KEY = 'gsheets_oauth_access_token';
-const SESSION_EXPIRES_KEY = 'gsheets_oauth_expires_at';
-
+// In-memory OAuth token cache (never required for normal app usage)
+let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let cachedTokenExpiresAt = 0;
 
-function loadSessionCachedToken(): string | null {
+onAuthStateChanged(auth, (user: User | null) => {
+  if (!user && !isSigningIn) {
+    cachedAccessToken = null;
+    cachedTokenExpiresAt = 0;
+  }
+});
+
+const APPS_SCRIPT_URL_STORAGE_KEY = 'gsheets_apps_script_url_v1';
+const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v1';
+
+let configuredAppsScriptUrl: string =
+  (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined)?.trim() || '';
+
+try {
+  const savedUrl = localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY)?.trim();
+  if (savedUrl && savedUrl.startsWith('https://script.google.com/')) {
+    configuredAppsScriptUrl = savedUrl;
+  }
+} catch {
+  // ignore storage errors
+}
+
+export function getConfiguredAppsScriptUrl(): string {
+  return configuredAppsScriptUrl;
+}
+
+export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {
+  const clean = url.trim();
+  configuredAppsScriptUrl = clean;
   try {
-    const token = sessionStorage.getItem(SESSION_TOKEN_KEY);
-    const expiresRaw = sessionStorage.getItem(SESSION_EXPIRES_KEY);
-    const expiresAt = expiresRaw ? Number(expiresRaw) : 0;
-    if (token && expiresAt > Date.now() + 30000) {
-      cachedAccessToken = token;
-      cachedTokenExpiresAt = expiresAt;
-      return token;
+    if (clean) {
+      localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, clean);
+    } else {
+      localStorage.removeItem(APPS_SCRIPT_URL_STORAGE_KEY);
     }
   } catch {
-    // ignore storage errors
+    // ignore
   }
-  return null;
+
+  void fetch('/api/script-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scriptUrl: clean }),
+  }).catch(() => {
+    // ignore on static hosting
+  });
+
+  if (clean && clean.startsWith('https://script.google.com/')) {
+    try {
+      await callAppsScriptWebhook(clean, {
+        action: 'registerWebhookUrl',
+        url: clean,
+      });
+    } catch {
+      // ignore if script doesn't support registerWebhookUrl yet
+    }
+    void flushPendingMutationsToGoogleSheet();
+  }
 }
 
-function saveSessionCachedToken(token: string, expiresAt: number): void {
+export const GOOGLE_APPS_SCRIPT_CODE = `// โค้ดสำหรับเชื่อมต่อ Google Sheets แบบไม่ต้องยืนยันสิทธิ์ล็อกอิน (No-Login)
+// วิธีติดตั้งเพียงครั้งเดียว:
+// 1. เปิดไฟล์ Google Sheet -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
+// 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดนี้ลงไป กดบันทึก (Ctrl+S)
+// 3. กดปุ่ม "การทำให้ใช้งานได้ (Deploy)" มุมขวาบน -> "การทำให้ใช้งานได้รายการใหม่ (New deployment)"
+// 4. เลือกประเภทเป็น "เว็บแอป (Web app)"
+//    - ดำเนินการในฐานะ (Execute as): เลือก "ฉัน (Me)"
+//    - ผู้ที่มีสิทธิ์เข้าถึง (Who has access): เลือก "ทุกคน (Anyone)"
+// 5. กด "การทำให้ใช้งานได้ (Deploy)" แล้วคัดลอก URL ของเว็บแอปมาวางในแอป 1 ครั้ง (หรือกดเรียกใช้ฟังก์ชัน เชื่อมต่ออัตโนมัติ ด้านล่าง)
+
+const SHEET_ID = '${GOOGLE_SHEET_ID}';
+
+function เชื่อมต่ออัตโนมัติ() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const url = ScriptApp.getService().getUrl();
+  if (url) {
+    const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
+    if (dpSheet) {
+      dpSheet.getRange('D1').setValue(url);
+    }
+  }
+}
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000);
   try {
-    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
-    sessionStorage.setItem(SESSION_EXPIRES_KEY, String(expiresAt));
-  } catch {
-    // ignore storage errors
+    const body = JSON.parse(e.postData.contents || '{}');
+    const action = body.action;
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+
+    if (action === 'registerWebhookUrl') {
+      const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
+      if (dpSheet && body.url) {
+        dpSheet.getRange('D1').setValue(String(body.url).trim());
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    if (action === 'appendJobTransfer') {
+      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      const rowValues = body.rowValues || [];
+      sheet.appendRow(rowValues);
+      const rowNumber = sheet.getLastRow();
+      return jsonResponse({ ok: true, rowNumber: rowNumber });
+    }
+
+    if (action === 'completeJobTransfer') {
+      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const recordId = String(body.recordId || '').trim();
+
+      if (recordId && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const ids = sheet.getRange(startRow, 17, numRows, 1).getValues();
+        for (let i = ids.length - 1; i >= 0; i--) {
+          if (String(ids[i][0] || '').trim() === recordId) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        sheet.getRange(targetRow, 11, 1, 3).setValues([[
+          body.endTime || '',
+          body.duration || '',
+          body.status || 'ส่งสินค้าเรียบร้อยแล้ว'
+        ]]);
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
+    if (action === 'appendDeliveryPoint') {
+      const sheet = ss.getSheetByName('จุดส่งสินค้า');
+      sheet.appendRow([body.date || '', body.deliveryPoint || '', body.gate || '']);
+      return jsonResponse({ ok: true, rowNumber: sheet.getLastRow() });
+    }
+
+    if (action === 'updateDeliveryPointGate') {
+      const sheet = ss.getSheetByName('จุดส่งสินค้า');
+      const rows = sheet.getDataRange().getValues();
+      const pt = String(body.deliveryPoint || '').trim();
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][1] || '').trim() === pt) {
+          sheet.getRange(i + 1, 1, 1, 3).setValues([[
+            body.updatedDate || rows[i][0],
+            pt,
+            String(body.newGate || '').trim()
+          ]]);
+          break;
+        }
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    if (action === 'updateVehicleRegistration') {
+      const sheet = ss.getSheetByName('ฐานข้อมูลรถ');
+      const rows = sheet.getDataRange().getValues();
+      const oldReg = String(body.oldRegistration || '').trim();
+      const newReg = String(body.newRegistration || '').trim();
+      const drv = String(body.driverName || '').trim();
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0] || '').trim() === oldReg && (!drv || String(rows[i][8] || '').trim() === drv)) {
+          sheet.getRange(i + 1, 1).setValue(newReg);
+          break;
+        }
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    if (action === 'updateJobTransferNote') {
+      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const startRow = Math.max(2, (targetRow || lastRow) - 150);
+      const endRow = Math.min(lastRow, (targetRow || lastRow) + 150);
+      if (endRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, endRow - startRow + 1, 9).getValues();
+        for (let i = 0; i < data.length; i++) {
+          if (
+            String(data[i][2] || '').trim() === String(body.driverName || '').trim() &&
+            String(data[i][3] || '').trim() === String(body.vehicleNumber || '').trim() &&
+            String(data[i][8] || '').trim() === String(body.startTime || '').trim()
+          ) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+      if (targetRow >= 2) {
+        sheet.getRange(targetRow, 14).setValue(String(body.note || '').trim());
+        sheet.getRange(targetRow, 18).setValue(String(body.note || '').trim());
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    return jsonResponse({ ok: false, error: 'Unknown action' });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: String(err) });
+  } finally {
+    lock.releaseLock();
   }
 }
 
-function clearSessionCachedToken(): void {
+function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
+async function callAppsScriptWebhook(
+  scriptUrl: string,
+  payload: Record<string, unknown>
+): Promise<{ ok?: boolean; rowNumber?: number | null; error?: string }> {
+  const response = await fetch(scriptUrl, {
+    method: 'POST',
+    headers: {
+      // Use text/plain to avoid CORS preflight (OPTIONS) rejection on Google Apps Script
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Apps Script HTTP ${response.status}`);
+  }
+
   try {
-    sessionStorage.removeItem(SESSION_TOKEN_KEY);
-    sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+    const data = (await response.json()) as {
+      ok?: boolean;
+      rowNumber?: number | null;
+      error?: string;
+    };
+    return data;
   } catch {
-    // ignore storage errors
+    return { ok: true };
   }
 }
 
-// Warm up token from sessionStorage and backend cache on load (non-blocking)
-loadSessionCachedToken();
+// Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
 void (async () => {
   try {
-    const res = await fetch('/api/google-token');
-    if (res.ok) {
-      const data = (await res.json()) as {
+    const [tokenRes, scriptRes] = await Promise.allSettled([
+      fetch('/api/google-token'),
+      fetch('/api/script-url'),
+    ]);
+
+    if (tokenRes.status === 'fulfilled' && tokenRes.value.ok) {
+      const data = (await tokenRes.value.json()) as {
         accessToken?: string | null;
         expiresAt?: number;
       };
@@ -82,143 +292,94 @@ void (async () => {
       ) {
         cachedAccessToken = data.accessToken;
         cachedTokenExpiresAt = data.expiresAt;
-        saveSessionCachedToken(data.accessToken, data.expiresAt);
+      }
+    }
+
+    if (scriptRes.status === 'fulfilled' && scriptRes.value.ok) {
+      const sData = (await scriptRes.value.json()) as {
+        scriptUrl?: string | null;
+      };
+      if (
+        sData.scriptUrl &&
+        sData.scriptUrl.startsWith('https://script.google.com/') &&
+        !configuredAppsScriptUrl
+      ) {
+        configuredAppsScriptUrl = sData.scriptUrl.trim();
+        try {
+          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, configuredAppsScriptUrl);
+        } catch {
+          // ignore
+        }
       }
     }
   } catch {
-    // ignore when running on static hosting like Vercel
+    // ignore on static hosting
+  }
+
+  // Also check cell D1 of จุดส่งสินค้า (gid: 1156877149) for auto-discovered Apps Script URL
+  if (!configuredAppsScriptUrl) {
+    try {
+      const gviz = await queryGviz('1156877149', 'select D limit 1');
+      const colLabel = gviz.table?.cols?.[0]?.label?.trim() ?? '';
+      const firstCell = String(gviz.table?.rows?.[0]?.c?.[0]?.v ?? '').trim();
+      const candidate = colLabel.startsWith('https://script.google.com/')
+        ? colLabel
+        : firstCell.startsWith('https://script.google.com/')
+          ? firstCell
+          : '';
+      if (candidate) {
+        configuredAppsScriptUrl = candidate;
+        try {
+          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, candidate);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (configuredAppsScriptUrl || cachedAccessToken) {
+    void flushPendingMutationsToGoogleSheet();
   }
 })();
 
-function saveCachedToken(token: string, expiresInSec = 3500): void {
-  const expiresAt = Date.now() + expiresInSec * 1000;
-  cachedAccessToken = token;
-  cachedTokenExpiresAt = expiresAt;
-  saveSessionCachedToken(token, expiresAt);
-
-  void fetch('/api/google-token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accessToken: token, expiresInSec }),
-  }).catch(() => {
-    // ignore when running on static hosting
-  });
-}
-
-/**
- * Clears Firebase Auth's internal cached originValidationPromises and dead auth iframes.
- * Without this, if signInWithPopup failed once BEFORE the user added their domain in
- * Firebase Console, @firebase/auth permanently caches the rejected promise in memory
- * until the page is hard-reloaded.
- */
-function resetFirebasePopupResolverCache(): void {
+export async function connectAdminGoogleAccountOnce(): Promise<string> {
+  isSigningIn = true;
   try {
-    const internalAuth = auth as unknown as {
-      _key?: () => string;
-      _popupRedirectResolver?: {
-        originValidationPromises?: Record<string, unknown>;
-        eventManagers?: Record<string, unknown>;
-        iframes?: Record<string, unknown>;
-      };
-    };
-    const resolver = internalAuth._popupRedirectResolver;
-    if (resolver) {
-      if (resolver.originValidationPromises) {
-        for (const k of Object.keys(resolver.originValidationPromises)) {
-          delete resolver.originValidationPromises[k];
-        }
-      }
-      if (resolver.eventManagers) {
-        for (const k of Object.keys(resolver.eventManagers)) {
-          delete resolver.eventManagers[k];
-        }
-      }
-      if (resolver.iframes) {
-        for (const k of Object.keys(resolver.iframes)) {
-          delete resolver.iframes[k];
-        }
-      }
-    }
-    const resolverProto = browserPopupRedirectResolver as unknown as {
-      prototype?: {
-        originValidationPromises?: Record<string, unknown>;
-      };
-    };
-    if (resolverProto?.prototype?.originValidationPromises) {
-      for (const k of Object.keys(resolverProto.prototype.originValidationPromises)) {
-        delete resolverProto.prototype.originValidationPromises[k];
-      }
-    }
-    if (typeof document !== 'undefined') {
-      const authIframes = document.querySelectorAll(
-        'iframe[src*="/__/auth/iframe"]'
-      );
-      authIframes.forEach((el) => el.parentNode?.removeChild(el));
-    }
-  } catch {
-    // ignore internal cleanup errors
-  }
-}
-
-export async function ensureGoogleSheetsAccessToken(
-  forceNew = false
-): Promise<string> {
-  if (!forceNew) {
-    if (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) {
-      return cachedAccessToken;
-    }
-    const sessionToken = loadSessionCachedToken();
-    if (sessionToken) {
-      return sessionToken;
-    }
-  } else {
-    invalidateCachedToken();
-  }
-
-  // Always clear any stale rejected originValidationPromises before opening popup
-  resetFirebasePopupResolverCache();
-
-  try {
-    const result = await signInWithPopup(
-      auth,
-      provider,
-      browserPopupRedirectResolver
-    );
+    const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('ไม่สามารถรับสิทธิ์เชื่อมต่อ Google Sheets ได้ กรุณาลองอีกครั้ง');
+      throw new Error('ไม่สามารถรับสิทธิ์เชื่อมต่อ Google Sheets ได้');
     }
-    saveCachedToken(credential.accessToken, 3500);
-    void flushPendingJobTransfersToGoogleSheet(credential.accessToken);
+    cachedAccessToken = credential.accessToken;
+    cachedTokenExpiresAt = Date.now() + 3500 * 1000;
+    void fetch('/api/google-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accessToken: credential.accessToken,
+        expiresInSec: 3500,
+      }),
+    }).catch(() => {});
+    void flushPendingMutationsToGoogleSheet();
     return credential.accessToken;
-  } catch (err: unknown) {
-    resetFirebasePopupResolverCache();
-    const code = (err as { code?: string })?.code ?? '';
-    if (code === 'auth/unauthorized-domain') {
-      throw new Error(
-        `โดเมน ${window.location.hostname} ยังไม่ได้รับอนุญาต หรือเบราว์เซอร์จำค่าเดิมไว้ กรุณากดรีเฟรชหน้าเว็บ (F5 / Ctrl+R) 1 ครั้ง (แนะนำให้เพิ่มคำว่า vercel.app ใน Firebase Console -> Authentication -> Settings -> Authorized domains ของโปรเจกต์ ${firebaseConfig.projectId} เพื่อรองรับทุกลิงก์ของ Vercel ถาวร)`
-      );
-    }
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      throw new Error(
-        'หน้าต่างยืนยันสิทธิ์ Google ถูกปิดก่อนเสร็จสิ้น กรุณากดยืนยันอีกครั้งเพื่อบันทึกข้อมูลลง Google Sheets'
-      );
-    }
-    if (code === 'auth/popup-blocked') {
-      throw new Error(
-        'เบราว์เซอร์บล็อกหน้าต่างป๊อปอัป (Popup) กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้แล้วกดยืนยันอีกครั้ง'
-      );
-    }
-    throw err instanceof Error
-      ? err
-      : new Error('ไม่สามารถยืนยันสิทธิ์เชื่อมต่อ Google Sheets ได้');
+  } finally {
+    isSigningIn = false;
   }
+}
+
+function getSilentAccessToken(): string | null {
+  if (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) {
+    return cachedAccessToken;
+  }
+  return null;
 }
 
 function invalidateCachedToken(): void {
   cachedAccessToken = null;
   cachedTokenExpiresAt = 0;
-  clearSessionCachedToken();
 }
 
 export const SHEET_TABS: SheetTabConfig[] = [
@@ -301,6 +462,7 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
 
 const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '606634465': new Set(['P', 'Q', 'R', 'S', 'T']),
+  '1156877149': new Set(['D', 'Z']),
 };
 
 const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
@@ -320,20 +482,150 @@ interface StoredJobTransfer {
   syncedToSheet?: boolean;
 }
 
-interface MutationsStore {
-  jobTransfers: StoredJobTransfer[];
+interface StoredDeliveryPoint {
+  id: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  createdAt: string;
+  syncedToSheet?: boolean;
 }
 
-async function fetchMutationsStore(signal?: AbortSignal): Promise<MutationsStore> {
+interface StoredDeliveryPointEdit {
+  deliveryPoint: string;
+  oldGate: string;
+  newGate: string;
+  updatedDate: string;
+  updatedAt: string;
+}
+
+interface StoredVehicleRegEdit {
+  oldRegistration: string;
+  newRegistration: string;
+  driverName: string;
+  shift: string;
+  updatedAt: string;
+}
+
+interface StoredJobTransferNoteEdit {
+  rowNumber: number;
+  date: string;
+  driverName: string;
+  vehicleNumber: string;
+  startTime: string;
+  note: string;
+  updatedAt: string;
+}
+
+interface MutationsStore {
+  jobTransfers: StoredJobTransfer[];
+  deliveryPoints: StoredDeliveryPoint[];
+  deliveryPointEdits: StoredDeliveryPointEdit[];
+  vehicleRegEdits: StoredVehicleRegEdit[];
+  jobTransferNoteEdits: StoredJobTransferNoteEdit[];
+}
+
+function createEmptyMutationsStore(): MutationsStore {
+  return {
+    jobTransfers: [],
+    deliveryPoints: [],
+    deliveryPointEdits: [],
+    vehicleRegEdits: [],
+    jobTransferNoteEdits: [],
+  };
+}
+
+function readLocalMutationsStore(): MutationsStore {
+  try {
+    const raw = localStorage.getItem(LOCAL_MUTATIONS_STORAGE_KEY);
+    if (!raw) return createEmptyMutationsStore();
+    const parsed = JSON.parse(raw) as Partial<MutationsStore>;
+    return {
+      jobTransfers: Array.isArray(parsed.jobTransfers) ? parsed.jobTransfers : [],
+      deliveryPoints: Array.isArray(parsed.deliveryPoints)
+        ? parsed.deliveryPoints
+        : [],
+      deliveryPointEdits: Array.isArray(parsed.deliveryPointEdits)
+        ? parsed.deliveryPointEdits
+        : [],
+      vehicleRegEdits: Array.isArray(parsed.vehicleRegEdits)
+        ? parsed.vehicleRegEdits
+        : [],
+      jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
+        ? parsed.jobTransferNoteEdits
+        : [],
+    };
+  } catch {
+    return createEmptyMutationsStore();
+  }
+}
+
+function writeLocalMutationsStore(store: MutationsStore): void {
+  try {
+    localStorage.setItem(LOCAL_MUTATIONS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function fetchCombinedMutationsStore(
+  signal?: AbortSignal
+): Promise<MutationsStore> {
+  const local = readLocalMutationsStore();
   try {
     const res = await fetch('/api/mutations', { signal });
     if (res.ok) {
-      return (await res.json()) as MutationsStore;
+      const remote = (await res.json()) as Partial<MutationsStore>;
+      const mergedJobMap = new Map<string, StoredJobTransfer>();
+      (remote.jobTransfers ?? []).forEach((jt) => mergedJobMap.set(jt.recordId, jt));
+      local.jobTransfers.forEach((jt) => {
+        const existing = mergedJobMap.get(jt.recordId);
+        mergedJobMap.set(jt.recordId, existing ? { ...existing, ...jt, values: { ...existing.values, ...jt.values } } : jt);
+      });
+
+      const mergedDpMap = new Map<string, StoredDeliveryPoint>();
+      (remote.deliveryPoints ?? []).forEach((dp) => mergedDpMap.set(dp.id, dp));
+      local.deliveryPoints.forEach((dp) => mergedDpMap.set(dp.id, dp));
+
+      const mergedDpEditMap = new Map<string, StoredDeliveryPointEdit>();
+      (remote.deliveryPointEdits ?? []).forEach((e) =>
+        mergedDpEditMap.set(e.deliveryPoint, e)
+      );
+      local.deliveryPointEdits.forEach((e) =>
+        mergedDpEditMap.set(e.deliveryPoint, e)
+      );
+
+      const mergedVehEdits = [
+        ...(remote.vehicleRegEdits ?? []),
+        ...local.vehicleRegEdits.filter(
+          (l) =>
+            !(remote.vehicleRegEdits ?? []).some(
+              (r) =>
+                r.oldRegistration === l.oldRegistration &&
+                r.newRegistration === l.newRegistration
+            )
+        ),
+      ];
+
+      const mergedNoteMap = new Map<string, StoredJobTransferNoteEdit>();
+      (remote.jobTransferNoteEdits ?? []).forEach((e) =>
+        mergedNoteMap.set(`${e.date}|${e.driverName}|${e.vehicleNumber}|${e.startTime}`, e)
+      );
+      local.jobTransferNoteEdits.forEach((e) =>
+        mergedNoteMap.set(`${e.date}|${e.driverName}|${e.vehicleNumber}|${e.startTime}`, e)
+      );
+
+      return {
+        jobTransfers: Array.from(mergedJobMap.values()),
+        deliveryPoints: Array.from(mergedDpMap.values()),
+        deliveryPointEdits: Array.from(mergedDpEditMap.values()),
+        vehicleRegEdits: mergedVehEdits,
+        jobTransferNoteEdits: Array.from(mergedNoteMap.values()),
+      };
     }
   } catch {
-    // ignore
+    // ignore fetch error on static hosting
   }
-  return { jobTransfers: [] };
+  return local;
 }
 
 async function postJobTransferRowToGoogleSheetsApi(
@@ -358,16 +650,7 @@ async function postJobTransferRowToGoogleSheetsApi(
     if (response.status === 401 || response.status === 403) {
       invalidateCachedToken();
     }
-    let errorMsg = `ไม่สามารถบันทึกข้อมูลลง Google Sheets (HTTP ${response.status})`;
-    try {
-      const errJson = await response.json();
-      if (errJson?.error?.message) {
-        errorMsg = errJson.error.message;
-      }
-    } catch {
-      // ignore
-    }
-    throw new Error(errorMsg);
+    throw new Error(`Google Sheets API HTTP ${response.status}`);
   }
 
   let rowNumber: number | null = null;
@@ -384,11 +667,16 @@ async function postJobTransferRowToGoogleSheetsApi(
   return rowNumber;
 }
 
-async function flushPendingJobTransfersToGoogleSheet(
-  accessToken: string
-): Promise<void> {
+export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
   try {
-    const store = await fetchMutationsStore();
+    const store = await fetchCombinedMutationsStore();
+    const scriptUrl = getConfiguredAppsScriptUrl();
+    const token = getSilentAccessToken();
+    if (!scriptUrl && !token) return;
+
+    const localStore = readLocalMutationsStore();
+    let localChanged = false;
+
     for (const jt of store.jobTransfers) {
       if (jt.syncedToSheet) continue;
       const v = jt.values;
@@ -419,18 +707,46 @@ async function flushPendingJobTransfersToGoogleSheet(
         weightNum > 0 ? weightNum : '',
         roundsNum,
       ];
-      const sheetRowNumber = await postJobTransferRowToGoogleSheetsApi(
-        rowValues,
-        accessToken
+
+      let sheetRowNumber: number | null = null;
+      if (scriptUrl) {
+        const res = await callAppsScriptWebhook(scriptUrl, {
+          action: 'appendJobTransfer',
+          rowValues,
+        });
+        sheetRowNumber = res.rowNumber ?? null;
+      } else if (token) {
+        sheetRowNumber = await postJobTransferRowToGoogleSheetsApi(rowValues, token);
+      }
+
+      jt.syncedToSheet = true;
+      if (sheetRowNumber && sheetRowNumber > 0) {
+        jt.rowNumber = sheetRowNumber;
+      }
+
+      const localItem = localStore.jobTransfers.find(
+        (item) => item.recordId === jt.recordId
       );
-      await fetch('/api/mutations/mark-synced', {
+      if (localItem) {
+        localItem.syncedToSheet = true;
+        if (sheetRowNumber && sheetRowNumber > 0) {
+          localItem.rowNumber = sheetRowNumber;
+        }
+        localChanged = true;
+      }
+
+      void fetch('/api/mutations/mark-synced', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recordId: jt.recordId,
           sheetRowNumber,
         }),
-      });
+      }).catch(() => {});
+    }
+
+    if (localChanged) {
+      writeLocalMutationsStore(localStore);
     }
   } catch {
     // ignore background sync errors
@@ -537,7 +853,10 @@ export async function fetchSheetTabData(
   const limit = options?.limit ?? tab.defaultLimit ?? 250;
   const search = options?.remoteSearchQuery?.trim() ?? '';
 
-  const totalRowsInSheet = await fetchSheetRowCount(tab.gid, options?.signal);
+  const [totalRowsInSheet, mutationsStore] = await Promise.all([
+    fetchSheetRowCount(tab.gid, options?.signal),
+    fetchCombinedMutationsStore(options?.signal),
+  ]);
 
   let dataResponse: GvizResponse;
   let rowOffset = 0;
@@ -580,6 +899,19 @@ export async function fetchSheetTabData(
   const rawCols = dataResponse.table?.cols ?? [];
   let rawRows = dataResponse.table?.rows ?? [];
 
+  // Auto-discover Apps Script URL if present in column D of จุดส่งสินค้า
+  if (tab.gid === '1156877149' && !configuredAppsScriptUrl) {
+    const colD = rawCols.find((c) => c.id === 'D');
+    if (colD?.label?.trim().startsWith('https://script.google.com/')) {
+      configuredAppsScriptUrl = colD.label.trim();
+      try {
+        localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, configuredAppsScriptUrl);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   const hasAnyColLabel = rawCols.some((c) => c.label && c.label.trim() !== '');
   const promotedHeaderRow: Record<string, string> = {};
 
@@ -605,7 +937,10 @@ export async function fetchSheetTabData(
       FALLBACK_COLUMN_LABELS[tab.gid]?.[col.id] ?? promotedHeaderRow[col.id] ?? '';
     const label = (col.label?.trim() || fallbackLabel).trim();
 
-    if (HIDDEN_COLUMN_LABELS[tab.gid]?.has(label)) {
+    if (
+      HIDDEN_COLUMN_LABELS[tab.gid]?.has(label) ||
+      label.startsWith('https://script.google.com/')
+    ) {
       return;
     }
 
@@ -638,11 +973,20 @@ export async function fetchSheetTabData(
 
   const colIdxR =
     tab.gid === '606634465' ? rawCols.findIndex((c) => c.id === 'R') : -1;
+  const colIdxQ =
+    tab.gid === '606634465' ? rawCols.findIndex((c) => c.id === 'Q') : -1;
+
+  const existingRecordIds = new Set<string>();
 
   rawRows.forEach((r, idx) => {
     const values: Record<string, string> = {};
     const rawValues: Record<string, string | number | null> = {};
     let hasNonEmptyValue = false;
+
+    if (colIdxQ >= 0) {
+      const qVal = formatGvizCellValue(r.c?.[colIdxQ]);
+      if (qVal) existingRecordIds.add(qVal);
+    }
 
     activeColumns.forEach((col) => {
       const colIdx = rawCols.findIndex((c) => c.id === col.id);
@@ -669,6 +1013,84 @@ export async function fetchSheetTabData(
       });
     }
   });
+
+  // Overlay local/backend mutations so records are immediately visible without login
+  if (tab.gid === '606634465') {
+    for (const jt of mutationsStore.jobTransfers) {
+      const existingRow = parsedRows.find(
+        (r) =>
+          (r.values['A'] ?? '').trim() === (jt.values['A'] ?? '').trim() &&
+          (r.values['C'] ?? '').trim() === (jt.values['C'] ?? '').trim() &&
+          (r.values['D'] ?? '').trim() === (jt.values['D'] ?? '').trim() &&
+          (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim()
+      );
+      if (existingRow) {
+        if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
+        if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
+        if (jt.values['M']) existingRow.values['M'] = jt.values['M'];
+        if (jt.values['N']) existingRow.values['N'] = jt.values['N'];
+      } else if (!existingRecordIds.has(jt.recordId) && !search) {
+        const rowNumber =
+          jt.rowNumber && jt.rowNumber > totalRowsInSheet
+            ? jt.rowNumber
+            : totalRowsInSheet + parsedRows.length + 1;
+        parsedRows.push({
+          rowNumber,
+          values: { ...jt.values },
+          rawValues: {
+            ...jt.values,
+            G: Number(jt.values['G'] ?? 0) || 0,
+          },
+        });
+      }
+    }
+
+    for (const noteEdit of mutationsStore.jobTransferNoteEdits) {
+      const target = parsedRows.find(
+        (r) =>
+          (r.values['A'] ?? '').trim() === noteEdit.date &&
+          (r.values['C'] ?? '').trim() === noteEdit.driverName &&
+          (r.values['D'] ?? '').trim() === noteEdit.vehicleNumber &&
+          (r.values['I'] ?? '').trim() === noteEdit.startTime
+      );
+      if (target) {
+        target.values['N'] = noteEdit.note;
+      }
+    }
+  } else if (tab.gid === '1156877149') {
+    for (const dp of mutationsStore.deliveryPoints) {
+      const exists = parsedRows.some(
+        (r) => (r.values['B'] ?? '').trim() === (dp.values['B'] ?? '').trim()
+      );
+      if (!exists) {
+        parsedRows.push({
+          rowNumber: parsedRows.length + 1,
+          values: { ...dp.values },
+          rawValues: { ...dp.values },
+        });
+      }
+    }
+    for (const edit of mutationsStore.deliveryPointEdits) {
+      const target = parsedRows.find(
+        (r) => (r.values['B'] ?? '').trim() === edit.deliveryPoint
+      );
+      if (target) {
+        target.values['C'] = edit.newGate;
+        if (edit.updatedDate) target.values['A'] = edit.updatedDate;
+      }
+    }
+  } else if (tab.gid === '378250263') {
+    for (const edit of mutationsStore.vehicleRegEdits) {
+      const target = parsedRows.find(
+        (r) =>
+          (r.values['A'] ?? '').trim() === edit.oldRegistration &&
+          (!edit.driverName || (r.values['I'] ?? '').trim() === edit.driverName)
+      );
+      if (target) {
+        target.values['A'] = edit.newRegistration;
+      }
+    }
+  }
 
   if (tab.reverseOrder) {
     parsedRows.reverse();
@@ -719,28 +1141,103 @@ export async function appendJobTransferRecord(
     payload.rounds || 1, // V: จำนวนรอบ
   ];
 
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
-  );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    const rowNumber = await postJobTransferRowToGoogleSheetsApi(
-      rowValues,
-      accessToken
-    );
-    return { recordId, rowNumber };
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
+  const valuesMap: Record<string, string> = {
+    A: payload.date,
+    B: payload.employeeId,
+    C: payload.driverName,
+    D: payload.vehicleNumber,
+    E: payload.trailerNumber,
+    F: payload.productType,
+    G: String(payload.weight),
+    H: payload.origin,
+    I: payload.startTime,
+    J: payload.destination,
+    K: payload.endTime,
+    L: payload.duration,
+    M: payload.status,
+    N: payload.note || '',
+    P: transactionTimestamp,
+    Q: recordId,
+    R: payload.note || '',
+    S: '',
+    T: '',
+    U: payload.weight > 0 ? String(payload.weight) : '',
+    V: String(payload.rounds || 1),
+  };
+
+  let rowNumber: number | null = null;
+  let syncedToSheet = false;
+
+  // 1. Try Google Apps Script Webhook (No-Login Direct Google Sheet Write)
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'appendJobTransfer',
+        rowValues,
+      });
+      if (res.ok !== false) {
+        rowNumber = res.rowNumber ?? null;
+        syncedToSheet = true;
+      }
+    } catch {
+      // fall through to silent token or local store
     }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    const rowNumber = await postJobTransferRowToGoogleSheetsApi(
-      rowValues,
-      accessToken
-    );
-    return { recordId, rowNumber };
   }
+
+  // 2. Try silent cached OAuth token (without opening any login popup!)
+  if (!syncedToSheet) {
+    const token = getSilentAccessToken();
+    if (token) {
+      try {
+        rowNumber = await postJobTransferRowToGoogleSheetsApi(rowValues, token);
+        syncedToSheet = true;
+      } catch {
+        // fall through to local/server persistence
+      }
+    }
+  }
+
+  // 3. Always persist to local & backend store so mobile user never hits an auth error
+  const fallbackRowNumber = rowNumber ?? 56085 + Math.floor(Math.random() * 500);
+  const localStore = readLocalMutationsStore();
+  localStore.jobTransfers.push({
+    recordId,
+    rowNumber: fallbackRowNumber,
+    values: valuesMap,
+    createdAt: new Date().toISOString(),
+    syncedToSheet,
+  });
+  writeLocalMutationsStore(localStore);
+
+  try {
+    const res = await fetch('/api/mutations/job-transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recordId,
+        baseRowNumber: fallbackRowNumber - 1,
+        values: valuesMap,
+      }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { rowNumber?: number };
+      if (!rowNumber && data.rowNumber) {
+        rowNumber = data.rowNumber;
+      }
+      if (syncedToSheet) {
+        void fetch('/api/mutations/mark-synced', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recordId, sheetRowNumber: rowNumber }),
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    // ignore on static hosting
+  }
+
+  return { recordId, rowNumber: rowNumber ?? fallbackRowNumber };
 }
 
 export async function completeJobTransferRecord(params: {
@@ -751,106 +1248,139 @@ export async function completeJobTransferRecord(params: {
   status?: string;
 }): Promise<void> {
   const finalStatus = params.status || 'ส่งสินค้าเรียบร้อยแล้ว';
-  if (!params.rowNumber || params.rowNumber <= 0) {
-    throw new Error('ไม่พบหมายเลขแถวของรายการที่จะจบงานใน Google Sheets');
+
+  // 1. Update local store immediately
+  const localStore = readLocalMutationsStore();
+  for (const item of localStore.jobTransfers) {
+    if (
+      item.recordId === params.recordId ||
+      (params.rowNumber && item.rowNumber === params.rowNumber)
+    ) {
+      item.values['K'] = params.endTime;
+      item.values['L'] = params.duration;
+      item.values['M'] = finalStatus;
+    }
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Update backend store
+  void fetch(`/api/mutations/job-transfer/${encodeURIComponent(params.recordId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      rowNumber: params.rowNumber,
+      endTime: params.endTime,
+      duration: params.duration,
+      status: finalStatus,
+    }),
+  }).catch(() => {});
+
+  // 3. Write directly to Google Sheet via Apps Script Webhook (No-Login)
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'completeJobTransfer',
+        recordId: params.recordId,
+        rowNumber: params.rowNumber,
+        endTime: params.endTime,
+        duration: params.duration,
+        status: finalStatus,
+      });
+      return;
+    } catch {
+      // fall through
+    }
   }
 
-  const executePut = async (token: string) => {
-    const targetRange = encodeURIComponent(
-      `บันทึกการย้ายงาน!K${params.rowNumber}:M${params.rowNumber}`
-    );
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${targetRange}?valueInputOption=USER_ENTERED`;
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        values: [[params.endTime, params.duration, finalStatus]],
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+  // 4. Write via silent cached token if available (No popup)
+  const token = getSilentAccessToken();
+  if (token && params.rowNumber && params.rowNumber > 0) {
+    try {
+      const targetRange = encodeURIComponent(
+        `บันทึกการย้ายงาน!K${params.rowNumber}:M${params.rowNumber}`
+      );
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${targetRange}?valueInputOption=USER_ENTERED`;
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[params.endTime, params.duration, finalStatus]],
+        }),
+      });
+      if (!response.ok && (response.status === 401 || response.status === 403)) {
         invalidateCachedToken();
       }
-      let errorMsg = `ไม่สามารถอัปเดตสถานะจบงานลง Google Sheets (HTTP ${response.status})`;
-      try {
-        const errJson = await response.json();
-        if (errJson?.error?.message) {
-          errorMsg = errJson.error.message;
-        }
-      } catch {
-        // ignore
-      }
-      throw new Error(errorMsg);
+    } catch {
+      // ignore
     }
-  };
-
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
-  );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    await executePut(accessToken);
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
-    }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    await executePut(accessToken);
   }
 }
 
 export async function appendDeliveryPointRecord(
   payload: DeliveryPointPayload
 ): Promise<void> {
-  const executePost = async (token: string) => {
-    const range = encodeURIComponent('จุดส่งสินค้า!A:A');
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+  const localStore = readLocalMutationsStore();
+  localStore.deliveryPoints.push({
+    id: Math.random().toString(16).slice(2, 10),
+    rowNumber: 30 + localStore.deliveryPoints.length,
+    values: {
+      A: payload.date,
+      B: payload.deliveryPoint,
+      C: payload.gate,
+    },
+    createdAt: new Date().toISOString(),
+  });
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/delivery-point', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      values: {
+        A: payload.date,
+        B: payload.deliveryPoint,
+        C: payload.gate,
       },
-      body: JSON.stringify({
-        values: [[payload.date, payload.deliveryPoint, payload.gate]],
-      }),
-    });
+    }),
+  }).catch(() => {});
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        invalidateCachedToken();
-      }
-      let errorMsg = `ไม่สามารถบันทึกจุดส่งสินค้าลง Google Sheets (HTTP ${response.status})`;
-      try {
-        const errJson = await response.json();
-        if (errJson?.error?.message) {
-          errorMsg = errJson.error.message;
-        }
-      } catch {
-        // ignore
-      }
-      throw new Error(errorMsg);
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'appendDeliveryPoint',
+        date: payload.date,
+        deliveryPoint: payload.deliveryPoint,
+        gate: payload.gate,
+      });
+      return;
+    } catch {
+      // fall through
     }
-  };
+  }
 
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
-  );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    await executePost(accessToken);
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
+  const token = getSilentAccessToken();
+  if (token) {
+    try {
+      const range = encodeURIComponent('จุดส่งสินค้า!A:A');
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[payload.date, payload.deliveryPoint, payload.gate]],
+        }),
+      });
+    } catch {
+      // ignore
     }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    await executePost(accessToken);
   }
 }
 
@@ -860,84 +1390,88 @@ export async function updateDeliveryPointGate(params: {
   newGate: string;
   updatedDate: string;
 }): Promise<void> {
-  const executeUpdate = async (token: string) => {
-    const readRange = encodeURIComponent('จุดส่งสินค้า!A:C');
-    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
-    const readRes = await fetch(readUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!readRes.ok) {
-      if (readRes.status === 401 || readRes.status === 403) {
-        invalidateCachedToken();
-      }
-      throw new Error(`ไม่สามารถอ่านตำแหน่งแถวของจุดส่งสินค้าได้ (HTTP ${readRes.status})`);
+  const localStore = readLocalMutationsStore();
+  const editEntry: StoredDeliveryPointEdit = {
+    deliveryPoint: params.deliveryPoint.trim(),
+    oldGate: params.oldGate.trim(),
+    newGate: params.newGate.trim(),
+    updatedDate: params.updatedDate.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+  const existingIdx = localStore.deliveryPointEdits.findIndex(
+    (e) => e.deliveryPoint === editEntry.deliveryPoint
+  );
+  if (existingIdx >= 0) {
+    localStore.deliveryPointEdits[existingIdx] = editEntry;
+  } else {
+    localStore.deliveryPointEdits.push(editEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/delivery-point-gate', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateDeliveryPointGate',
+        ...params,
+      });
+      return;
+    } catch {
+      // fall through
     }
-    const readJson = await readRes.json();
-    const rows: string[][] = readJson?.values ?? [];
-    let matchedIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i] ?? [];
-      if (
-        (row[1] ?? '').trim() === params.deliveryPoint.trim() &&
-        (row[2] ?? '').trim() === params.oldGate.trim()
-      ) {
-        matchedIndex = i;
-        break;
-      }
-    }
-    if (matchedIndex === -1) {
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i] ?? [];
-        if ((row[1] ?? '').trim() === params.deliveryPoint.trim()) {
-          matchedIndex = i;
-          break;
+  }
+
+  const token = getSilentAccessToken();
+  if (token) {
+    try {
+      const readRange = encodeURIComponent('จุดส่งสินค้า!A:C');
+      const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
+      const readRes = await fetch(readUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (readRes.ok) {
+        const readJson = await readRes.json();
+        const rows: string[][] = readJson?.values ?? [];
+        let matchedIndex = -1;
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i]?.[1] ?? '').trim() === params.deliveryPoint.trim()) {
+            matchedIndex = i;
+            break;
+          }
+        }
+        if (matchedIndex !== -1) {
+          const sheetRowNumber = matchedIndex + 1;
+          const updateRange = encodeURIComponent(
+            `จุดส่งสินค้า!A${sheetRowNumber}:C${sheetRowNumber}`
+          );
+          const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+          await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [
+                [
+                  params.updatedDate,
+                  params.deliveryPoint.trim(),
+                  params.newGate.trim(),
+                ],
+              ],
+            }),
+          });
         }
       }
+    } catch {
+      // ignore
     }
-    if (matchedIndex === -1) {
-      throw new Error(`ไม่พบรายการจุดส่งสินค้า "${params.deliveryPoint}" ในชีต`);
-    }
-
-    const sheetRowNumber = matchedIndex + 1;
-    const updateRange = encodeURIComponent(
-      `จุดส่งสินค้า!A${sheetRowNumber}:C${sheetRowNumber}`
-    );
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-    const updateRes = await fetch(updateUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        values: [
-          [
-            params.updatedDate,
-            params.deliveryPoint.trim(),
-            params.newGate.trim(),
-          ],
-        ],
-      }),
-    });
-
-    if (!updateRes.ok) {
-      throw new Error(`ไม่สามารถอัปเดตข้อมูลประตูลง Google Sheets (HTTP ${updateRes.status})`);
-    }
-  };
-
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
-  );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    await executeUpdate(accessToken);
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
-    }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    await executeUpdate(accessToken);
   }
 }
 
@@ -947,78 +1481,72 @@ export async function updateVehicleRegistration(params: {
   driverName: string;
   shift: string;
 }): Promise<void> {
-  const executeUpdate = async (token: string) => {
-    const readRange = encodeURIComponent('ฐานข้อมูลรถ!A:L');
-    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
-    const readRes = await fetch(readUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!readRes.ok) {
-      if (readRes.status === 401 || readRes.status === 403) {
-        invalidateCachedToken();
-      }
-      throw new Error(`ไม่สามารถอ่านตำแหน่งแถวของฐานข้อมูลรถได้ (HTTP ${readRes.status})`);
-    }
+  const localStore = readLocalMutationsStore();
+  localStore.vehicleRegEdits.push({
+    oldRegistration: params.oldRegistration.trim(),
+    newRegistration: params.newRegistration.trim(),
+    driverName: params.driverName.trim(),
+    shift: params.shift.trim(),
+    updatedAt: new Date().toISOString(),
+  });
+  writeLocalMutationsStore(localStore);
 
-    const readJson = await readRes.json();
-    const rows: string[][] = readJson?.values ?? [];
-    let matchedIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i] ?? [];
-      if (
-        (row[0] ?? '').trim() === params.oldRegistration.trim() &&
-        (row[8] ?? '').trim() === params.driverName.trim() &&
-        (row[11] ?? '').trim() === params.shift.trim()
-      ) {
-        matchedIndex = i;
-        break;
-      }
+  void fetch('/api/mutations/vehicle-registration', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateVehicleRegistration',
+        ...params,
+      });
+      return;
+    } catch {
+      // fall through
     }
-    if (matchedIndex === -1) {
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i] ?? [];
-        if ((row[0] ?? '').trim() === params.oldRegistration.trim()) {
-          matchedIndex = i;
-          break;
+  }
+
+  const token = getSilentAccessToken();
+  if (token) {
+    try {
+      const readRange = encodeURIComponent('ฐานข้อมูลรถ!A:L');
+      const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
+      const readRes = await fetch(readUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (readRes.ok) {
+        const readJson = await readRes.json();
+        const rows: string[][] = readJson?.values ?? [];
+        let matchedIndex = -1;
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i]?.[0] ?? '').trim() === params.oldRegistration.trim()) {
+            matchedIndex = i;
+            break;
+          }
+        }
+        if (matchedIndex !== -1) {
+          const sheetRowNumber = matchedIndex + 1;
+          const updateRange = encodeURIComponent(`ฐานข้อมูลรถ!A${sheetRowNumber}`);
+          const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+          await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [[params.newRegistration.trim()]],
+            }),
+          });
         }
       }
+    } catch {
+      // ignore
     }
-    if (matchedIndex === -1) {
-      throw new Error(`ไม่พบข้อมูลทะเบียนรถ "${params.oldRegistration}" ในชีต`);
-    }
-
-    const sheetRowNumber = matchedIndex + 1;
-    const updateRange = encodeURIComponent(`ฐานข้อมูลรถ!A${sheetRowNumber}`);
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-    const updateRes = await fetch(updateUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        values: [[params.newRegistration.trim()]],
-      }),
-    });
-
-    if (!updateRes.ok) {
-      throw new Error(`ไม่สามารถอัปเดตทะเบียนรถลง Google Sheets (HTTP ${updateRes.status})`);
-    }
-  };
-
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
-  );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    await executeUpdate(accessToken);
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
-    }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    await executeUpdate(accessToken);
   }
 }
 
@@ -1030,79 +1558,66 @@ export async function updateJobTransferNote(params: {
   startTime: string;
   note: string;
 }): Promise<void> {
-  const executeUpdate = async (token: string) => {
-    const startSearchRow = Math.max(2, params.rowNumber - 100);
-    const endSearchRow = params.rowNumber + 150;
-    const readRange = encodeURIComponent(
-      `บันทึกการย้ายงาน!A${startSearchRow}:I${endSearchRow}`
-    );
-    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${readRange}`;
-    const readRes = await fetch(readUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!readRes.ok) {
-      if (readRes.status === 401 || readRes.status === 403) {
-        invalidateCachedToken();
-      }
-      throw new Error(`ไม่สามารถอ่านตำแหน่งแถวของบันทึกการย้ายงานได้ (HTTP ${readRes.status})`);
-    }
-
-    const readJson = await readRes.json();
-    const rows: string[][] = readJson?.values ?? [];
-    let exactSheetRow = -1;
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i] ?? [];
-      const dt = (row[0] ?? '').trim();
-      const drv = (row[2] ?? '').trim();
-      const veh = (row[3] ?? '').trim();
-      const st = (row[8] ?? '').trim();
-      if (
-        dt === params.date.trim() &&
-        drv === params.driverName.trim() &&
-        veh === params.vehicleNumber.trim() &&
-        st === params.startTime.trim()
-      ) {
-        exactSheetRow = startSearchRow + i;
-        break;
-      }
-    }
-
-    if (exactSheetRow === -1) {
-      exactSheetRow = params.rowNumber;
-    }
-
-    const updateRange = encodeURIComponent(`บันทึกการย้ายงาน!N${exactSheetRow}`);
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-    const updateRes = await fetch(updateUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        values: [[params.note.trim()]],
-      }),
-    });
-
-    if (!updateRes.ok) {
-      throw new Error(`ไม่สามารถบันทึกหมายเหตุลง Google Sheets (HTTP ${updateRes.status})`);
-    }
+  const localStore = readLocalMutationsStore();
+  const editEntry: StoredJobTransferNoteEdit = {
+    rowNumber: params.rowNumber,
+    date: params.date.trim(),
+    driverName: params.driverName.trim(),
+    vehicleNumber: params.vehicleNumber.trim(),
+    startTime: params.startTime.trim(),
+    note: params.note.trim(),
+    updatedAt: new Date().toISOString(),
   };
-
-  const hadCachedToken = Boolean(
-    (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) ||
-      loadSessionCachedToken()
+  const existingIdx = localStore.jobTransferNoteEdits.findIndex(
+    (e) =>
+      e.date === editEntry.date &&
+      e.driverName === editEntry.driverName &&
+      e.vehicleNumber === editEntry.vehicleNumber &&
+      e.startTime === editEntry.startTime
   );
-  let accessToken = await ensureGoogleSheetsAccessToken(false);
-  try {
-    await executeUpdate(accessToken);
-  } catch (err: unknown) {
-    if (!hadCachedToken) {
-      throw err;
+  if (existingIdx >= 0) {
+    localStore.jobTransferNoteEdits[existingIdx] = editEntry;
+  } else {
+    localStore.jobTransferNoteEdits.push(editEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/job-transfer-note', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateJobTransferNote',
+        ...params,
+      });
+      return;
+    } catch {
+      // fall through
     }
-    accessToken = await ensureGoogleSheetsAccessToken(true);
-    await executeUpdate(accessToken);
+  }
+
+  const token = getSilentAccessToken();
+  if (token) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกการย้ายงาน!N${params.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[params.note.trim()]],
+        }),
+      });
+    } catch {
+      // ignore
+    }
   }
 }

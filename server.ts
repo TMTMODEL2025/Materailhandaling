@@ -58,6 +58,7 @@ interface MutationsStore {
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
+  googleScriptUrl?: string;
 }
 
 function readStore(): MutationsStore {
@@ -84,6 +85,10 @@ function readStore(): MutationsStore {
         googleTokenExpiresAt:
           typeof parsed.googleTokenExpiresAt === 'number'
             ? parsed.googleTokenExpiresAt
+            : undefined,
+        googleScriptUrl:
+          typeof parsed.googleScriptUrl === 'string'
+            ? parsed.googleScriptUrl
             : undefined,
       };
     }
@@ -114,6 +119,21 @@ async function startServer() {
   app.get('/api/mutations', (_req, res) => {
     const store = readStore();
     res.json(store);
+  });
+
+  app.get('/api/script-url', (_req, res) => {
+    const store = readStore();
+    res.json({ scriptUrl: store.googleScriptUrl ?? process.env.VITE_GOOGLE_SCRIPT_URL ?? null });
+  });
+
+  app.post('/api/script-url', (req, res) => {
+    const store = readStore();
+    const { scriptUrl } = req.body ?? {};
+    if (typeof scriptUrl === 'string') {
+      store.googleScriptUrl = scriptUrl.trim();
+      writeStore(store);
+    }
+    res.json({ ok: true, scriptUrl: store.googleScriptUrl });
   });
 
   app.get('/api/google-token', (_req, res) => {
