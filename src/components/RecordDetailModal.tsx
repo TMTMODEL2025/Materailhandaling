@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Camera, Pencil } from 'lucide-react';
+import { X, Check, Camera, Pencil } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
 import { formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
@@ -12,6 +12,7 @@ interface RecordDetailModalProps {
   onOpenAttachPhotos?: (row: SheetRow) => void;
   onUpdateAdditionalDetails?: (row: SheetRow, newDetails: string) => Promise<void>;
   onUpdateReplyDetails?: (row: SheetRow, newReply: string) => Promise<void>;
+  onUpdateFinancialDetails?: (row: SheetRow, spareParts: string, labor: string) => Promise<void>;
 }
 
 export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
@@ -22,21 +23,14 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   onOpenAttachPhotos,
   onUpdateAdditionalDetails,
   onUpdateReplyDetails,
+  onUpdateFinancialDetails,
 }) => {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingColId, setEditingColId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccessColId, setSaveSuccessColId] = useState<string | null>(null);
 
   if (!row) return null;
-
-  const handleCopy = (key: string, text: string) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedId(key);
-    setTimeout(() => setCopiedId(null), 1500);
-  };
 
   const startEditing = (colId: string, currentVal: string) => {
     setEditingColId(colId);
@@ -53,19 +47,32 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
         if (onUpdateAdditionalDetails) {
           await onUpdateAdditionalDetails(row, cleanVal);
         }
+        row.values[colId] = cleanVal;
       } else if (colId === 'AM' || colId.includes('ตอบกลับ')) {
         if (onUpdateReplyDetails) {
           await onUpdateReplyDetails(row, cleanVal);
         }
+        row.values[colId] = cleanVal;
+      } else if (colId === 'N' || colId === 'O' || colId.includes('ค่าอะไหล่') || colId.includes('ค่าแรง')) {
+        const spareParts = colId === 'N' || colId.includes('ค่าอะไหล่') ? cleanVal : (row.values['N'] ?? '');
+        const labor = colId === 'O' || colId.includes('ค่าแรง') ? cleanVal : (row.values['O'] ?? '');
+        if (onUpdateFinancialDetails) {
+          await onUpdateFinancialDetails(row, spareParts, labor);
+        }
+        row.values['N'] = spareParts;
+        row.values['O'] = labor;
       }
-      row.values[colId] = cleanVal;
+
       setEditingColId(null);
       setSaveSuccessColId(colId);
 
       const isReply = colId === 'AM' || colId.includes('ตอบกลับ');
+      const isFinancial = colId === 'N' || colId === 'O' || colId.includes('ค่าอะไหล่') || colId.includes('ค่าแรง');
       showSuccessToast(
-        isReply ? 'บันทึกการตอบกลับสำเร็จ!' : 'บันทึกรายละเอียดเพิ่มเติมสำเร็จ!',
-        isReply
+        isFinancial ? 'บันทึกค่าใช้จ่ายสำเร็จ!' : isReply ? 'บันทึกการตอบกลับสำเร็จ!' : 'บันทึกรายละเอียดเพิ่มเติมสำเร็จ!',
+        isFinancial
+          ? 'อัปเดตค่าอะไหล่และค่าแรงเรียบร้อยแล้ว'
+          : isReply
           ? 'ส่งข้อความตอบกลับและอัปเดตสถานะเรียบร้อยแล้ว'
           : 'ระบบบันทึกรายละเอียดเพิ่มเติมเรียบร้อยแล้ว'
       );
@@ -136,16 +143,12 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 col.id === 'K' ||
                 col.id === 'L' ||
                 col.id === 'M' ||
-                col.id === 'N' ||
-                col.id === 'O' ||
                 col.label.includes('SAP') ||
                 col.label.includes('กำหนดการ') ||
                 col.label.includes('ซ่อมเสร็จ') ||
                 col.label.includes('ระยะเวลาซ่อม') ||
                 col.label.includes('PR') ||
-                col.label.includes('ใบกำกับภาษี') ||
-                col.label.includes('ค่าอะไหล่') ||
-                col.label.includes('ค่าแรง');
+                col.label.includes('ใบกำกับภาษี');
 
               if (isRepairTab && isHideIfEmptyField && (!rawVal || rawVal === '-')) {
                 return null;
@@ -168,8 +171,12 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 isRepairTab &&
                 (col.id === 'AK' ||
                   col.id === 'AM' ||
+                  col.id === 'N' ||
+                  col.id === 'O' ||
                   col.label.includes('รายละเอียดเพิ่มเติม') ||
-                  col.label.includes('ตอบกลับข้อมูลเพิ่มเติม'));
+                  col.label.includes('ตอบกลับข้อมูลเพิ่มเติม') ||
+                  col.label.includes('ค่าอะไหล่') ||
+                  col.label.includes('ค่าแรง'));
 
               if (isEditableInModal && editingColId === col.id) {
                 return (
@@ -182,13 +189,25 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                         กำลังแก้ไข
                       </span>
                     </div>
-                    <textarea
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      rows={3}
-                      placeholder={`พิมพ์${col.label}...`}
-                      className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs resize-y"
-                    />
+                    {col.id === 'N' || col.id === 'O' || col.label.includes('ค่าอะไหล่') || col.label.includes('ค่าแรง') ? (
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        placeholder={`พิมพ์${col.label}...`}
+                        className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs sm:text-sm font-mono text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
+                      />
+                    ) : (
+                      <textarea
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        rows={3}
+                        placeholder={`พิมพ์${col.label}...`}
+                        className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs resize-y"
+                      />
+                    )}
                     <div className="mt-2 flex items-center justify-end gap-1.5">
                       <button
                         type="button"
@@ -263,21 +282,6 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                       <span className="text-[11px] font-semibold text-emerald-600">
                         บันทึกข้อมูลเรียบร้อยแล้ว
                       </span>
-                    )}
-
-                    {val !== '-' && (
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(col.id, val)}
-                        title="คัดลอกข้อมูล"
-                        className="shrink-0 rounded p-1 text-slate-400 transition-opacity hover:bg-slate-100 hover:text-slate-700 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
-                      >
-                        {copiedId === col.id ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </button>
                     )}
                   </div>
                 </div>

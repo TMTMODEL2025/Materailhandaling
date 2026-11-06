@@ -34,6 +34,7 @@ import {
   updateJobTransferNote,
   updateRepairAdditionalDetails,
   updateRepairReplyDetails,
+  updateRepairFinancialDetails,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -120,6 +121,7 @@ export default function App() {
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [groupPages, setGroupPages] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -1427,6 +1429,345 @@ export default function App() {
                       </div>
                     </td>
                   </tr>
+                ) : activeTab.gid === '944294225' && repairGroupedRows ? (
+                  Array.from(repairGroupedRows.entries()).map(([status, rows]) => {
+                    const isCollapsed = collapsedGroups[status] ?? true;
+                    const colSpan = (sheetData?.columns.length ?? 5) + 1;
+                    const groupPageSize = 15;
+                    const currentGroupPage = groupPages[status] ?? 1;
+                    const groupTotalPages = Math.max(1, Math.ceil(rows.length / groupPageSize));
+                    const paginatedGroupRows = rows.slice(
+                      (currentGroupPage - 1) * groupPageSize,
+                      currentGroupPage * groupPageSize
+                    );
+                    return (
+                      <React.Fragment key={status}>
+                        <tr
+                          onClick={() =>
+                            setCollapsedGroups((prev) => ({
+                              ...prev,
+                              [status]: !isCollapsed,
+                            }))
+                          }
+                          className="cursor-pointer bg-slate-100/90 font-semibold text-slate-800 transition-colors hover:bg-slate-200/80 select-none"
+                        >
+                          <td colSpan={colSpan} className="px-3 py-2.5 sm:px-4 sm:py-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="flex h-5 w-5 items-center justify-center rounded text-slate-600"
+                                >
+                                  {isCollapsed ? (
+                                    <ChevronRight className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </button>
+                                <span className="text-xs sm:text-sm font-bold text-slate-900">
+                                  {status}
+                                </span>
+                                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-mono text-slate-700">
+                                  {rows.length.toLocaleString('th-TH')} รายการ
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-medium text-slate-500">
+                                {isCollapsed ? 'คลิกเพื่อขยาย' : 'คลิกเพื่อย่อ'}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {!isCollapsed && (
+                          <>
+                            {paginatedGroupRows.map((row) => (
+                              <tr
+                                key={row.rowNumber}
+                                onClick={() => setSelectedRow(row)}
+                                className="cursor-pointer transition-colors hover:bg-slate-50"
+                              >
+                                {sheetData?.columns.map((col) => {
+                                  const val = row.values[col.id] ?? '';
+                                  const isNumeric = col.type === 'number';
+                                  const isMono =
+                                    isNumeric ||
+                                    col.type === 'date' ||
+                                    col.type === 'datetime' ||
+                                    col.type === 'timeofday';
+
+                                  const isEditableGateCell =
+                                    activeTab.gid === '1156877149' && col.id === 'C';
+                                  const isEditableVehicleRegCell =
+                                    activeTab.gid === '378250263' && col.id === 'A';
+                                  const isEditableJobNoteCell =
+                                    activeTab.gid === '606634465' && col.id === 'N';
+                                  const isEditableInlineCell =
+                                    isEditableGateCell ||
+                                    isEditableVehicleRegCell ||
+                                    isEditableJobNoteCell;
+                                  const isEditingThisRow =
+                                    isEditableInlineCell &&
+                                    editingGateRowNumber === row.rowNumber &&
+                                    editingColumnId === col.id;
+                                  const isConfirmingThisRow =
+                                    isEditableInlineCell &&
+                                    confirmingGateRowNumber === row.rowNumber &&
+                                    editingColumnId === col.id;
+                                  const isOver20MinDuration =
+                                    activeTab.gid === '606634465' &&
+                                    (col.id === 'L' || col.label === 'เวลาที่ใช้') &&
+                                    isDurationExceeding20Minutes(val);
+
+                                  return (
+                                    <td
+                                      key={col.id}
+                                      onClick={
+                                        isEditableInlineCell
+                                          ? (e) => {
+                                              e.stopPropagation();
+                                              if (!isEditingThisRow && !isConfirmingThisRow) {
+                                                setEditingGateRowNumber(row.rowNumber);
+                                                setEditingColumnId(col.id);
+                                                setEditingGateValue(val);
+                                                setConfirmingGateRowNumber(null);
+                                              }
+                                            }
+                                          : undefined
+                                      }
+                                      className={`px-2.5 py-2 sm:px-4 sm:py-2.5 ${
+                                        isOver20MinDuration
+                                          ? 'bg-red-50 font-bold text-red-600'
+                                          : 'text-slate-800'
+                                      } ${
+                                        isEditableInlineCell
+                                          ? 'min-w-[220px] sm:min-w-[280px] cursor-pointer'
+                                          : 'max-w-[220px] sm:max-w-[260px] truncate'
+                                      } ${isNumeric ? 'text-right' : 'text-left'} ${
+                                        isMono ? 'font-mono text-xs tabular-nums' : 'text-xs sm:text-sm'
+                                      }`}
+                                      title={
+                                        isEditableInlineCell
+                                          ? 'คลิกเพื่อแก้ไขข้อมูลเพิ่มเติม'
+                                          : val
+                                      }
+                                    >
+                                      {isEditableInlineCell ? (
+                                        isConfirmingThisRow ? (
+                                          <div
+                                            className="flex flex-wrap items-center gap-1.5"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span className="text-xs text-slate-700">
+                                              ยืนยัน{' '}
+                                              <strong className="font-semibold text-slate-900">
+                                                {editingGateValue.trim() || '(ว่าง)'}
+                                              </strong>
+                                              ?
+                                            </span>
+                                            <button
+                                              type="button"
+                                              disabled={isUpdatingGate}
+                                              onClick={() => handleConfirmGateUpdate(row)}
+                                              className="inline-flex items-center gap-1 rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                            >
+                                              <Check className="h-3 w-3" />
+                                              <span>
+                                                {isUpdatingGate ? 'กำลังบันทึก...' : 'ยืนยัน'}
+                                              </span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={isUpdatingGate}
+                                              onClick={() => {
+                                                setConfirmingGateRowNumber(null);
+                                              }}
+                                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+                                            >
+                                              ย้อนกลับ
+                                            </button>
+                                          </div>
+                                        ) : isEditingThisRow ? (
+                                          <div
+                                            className="flex items-center gap-1.5"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <input
+                                              type="text"
+                                              autoFocus
+                                              value={editingGateValue}
+                                              onChange={(e) => setEditingGateValue(e.target.value)}
+                                              placeholder={
+                                                isEditableJobNoteCell
+                                                  ? 'พิมพ์หมายเหตุ...'
+                                                  : undefined
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  e.preventDefault();
+                                                  if (
+                                                    (isEditableJobNoteCell ||
+                                                      editingGateValue.trim()) &&
+                                                    editingGateValue.trim() !== val.trim()
+                                                  ) {
+                                                    setConfirmingGateRowNumber(row.rowNumber);
+                                                  } else {
+                                                    setEditingGateRowNumber(null);
+                                                    setEditingColumnId(null);
+                                                  }
+                                                } else if (e.key === 'Escape') {
+                                                  setEditingGateRowNumber(null);
+                                                  setEditingColumnId(null);
+                                                  setConfirmingGateRowNumber(null);
+                                                }
+                                              }}
+                                              className="w-40 sm:w-52 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (
+                                                  (isEditableJobNoteCell ||
+                                                    editingGateValue.trim()) &&
+                                                  editingGateValue.trim() !== val.trim()
+                                                ) {
+                                                  setConfirmingGateRowNumber(row.rowNumber);
+                                                } else {
+                                                  setEditingGateRowNumber(null);
+                                                  setEditingColumnId(null);
+                                                }
+                                              }}
+                                              className="rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+                                            >
+                                              บันทึก
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingGateRowNumber(null);
+                                                setEditingColumnId(null);
+                                                setConfirmingGateRowNumber(null);
+                                              }}
+                                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 whitespace-nowrap shrink-0"
+                                            >
+                                              ยกเลิก
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-between gap-1.5 group/cell hover:text-slate-900">
+                                            <span className="truncate">{renderHighlightedText(val || '-')}</span>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingGateRowNumber(row.rowNumber);
+                                                setEditingColumnId(col.id);
+                                                setEditingGateValue(val);
+                                                setConfirmingGateRowNumber(null);
+                                              }}
+                                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0 shadow-2xs"
+                                            >
+                                              <Pencil className="h-2.5 w-2.5" />
+                                              <span>แก้ไข</span>
+                                            </button>
+                                          </div>
+                                        )
+                                      ) : (
+                                        renderHighlightedText(val)
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                {activeTab.gid === '944294225' && (
+                                  <td
+                                    className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedRow(row)}
+                                        title="ดูรายละเอียดทั้งหมด"
+                                        className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                                      >
+                                        <Eye className="h-3.5 w-3.5" />
+                                        <span>รายละเอียด</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAttachingPhotoRow(row)}
+                                        title="แนบรูปเพิ่ม / แก้ไขรูปถ่าย"
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 px-2 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                                      >
+                                        <Camera className="h-3.5 w-3.5 text-slate-600" />
+                                        <span>แนบรูป</span>
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                            {groupTotalPages > 1 && (
+                              <tr className="bg-slate-50/80">
+                                <td colSpan={colSpan} className="px-3 py-2 sm:px-4 sm:py-2.5">
+                                  <div className="flex items-center justify-between text-xs text-slate-600">
+                                    <div>
+                                      แสดงรายการที่{' '}
+                                      <span className="font-mono font-semibold text-slate-900">
+                                        {((currentGroupPage - 1) * groupPageSize + 1).toLocaleString('th-TH')}
+                                      </span>
+                                      –
+                                      <span className="font-mono font-semibold text-slate-900">
+                                        {Math.min(currentGroupPage * groupPageSize, rows.length).toLocaleString('th-TH')}
+                                      </span>{' '}
+                                      จากทั้งหมด{' '}
+                                      <span className="font-mono font-semibold text-slate-900">
+                                        {rows.length.toLocaleString('th-TH')}
+                                      </span>{' '}
+                                      รายการในกลุ่มนี้
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={currentGroupPage <= 1}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setGroupPages((prev) => ({
+                                            ...prev,
+                                            [status]: Math.max(1, currentGroupPage - 1),
+                                          }));
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                                      >
+                                        <ChevronLeft className="h-3.5 w-3.5" />
+                                        <span>ก่อนหน้า</span>
+                                      </button>
+                                      <span className="px-1.5 font-mono font-medium text-slate-700">
+                                        {currentGroupPage}/{groupTotalPages}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        disabled={currentGroupPage >= groupTotalPages}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setGroupPages((prev) => ({
+                                            ...prev,
+                                            [status]: Math.min(groupTotalPages, currentGroupPage + 1),
+                                          }));
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                                      >
+                                        <span>ถัดไป</span>
+                                        <ChevronRight className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
                 ) : (
                   paginatedRows.map((row) => (
                     <tr
@@ -1755,6 +2096,22 @@ export default function App() {
               ? `บันทึกตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`
               : `ล้างตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`
           );
+          loadData({ silent: true });
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+        }}
+        onUpdateFinancialDetails={async (row, spareParts, labor) => {
+          const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
+          const repairRequestNo = (row.values['G'] ?? '').trim();
+          await updateRepairFinancialDetails({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            sparePartsCost: spareParts,
+            laborCost: labor,
+          });
+          row.values['N'] = spareParts;
+          row.values['O'] = labor;
+          setSaveSuccessMsg('อัปเดตค่าอะไหล่และค่าแรงเรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}

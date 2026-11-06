@@ -117,6 +117,8 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
   const [symptoms, setSymptoms] = useState<string>('');
   const [reporterName, setReporterName] = useState<string>('');
   const [repairRequestNo, setRepairRequestNo] = useState<string>('');
+  const [sparePartsCost, setSparePartsCost] = useState<string>('');
+  const [laborCost, setLaborCost] = useState<string>('');
   const [note, setNote] = useState<string>('');
   const [photos, setPhotos] = useState<string[]>([]);
 
@@ -234,6 +236,8 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
         symptoms: symptoms.trim(),
         reporterName: reporterName.trim(),
         repairRequestNo: repairRequestNo.trim(),
+        sparePartsCost: sparePartsCost.trim(),
+        laborCost: laborCost.trim(),
         note: note.trim(),
         photos: photos.length > 0 ? photos : undefined,
       };
@@ -247,6 +251,8 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
 
       // Reset form
       setSymptoms('');
+      setSparePartsCost('');
+      setLaborCost('');
       setNote('');
       setRepairRequestNo('');
       setPhotos([]);
@@ -411,6 +417,38 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
                 onChange={(e) => setRepairRequestNo(e.target.value)}
                 placeholder="TMT-FL11-0013"
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs sm:text-sm font-semibold text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            {/* ค่าอะไหล่ */}
+            <div>
+              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                ค่าอะไหล่ (บาท)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={sparePartsCost}
+                onChange={(e) => setSparePartsCost(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+              />
+            </div>
+
+            {/* ค่าแรง */}
+            <div>
+              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                ค่าแรง (บาท)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={laborCost}
+                onChange={(e) => setLaborCost(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
               />
             </div>
 

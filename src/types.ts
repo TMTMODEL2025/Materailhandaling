@@ -64,6 +64,8 @@ export interface RepairRequestPayload {
   note?: string;
   repairRequestNo?: string;
   photos?: string[];
+  sparePartsCost?: string;
+  laborCost?: string;
 }
 
 export interface RepairApprovalPayload {

@@ -374,6 +374,36 @@ function doPost(e) {
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
 
+    if (action === 'updateRepairFinancialDetails') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+      const repairRequestNo = String(body.repairRequestNo || '').trim();
+
+      if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (let i = checkData.length - 1; i >= 0; i--) {
+          const rowSeq = String(checkData[i][0] || '').trim();
+          const rowReqNo = String(checkData[i][6] || '').trim();
+          if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        sheet.getRange(targetRow, 14, 1, 2).setValues([[
+          String(body.sparePartsCost || '').trim(),
+          String(body.laborCost || '').trim()
+        ]]);
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     if (action === 'updateRepairReplyDetails') {
       const sheet = ss.getSheetByName('บันทึกงานซ่อม');
       const lastRow = sheet.getLastRow();
@@ -726,7 +756,7 @@ const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '1156877149': new Set(['D', 'Z']),
   '944294225': new Set([
     'A', 'B', 'C', 'G',
-    'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
+    'H', 'I', 'J', 'K', 'L', 'M',
     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
     'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
     'AJ', 'AK', 'AL', 'AM',
@@ -756,8 +786,6 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'เลขที่ PR',
     'เลขที่PR',
     'เลขที่ใบกำกับภาษี',
-    'ค่าอะไหล่',
-    'ค่าแรง',
     'รูปถ่ายที่ 1',
     'รูปถ่ายที่ 2',
     'รูปถ่ายที่ 3',
@@ -2172,6 +2200,8 @@ export async function appendRepairRecord(
   rowValues[4] = payload.repairType; // E: ประเภทการซ่อม
   rowValues[5] = payload.symptoms; // F: อาการ
   rowValues[6] = payload.repairRequestNo || ''; // G: เลขที่ขอซ่อม
+  rowValues[13] = payload.sparePartsCost || ''; // N: ค่าอะไหล่
+  rowValues[14] = payload.laborCost || ''; // O: ค่าแรง
   rowValues[15] = 'รอคิวซ่อม'; // P: สถานะ
   // Q to Y: รูปถ่ายที่ 1 - 9 (indices 16 to 24)
   const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
@@ -2193,6 +2223,8 @@ export async function appendRepairRecord(
     E: payload.repairType,
     F: payload.symptoms,
     G: payload.repairRequestNo || '',
+    N: payload.sparePartsCost || '',
+    O: payload.laborCost || '',
     P: 'รอคิวซ่อม',
     AA: payload.reporterName,
     AH: payload.note || '',
@@ -2660,5 +2692,60 @@ export async function updateRepairReplyDetails(params: {
     }
   }
 }
+
+export async function updateRepairFinancialDetails(params: {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  sparePartsCost: string;
+  laborCost: string;
+}): Promise<void> {
+  const localStore = readLocalMutationsStore();
+  for (const req of localStore.repairRequests) {
+    if (
+      (params.sequenceNo && req.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && req.values['G'] === params.repairRequestNo) ||
+      (params.rowNumber > 0 && req.rowNumber === params.rowNumber)
+    ) {
+      req.values['N'] = params.sparePartsCost;
+      req.values['O'] = params.laborCost;
+    }
+  }
+  writeLocalMutationsStore(localStore);
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateRepairFinancialDetails',
+        ...params,
+      });
+      return;
+    } catch {
+      // ignore
+    }
+  }
+
+  const token = getSilentAccessToken();
+  if (token && params.rowNumber > 0) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!N${params.rowNumber}:O${params.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[params.sparePartsCost, params.laborCost]],
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 
 
