@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { X, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { X, CheckCircle2, XCircle, Clock, AlertCircle, HelpCircle } from 'lucide-react';
 import { SheetRow, RepairApprovalPayload } from '../types';
-import { approveRepairRecord } from '../services/googleSheets';
+import { approveRepairRecord, updateRepairAdditionalDetails } from '../services/googleSheets';
 
 interface ManagerApprovalModalProps {
   isOpen: boolean;
@@ -37,8 +37,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
     () => localStorage.getItem('gsheets_manager_approver_name') || ''
   );
   const [selectedRow, setSelectedRow] = useState<SheetRow | null>(null);
-  const [decision, setDecision] = useState<'3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ'>('3.✔️อนุมัติ');
+  const [decision, setDecision] = useState<'3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '4.⚠️ขอข้อมูลเพิ่มเติม'>('3.✔️อนุมัติ');
   const [note, setNote] = useState<string>('');
+  const [additionalInfo, setAdditionalInfo] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +51,8 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
         status === '2.⚠️รอพิจารณา' ||
         status === 'รอพิจารณา' ||
         status === 'รออนุมัติ' ||
+        status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
+        status.includes('ขอข้อมูล') ||
         !status
       );
     });
@@ -59,10 +62,14 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleOpenDecision = (row: SheetRow, defaultDecision: '3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ') => {
+  const handleOpenDecision = (
+    row: SheetRow,
+    defaultDecision: '3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '4.⚠️ขอข้อมูลเพิ่มเติม'
+  ) => {
     setSelectedRow(row);
     setDecision(defaultDecision);
     setNote('');
+    setAdditionalInfo((row.values['AK'] ?? '').trim());
     setError(null);
   };
 
@@ -73,11 +80,27 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
       return;
     }
 
+    if (decision === '4.⚠️ขอข้อมูลเพิ่มเติม' && !additionalInfo.trim() && !note.trim()) {
+      setError('กรุณาระบุรายละเอียดหรือข้อมูลที่ต้องการขอเพิ่มเติม');
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const repairStatus = decision === '3.✔️อนุมัติ' ? 'รอคิวซ่อม' : 'ยกเลิกการซ่อม';
+      const repairStatus =
+        decision === '3.✔️อนุมัติ'
+          ? 'รอคิวซ่อม'
+          : decision === '1.❌ไม่อนุมัติ'
+          ? 'ยกเลิกการซ่อม'
+          : 'รอข้อมูลเพิ่มเติม';
+
+      const finalNote =
+        decision === '4.⚠️ขอข้อมูลเพิ่มเติม'
+          ? additionalInfo.trim() || note.trim()
+          : note.trim();
+
       const payload: RepairApprovalPayload = {
         rowNumber: selectedRow.rowNumber,
         sequenceNo: (selectedRow.values['A'] ?? '').trim(),
@@ -86,10 +109,25 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
         approvalDate: getCurrentThaiDateString(),
         approvalTime: getCurrentTimeString(),
         repairStatus,
-        note: note.trim(),
+        note: finalNote,
       };
 
       await approveRepairRecord(payload);
+
+      if (decision === '4.⚠️ขอข้อมูลเพิ่มเติม' && additionalInfo.trim()) {
+        try {
+          await updateRepairAdditionalDetails({
+            rowNumber: selectedRow.rowNumber,
+            sequenceNo: (selectedRow.values['A'] ?? '').trim(),
+            repairRequestNo: (selectedRow.values['G'] ?? '').trim(),
+            additionalDetails: additionalInfo.trim(),
+          });
+          selectedRow.values['AK'] = additionalInfo.trim();
+        } catch {
+          // ignore
+        }
+      }
+
       setSelectedRow(null);
       onApprovedSuccess();
     } catch (err: unknown) {
@@ -246,13 +284,21 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                     {selectedRow.values['F'] || '-'}
                   </div>
                 </div>
+                {selectedRow.values['AK'] && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500">รายละเอียดเพิ่มเติมที่มีอยู่:</span>
+                    <div className="mt-0.5 whitespace-pre-wrap rounded border border-amber-200 bg-amber-50/50 p-2 text-xs text-amber-900">
+                      {selectedRow.values['AK']}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 border-t border-slate-200 pt-3">
                 <label className="block text-xs font-semibold text-slate-800">
                   ผลการพิจารณา:
                 </label>
-                <div className="mt-1 flex items-center gap-2">
+                <div className="mt-1 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setDecision('3.✔️อนุมัติ')}
@@ -265,6 +311,20 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     <span>3.✔️ อนุมัติ</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDecision('4.⚠️ขอข้อมูลเพิ่มเติม')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                      decision === '4.⚠️ขอข้อมูลเพิ่มเติม'
+                        ? 'bg-amber-600 text-white'
+                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                    <span>4.⚠️ ขอข้อมูลเพิ่มเติม</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setDecision('1.❌ไม่อนุมัติ')}
@@ -279,18 +339,33 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                   </button>
                 </div>
 
-                <div className="mt-3">
-                  <label className="block text-xs font-medium text-slate-700">
-                    หมายเหตุผู้อนุมัติ:
-                  </label>
-                  <input
-                    type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
-                  />
-                </div>
+                {decision === '4.⚠️ขอข้อมูลเพิ่มเติม' ? (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                    <label className="block text-xs font-bold text-amber-900">
+                      รายละเอียดข้อมูลที่ขอเพิ่มเติม <span className="text-red-600">*</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={additionalInfo}
+                      onChange={(e) => setAdditionalInfo(e.target.value)}
+                      placeholder="ระบุรายละเอียดหรือข้อมูลเพิ่มเติมที่ต้องการให้ผู้แจ้งซ่อมชี้แจง..."
+                      className="mt-1 w-full rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-amber-600 focus:outline-none"
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-slate-700">
+                      หมายเหตุผู้อนุมัติ:
+                    </label>
+                    <input
+                      type="text"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
@@ -309,6 +384,8 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                   className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold text-white transition-colors ${
                     decision === '3.✔️อนุมัติ'
                       ? 'bg-emerald-700 hover:bg-emerald-800'
+                      : decision === '4.⚠️ขอข้อมูลเพิ่มเติม'
+                      ? 'bg-amber-600 hover:bg-amber-700'
                       : 'bg-red-700 hover:bg-red-800'
                   }`}
                 >
@@ -345,6 +422,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
 
                 const isApproved = appStatus.includes('อนุมัติ') && !appStatus.includes('ไม่อนุมัติ') && !appStatus.includes('รอ');
                 const isRejected = appStatus.includes('ไม่อนุมัติ');
+                const isNeedInfo = appStatus.includes('ขอข้อมูล');
 
                 return (
                   <div
@@ -364,10 +442,12 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                           <span
                             className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
                               isApproved
-                                ? 'bg-emerald-50 text-emerald-700'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : isRejected
-                                ? 'bg-red-50 text-red-700'
-                                : 'bg-amber-50 text-amber-700'
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : isNeedInfo
+                                ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
                             }`}
                           >
                             {appStatus}
@@ -378,6 +458,11 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                         <strong className="font-medium text-slate-900">{typ}:</strong>{' '}
                         <span className="text-slate-600 line-clamp-1">{sym || '-'}</span>
                       </div>
+                      {r.values['AK'] && (
+                        <div className="mt-0.5 text-xs text-amber-800 line-clamp-1">
+                          <strong>ขอข้อมูลเพิ่ม:</strong> {r.values['AK']}
+                        </div>
+                      )}
                       <div className="mt-0.5 text-[11px] text-slate-400">
                         ผู้แจ้ง: {rep || '-'} {approver ? `· ผู้อนุมัติ: ${approver}` : ''}
                       </div>
@@ -387,15 +472,23 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleOpenDecision(r, '3.✔️อนุมัติ')}
-                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-800"
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-800"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" />
                         <span>อนุมัติ</span>
                       </button>
                       <button
                         type="button"
+                        onClick={() => handleOpenDecision(r, '4.⚠️ขอข้อมูลเพิ่มเติม')}
+                        className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                        <span>ขอข้อมูลเพิ่ม</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleOpenDecision(r, '1.❌ไม่อนุมัติ')}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50"
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50"
                       >
                         <XCircle className="h-3.5 w-3.5" />
                         <span>ไม่อนุมัติ</span>

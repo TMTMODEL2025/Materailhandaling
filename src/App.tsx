@@ -32,6 +32,7 @@ import {
   updateVehicleRegistration,
   updateJobTransferNote,
   updateRepairAdditionalDetails,
+  updateRepairReplyDetails,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -122,8 +123,9 @@ export default function App() {
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
-  // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู and ฐานข้อมูลรถ -> คอลัมน์ ทะเบียนรถ
+  // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู, ฐานข้อมูลรถ -> คอลัมน์ ทะเบียนรถ, และ บันทึกงานซ่อม -> คอลัมน์ รายละเอียดเพิ่มเติม / ตอบกลับข้อมูลเพิ่มเติม
   const [editingGateRowNumber, setEditingGateRowNumber] = useState<number | null>(null);
+  const [editingColumnId, setEditingColumnId] = useState<string | null>(null);
   const [editingGateValue, setEditingGateValue] = useState<string>('');
   const [confirmingGateRowNumber, setConfirmingGateRowNumber] = useState<number | null>(
     null
@@ -204,6 +206,7 @@ export default function App() {
     setSortConfig(null);
     setCurrentPage(1);
     setEditingGateRowNumber(null);
+    setEditingColumnId(null);
     setConfirmingGateRowNumber(null);
   };
 
@@ -235,23 +238,45 @@ export default function App() {
         const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
         const repairRequestNo = (row.values['G'] ?? '').trim();
 
-        await updateRepairAdditionalDetails({
-          rowNumber: row.rowNumber,
-          sequenceNo,
-          repairRequestNo,
-          additionalDetails: newValue,
-        });
+        if (editingColumnId === 'AM' || editingColumnId === 'ตอบกลับข้อมูลเพิ่มเติม') {
+          await updateRepairReplyDetails({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            replyDetails: newValue,
+          });
 
-        // Update local row immediately
-        row.values['AK'] = newValue;
+          // Update local row immediately
+          row.values['AM'] = newValue;
 
-        setEditingGateRowNumber(null);
-        setConfirmingGateRowNumber(null);
-        setSaveSuccessMsg(
-          newValue
-            ? `บันทึกรายละเอียดเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-            : `ล้างรายละเอียดเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-        );
+          setEditingGateRowNumber(null);
+          setEditingColumnId(null);
+          setConfirmingGateRowNumber(null);
+          setSaveSuccessMsg(
+            newValue
+              ? `บันทึกการตอบกลับข้อมูลเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+              : `ล้างการตอบกลับข้อมูลเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+          );
+        } else {
+          await updateRepairAdditionalDetails({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            additionalDetails: newValue,
+          });
+
+          // Update local row immediately
+          row.values['AK'] = newValue;
+
+          setEditingGateRowNumber(null);
+          setEditingColumnId(null);
+          setConfirmingGateRowNumber(null);
+          setSaveSuccessMsg(
+            newValue
+              ? `บันทึกรายละเอียดเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+              : `ล้างรายละเอียดเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+          );
+        }
       } else if (isJobTransferTab) {
         const date = (row.values['A'] ?? '').trim();
         const driverName = (row.values['C'] ?? '').trim();
@@ -1307,17 +1332,23 @@ export default function App() {
                         const isEditableRepairDetailCell =
                           activeTab.gid === '944294225' &&
                           (col.id === 'AK' || col.label.includes('รายละเอียดเพิ่มเติม'));
+                        const isEditableRepairReplyCell =
+                          activeTab.gid === '944294225' &&
+                          (col.id === 'AM' || col.label.includes('ตอบกลับข้อมูลเพิ่มเติม'));
                         const isEditableInlineCell =
                           isEditableGateCell ||
                           isEditableVehicleRegCell ||
                           isEditableJobNoteCell ||
-                          isEditableRepairDetailCell;
+                          isEditableRepairDetailCell ||
+                          isEditableRepairReplyCell;
                         const isEditingThisRow =
                           isEditableInlineCell &&
-                          editingGateRowNumber === row.rowNumber;
+                          editingGateRowNumber === row.rowNumber &&
+                          editingColumnId === col.id;
                         const isConfirmingThisRow =
                           isEditableInlineCell &&
-                          confirmingGateRowNumber === row.rowNumber;
+                          confirmingGateRowNumber === row.rowNumber &&
+                          editingColumnId === col.id;
                         const isOver20MinDuration =
                           activeTab.gid === '606634465' &&
                           (col.id === 'L' || col.label === 'เวลาที่ใช้') &&
@@ -1328,7 +1359,15 @@ export default function App() {
                             key={col.id}
                             onClick={
                               isEditableInlineCell
-                                ? (e) => e.stopPropagation()
+                                ? (e) => {
+                                    e.stopPropagation();
+                                    if (!isEditingThisRow && !isConfirmingThisRow) {
+                                      setEditingGateRowNumber(row.rowNumber);
+                                      setEditingColumnId(col.id);
+                                      setEditingGateValue(val);
+                                      setConfirmingGateRowNumber(null);
+                                    }
+                                  }
                                 : undefined
                             }
                             className={`px-2.5 py-2 sm:px-4 sm:py-2.5 ${
@@ -1337,16 +1376,23 @@ export default function App() {
                                 : 'text-slate-800'
                             } ${
                               isEditableInlineCell
-                                ? 'min-w-[200px] sm:min-w-[240px]'
+                                ? 'min-w-[220px] sm:min-w-[280px] cursor-pointer'
                                 : 'max-w-[220px] sm:max-w-[260px] truncate'
                             } ${isNumeric ? 'text-right' : 'text-left'} ${
                               isMono ? 'font-mono text-xs tabular-nums' : 'text-xs sm:text-sm'
                             }`}
-                            title={!isEditableInlineCell ? val : undefined}
+                            title={
+                              isEditableInlineCell
+                                ? 'คลิกเพื่อแก้ไขข้อมูลเพิ่มเติม'
+                                : val
+                            }
                           >
                             {isEditableInlineCell ? (
                               isConfirmingThisRow ? (
-                                <div className="flex flex-wrap items-center gap-1.5">
+                                <div
+                                  className="flex flex-wrap items-center gap-1.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <span className="text-xs text-slate-700">
                                     ยืนยัน{' '}
                                     <strong className="font-semibold text-slate-900">
@@ -1368,14 +1414,19 @@ export default function App() {
                                   <button
                                     type="button"
                                     disabled={isUpdatingGate}
-                                    onClick={() => setConfirmingGateRowNumber(null)}
+                                    onClick={() => {
+                                      setConfirmingGateRowNumber(null);
+                                    }}
                                     className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
                                   >
                                     ย้อนกลับ
                                   </button>
                                 </div>
                               ) : isEditingThisRow ? (
-                                <div className="flex items-center gap-1.5">
+                                <div
+                                  className="flex items-center gap-1.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <input
                                     type="text"
                                     autoFocus
@@ -1386,7 +1437,9 @@ export default function App() {
                                         ? 'พิมพ์หมายเหตุ...'
                                         : isEditableRepairDetailCell
                                           ? 'พิมพ์รายละเอียดเพิ่มเติม...'
-                                          : undefined
+                                          : isEditableRepairReplyCell
+                                            ? 'พิมพ์ตอบกลับข้อมูลเพิ่มเติม...'
+                                            : undefined
                                     }
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
@@ -1394,19 +1447,22 @@ export default function App() {
                                         if (
                                           (isEditableJobNoteCell ||
                                             isEditableRepairDetailCell ||
+                                            isEditableRepairReplyCell ||
                                             editingGateValue.trim()) &&
                                           editingGateValue.trim() !== val.trim()
                                         ) {
                                           setConfirmingGateRowNumber(row.rowNumber);
                                         } else {
                                           setEditingGateRowNumber(null);
+                                          setEditingColumnId(null);
                                         }
                                       } else if (e.key === 'Escape') {
                                         setEditingGateRowNumber(null);
+                                        setEditingColumnId(null);
                                         setConfirmingGateRowNumber(null);
                                       }
                                     }}
-                                    className="w-32 sm:w-36 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                                    className="w-40 sm:w-52 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
                                   />
                                   <button
                                     type="button"
@@ -1414,12 +1470,14 @@ export default function App() {
                                       if (
                                         (isEditableJobNoteCell ||
                                           isEditableRepairDetailCell ||
+                                          isEditableRepairReplyCell ||
                                           editingGateValue.trim()) &&
                                         editingGateValue.trim() !== val.trim()
                                       ) {
                                         setConfirmingGateRowNumber(row.rowNumber);
                                       } else {
                                         setEditingGateRowNumber(null);
+                                        setEditingColumnId(null);
                                       }
                                     }}
                                     className="rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
@@ -1430,6 +1488,7 @@ export default function App() {
                                     type="button"
                                     onClick={() => {
                                       setEditingGateRowNumber(null);
+                                      setEditingColumnId(null);
                                       setConfirmingGateRowNumber(null);
                                     }}
                                     className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 whitespace-nowrap shrink-0"
@@ -1438,16 +1497,18 @@ export default function App() {
                                   </button>
                                 </div>
                               ) : (
-                                <div className="flex items-center justify-between gap-1.5">
-                                  <span>{renderHighlightedText(val)}</span>
+                                <div className="flex items-center justify-between gap-1.5 group/cell hover:text-slate-900">
+                                  <span className="truncate">{renderHighlightedText(val || '-')}</span>
                                   <button
                                     type="button"
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setEditingGateRowNumber(row.rowNumber);
+                                      setEditingColumnId(col.id);
                                       setEditingGateValue(val);
                                       setConfirmingGateRowNumber(null);
                                     }}
-                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0"
+                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-900 hover:text-slate-900 whitespace-nowrap shrink-0 shadow-2xs"
                                   >
                                     <Pencil className="h-2.5 w-2.5" />
                                     <span>แก้ไข</span>

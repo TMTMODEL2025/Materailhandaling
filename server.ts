@@ -87,6 +87,14 @@ interface StoredRepairDetailEdit {
   updatedAt: string;
 }
 
+interface StoredRepairReplyEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  replyDetails: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -97,6 +105,7 @@ interface MutationsStore {
   repairApprovals: StoredRepairApproval[];
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
+  repairReplyEdits: StoredRepairReplyEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -123,6 +132,7 @@ function readStore(): MutationsStore {
         repairApprovals: Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [],
         repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [],
         repairDetailEdits: Array.isArray(parsed.repairDetailEdits) ? parsed.repairDetailEdits : [],
+        repairReplyEdits: Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -150,6 +160,7 @@ function readStore(): MutationsStore {
     repairApprovals: [],
     repairPhotoEdits: [],
     repairDetailEdits: [],
+    repairReplyEdits: [],
   };
 }
 
@@ -621,6 +632,53 @@ async function startServer() {
       store.repairDetailEdits[existingIdx] = editEntry;
     } else {
       store.repairDetailEdits.push(editEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, edit: editEntry });
+  });
+
+  app.put('/api/mutations/repair-reply', (req, res) => {
+    const store = readStore();
+    const { rowNumber, sequenceNo, repairRequestNo, replyDetails } = req.body ?? {};
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const seq = String(sequenceNo ?? '').trim();
+    const reqNo = String(repairRequestNo ?? '').trim();
+    const reply = String(replyDetails ?? '').trim();
+
+    for (const reqItem of store.repairRequests) {
+      if (
+        (seq && reqItem.sequenceNo === seq) ||
+        (reqNo && reqItem.values['G'] === reqNo) ||
+        (rn > 0 && reqItem.rowNumber === rn)
+      ) {
+        reqItem.values['AM'] = reply;
+      }
+    }
+
+    if (!store.repairReplyEdits) {
+      store.repairReplyEdits = [];
+    }
+
+    const existingIdx = store.repairReplyEdits.findIndex(
+      (d) =>
+        (seq && d.sequenceNo === seq) ||
+        (reqNo && d.repairRequestNo === reqNo) ||
+        (rn > 0 && d.rowNumber === rn)
+    );
+
+    const editEntry: StoredRepairReplyEdit = {
+      rowNumber: rn,
+      sequenceNo: seq,
+      repairRequestNo: reqNo,
+      replyDetails: reply,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.repairReplyEdits[existingIdx] = editEntry;
+    } else {
+      store.repairReplyEdits.push(editEntry);
     }
 
     writeStore(store);

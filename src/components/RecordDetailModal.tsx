@@ -58,7 +58,26 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
         <div className="overflow-y-auto px-4 py-2.5 sm:px-5 sm:py-3.5">
           <div className="divide-y divide-slate-100">
             {columns.map((col) => {
-              const val = row.values[col.id] || '-';
+              const rawVal = (row.values[col.id] || '').trim();
+              const isPhotoColumn =
+                col.label.includes('รูป') ||
+                col.label.includes('ภาพ') ||
+                ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'].includes(col.id);
+
+              const hasValidPhoto =
+                rawVal.startsWith('data:image/') ||
+                rawVal.startsWith('http://') ||
+                rawVal.startsWith('https://') ||
+                rawVal.includes('.jpg') ||
+                rawVal.includes('.jpeg') ||
+                rawVal.includes('.png');
+
+              // Hide photo fields if there is no attached photo
+              if (isPhotoColumn && (!rawVal || rawVal === '-' || !hasValidPhoto)) {
+                return null;
+              }
+
+              const val = rawVal || '-';
               const isNumericOrDate =
                 col.type === 'number' ||
                 col.type === 'date' ||
@@ -74,28 +93,19 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                     {col.label}
                   </div>
                   <div className="flex min-w-0 flex-col items-end gap-1.5 text-right">
-                    {val.startsWith('data:image/') ||
-                    val.includes('.jpg') ||
-                    val.includes('.png') ||
-                    val.includes('.jpeg') ||
-                    ((val.startsWith('http://') || val.startsWith('https://')) &&
-                      (col.label.includes('รูป') || col.label.includes('ภาพ'))) ? (
+                    {hasValidPhoto && isPhotoColumn ? (
                       <div className="flex flex-col items-end gap-1">
-                        {val.startsWith('data:image/') || val.startsWith('http') ? (
-                          <img
-                            src={formatDriveImageUrl(val)}
-                            onError={(e) => {
-                              const fallback = getDriveThumbnailUrl(val);
-                              if (fallback && e.currentTarget.src !== fallback) {
-                                e.currentTarget.src = fallback;
-                              }
-                            }}
-                            alt={col.label}
-                            className="max-h-36 max-w-xs rounded-lg border border-slate-200 object-cover shadow-xs"
-                          />
-                        ) : (
-                          <span className="font-mono text-xs text-slate-700">{val}</span>
-                        )}
+                        <img
+                          src={formatDriveImageUrl(val)}
+                          onError={(e) => {
+                            const fallback = getDriveThumbnailUrl(val);
+                            if (fallback && e.currentTarget.src !== fallback) {
+                              e.currentTarget.src = fallback;
+                            }
+                          }}
+                          alt={col.label}
+                          className="max-h-36 max-w-xs rounded-lg border border-slate-200 object-cover shadow-xs"
+                        />
                       </div>
                     ) : (
                       <span

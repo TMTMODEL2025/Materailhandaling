@@ -374,6 +374,34 @@ function doPost(e) {
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
 
+    if (action === 'updateRepairReplyDetails') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+      const repairRequestNo = String(body.repairRequestNo || '').trim();
+
+      if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (let i = checkData.length - 1; i >= 0; i--) {
+          const rowSeq = String(checkData[i][0] || '').trim();
+          const rowReqNo = String(checkData[i][6] || '').trim();
+          if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        // AM is column 39 (1-based)
+        sheet.getRange(targetRow, 39).setValue(String(body.replyDetails || '').trim());
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -682,6 +710,7 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
     AJ: 'ID',
     AK: 'รายละเอียดเพิ่มเติม',
     AL: 'สถานะการเปลี่ยนแปลง',
+    AM: 'ตอบกลับข้อมูลเพิ่มเติม',
   },
   '1295975917': {
     A: 'หมายเลขหางพ่วง',
@@ -829,6 +858,14 @@ interface StoredRepairDetailEdit {
   updatedAt: string;
 }
 
+interface StoredRepairReplyEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  replyDetails: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -839,6 +876,7 @@ interface MutationsStore {
   repairApprovals: StoredRepairApproval[];
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
+  repairReplyEdits: StoredRepairReplyEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -852,6 +890,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairApprovals: [],
     repairPhotoEdits: [],
     repairDetailEdits: [],
+    repairReplyEdits: [],
   };
 }
 
@@ -886,6 +925,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       repairDetailEdits: Array.isArray(parsed.repairDetailEdits)
         ? parsed.repairDetailEdits
+        : [],
+      repairReplyEdits: Array.isArray(parsed.repairReplyEdits)
+        ? parsed.repairReplyEdits
         : [],
     };
   } catch {
@@ -988,6 +1030,20 @@ async function fetchCombinedMutationsStore(
         )
       );
 
+      const mergedReplyEditMap = new Map<string, StoredRepairReplyEdit>();
+      (remote.repairReplyEdits ?? []).forEach((d) =>
+        mergedReplyEditMap.set(
+          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+          d
+        )
+      );
+      (local.repairReplyEdits ?? []).forEach((d) =>
+        mergedReplyEditMap.set(
+          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+          d
+        )
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -998,6 +1054,7 @@ async function fetchCombinedMutationsStore(
         repairApprovals: Array.from(mergedRepAppMap.values()),
         repairPhotoEdits: Array.from(mergedPhotoEditMap.values()),
         repairDetailEdits: Array.from(mergedDetailEditMap.values()),
+        repairReplyEdits: Array.from(mergedReplyEditMap.values()),
       };
     }
   } catch {
@@ -1330,7 +1387,12 @@ export async function fetchSheetTabData(
       allColumns.push(colObj);
 
       const isHiddenById = HIDDEN_COLUMN_IDS[tab.gid]?.has(col.id);
-      const isHiddenByLabel = HIDDEN_COLUMN_LABELS[tab.gid]?.has(label);
+      const isHiddenByLabel =
+        HIDDEN_COLUMN_LABELS[tab.gid]?.has(label) ||
+        HIDDEN_COLUMN_LABELS[tab.gid]?.has(label.trim()) ||
+        Array.from(HIDDEN_COLUMN_LABELS[tab.gid] || []).some(
+          (hLabel) => hLabel.trim().toLowerCase() === label.trim().toLowerCase()
+        );
 
       if (!isHiddenById && !isHiddenByLabel) {
         activeColumns.push(colObj);
@@ -1526,6 +1588,19 @@ export async function fetchSheetTabData(
         );
         if (target) {
           target.values['AK'] = de.additionalDetails;
+        }
+      }
+    }
+    if (Array.isArray(mutationsStore.repairReplyEdits)) {
+      for (const re of mutationsStore.repairReplyEdits) {
+        const target = parsedRows.find(
+          (r) =>
+            (re.sequenceNo && (r.values['A'] ?? '').trim() === re.sequenceNo) ||
+            (re.repairRequestNo && (r.values['G'] ?? '').trim() === re.repairRequestNo) ||
+            (re.rowNumber > 0 && r.rowNumber === re.rowNumber)
+        );
+        if (target) {
+          target.values['AM'] = re.replyDetails;
         }
       }
     }
@@ -2463,4 +2538,91 @@ export async function updateRepairAdditionalDetails(params: {
     }
   }
 }
+
+export async function updateRepairReplyDetails(params: {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  replyDetails: string;
+}): Promise<void> {
+  const localStore = readLocalMutationsStore();
+  const editEntry: StoredRepairReplyEdit = {
+    rowNumber: params.rowNumber,
+    sequenceNo: params.sequenceNo.trim(),
+    repairRequestNo: params.repairRequestNo?.trim() || '',
+    replyDetails: params.replyDetails.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  for (const reqItem of localStore.repairRequests) {
+    if (
+      (params.sequenceNo && reqItem.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && reqItem.values['G'] === params.repairRequestNo) ||
+      (params.rowNumber > 0 && reqItem.rowNumber === params.rowNumber)
+    ) {
+      reqItem.values['AM'] = params.replyDetails.trim();
+    }
+  }
+
+  if (!localStore.repairReplyEdits) {
+    localStore.repairReplyEdits = [];
+  }
+
+  const existingIdx = localStore.repairReplyEdits.findIndex(
+    (e) =>
+      (params.sequenceNo && e.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && e.repairRequestNo === params.repairRequestNo) ||
+      (params.rowNumber > 0 && e.rowNumber === params.rowNumber)
+  );
+
+  if (existingIdx >= 0) {
+    localStore.repairReplyEdits[existingIdx] = editEntry;
+  } else {
+    localStore.repairReplyEdits.push(editEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Persist to server store
+  void fetch('/api/mutations/repair-reply', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
+
+  // 3. Webhook update on existing row
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateRepairReplyDetails',
+        ...params,
+      });
+      return;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. Update via Google Sheets API (if token available) on exact existing row
+  const token = getSilentAccessToken();
+  if (token && params.rowNumber > 0) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AM${params.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[params.replyDetails.trim()]],
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 

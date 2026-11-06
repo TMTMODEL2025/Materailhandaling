@@ -69,7 +69,7 @@ export interface RepairRequestPayload {
 export interface RepairApprovalPayload {
   rowNumber: number;
   sequenceNo: string;
-  approvalStatus: '3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '2.⚠️รอพิจารณา';
+  approvalStatus: '3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '2.⚠️รอพิจารณา' | '4.⚠️ขอข้อมูลเพิ่มเติม' | string;
   approverName: string;
   approvalDate: string;
   approvalTime: string;
