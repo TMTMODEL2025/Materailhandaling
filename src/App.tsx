@@ -120,6 +120,13 @@ function getRowApprovalStatus(row: SheetRow): string {
   return appStatus;
 }
 
+function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string {
+  const statusCol = columns?.find((c) => c.label.trim() === 'สถานะ');
+  const raw = (statusCol ? row.values[statusCol.id] : row.values['M']) ?? row.values['M'] ?? '';
+  const trimmed = raw.trim();
+  return trimmed || 'ไม่ระบุสถานะ';
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
@@ -582,17 +589,20 @@ export default function App() {
   }, [sortedRows, currentPage]);
 
   const repairGroupedRows = useMemo(() => {
-    if (activeTab.gid !== '944294225') return null;
+    if (activeTab.gid !== '944294225' && activeTab.gid !== '606634465') return null;
     const groups = new Map<string, SheetRow[]>();
     sortedRows.forEach((row) => {
-      const status = getRowApprovalStatus(row);
+      const status =
+        activeTab.gid === '944294225'
+          ? getRowApprovalStatus(row)
+          : getRowJobTransferStatus(row, sheetData?.columns);
       if (!groups.has(status)) {
         groups.set(status, []);
       }
       groups.get(status)!.push(row);
     });
     return groups;
-  }, [sortedRows, activeTab.gid]);
+  }, [sortedRows, activeTab.gid, sheetData?.columns]);
 
   useEffect(() => {
     if (repairGroupedRows) {
@@ -1442,7 +1452,7 @@ export default function App() {
                       </div>
                     </td>
                   </tr>
-                ) : activeTab.gid === '944294225' && repairGroupedRows ? (
+                ) : (activeTab.gid === '944294225' || activeTab.gid === '606634465') && repairGroupedRows ? (
                   Array.from(repairGroupedRows.entries()).map(([status, rows]) => {
                     const isCollapsed = collapsedGroups[status] ?? true;
                     const colSpan = (sheetData?.columns.length ?? 5) + 1;
@@ -1498,6 +1508,11 @@ export default function App() {
                                 onClick={() => setSelectedRow(row)}
                                 className="cursor-pointer transition-colors hover:bg-slate-50"
                               >
+                                {activeTab.gid !== '944294225' && (
+                                  <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                                    <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
+                                  </td>
+                                )}
                                 {sheetData?.columns.map((col) => {
                                   const val = row.values[col.id] ?? '';
                                   const isNumeric = col.type === 'number';
