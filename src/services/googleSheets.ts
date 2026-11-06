@@ -451,12 +451,64 @@ function doPost(e) {
   }
 }
 
+function doGet(e) {
+  try {
+    var filename = (e && e.parameter && (e.parameter.filename || e.parameter.file || e.parameter.path)) || '';
+    if (!filename) {
+      return jsonResponse({ success: false, message: 'No filename provided' });
+    }
+    var cleanName = String(filename).trim();
+    if (cleanName.indexOf('/') >= 0) {
+      var parts = cleanName.split('/');
+      cleanName = parts[parts.length - 1].trim();
+    }
+    var file = null;
+    try {
+      var targetFolder = DriveApp.getFolderById('1y9_CzTkunm85vparUxDGg_lvCH0sa6P0');
+      var folderFiles = targetFolder.getFilesByName(cleanName);
+      if (folderFiles.hasNext()) {
+        file = folderFiles.next();
+      }
+    } catch (ignoreErr) {}
+
+    if (!file) {
+      var allFiles = DriveApp.getFilesByName(cleanName);
+      if (allFiles.hasNext()) {
+        file = allFiles.next();
+      }
+    }
+
+    if (!file) {
+      return jsonResponse({
+        success: false,
+        message: 'ไม่พบรูปภาพใน Google Drive: ' + cleanName
+      });
+    }
+
+    var blob = file.getBlob();
+    var base64 = Utilities.base64Encode(blob.getBytes());
+    return jsonResponse({
+      success: true,
+      fileId: file.getId(),
+      url: 'https://lh3.googleusercontent.com/d/' + file.getId(),
+      mimeType: blob.getContentType() || 'image/jpeg',
+      base64: base64
+    });
+  } catch (err) {
+    return jsonResponse({ success: false, message: String(err) });
+  }
+}
+
 function jsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }`;
 
 export const DRIVE_FOLDER_ID = '1y9_CzTkunm85vparUxDGg_lvCH0sa6P0';
+
+const resolvedDriveImageCache = new Map<string, string>();
+const failedDriveImageCache = new Set<string>();
+const pendingDriveImagePromises = new Map<string, Promise<string | null>>();
 
 export function extractDriveFileId(url: string): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -472,10 +524,37 @@ export function extractDriveFileId(url: string): string | null {
   return null;
 }
 
+export function isLegacyAppSheetPhotoPath(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === '-') return false;
+  if (trimmed.startsWith('data:image/')) return false;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return false;
+  return (
+    trimmed.includes('_Images/') ||
+    /\.(jpg|jpeg|png|webp|gif)$/i.test(trimmed)
+  );
+}
+
+export function isPhotoValue(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === '-') return false;
+  return (
+    trimmed.startsWith('data:image/') ||
+    Boolean(extractDriveFileId(trimmed)) ||
+    isLegacyAppSheetPhotoPath(trimmed) ||
+    (trimmed.startsWith('http') && /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(trimmed))
+  );
+}
+
 export function formatDriveImageUrl(url: string): string {
   if (!url || typeof url !== 'string') return '';
   const trimmed = url.trim();
   if (trimmed.startsWith('data:image/')) return trimmed;
+  if (resolvedDriveImageCache.has(trimmed)) {
+    return resolvedDriveImageCache.get(trimmed)!;
+  }
   const fileId = extractDriveFileId(trimmed);
   if (fileId) {
     return `https://lh3.googleusercontent.com/d/${fileId}`;
@@ -487,11 +566,108 @@ export function getDriveThumbnailUrl(url: string): string {
   if (!url || typeof url !== 'string') return '';
   const trimmed = url.trim();
   if (trimmed.startsWith('data:image/')) return trimmed;
+  if (resolvedDriveImageCache.has(trimmed)) {
+    const cached = resolvedDriveImageCache.get(trimmed)!;
+    const cachedFileId = extractDriveFileId(cached);
+    if (cachedFileId) {
+      return `https://drive.google.com/thumbnail?id=${cachedFileId}&sz=w1000`;
+    }
+    return cached;
+  }
   const fileId = extractDriveFileId(trimmed);
   if (fileId) {
     return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
   }
   return trimmed;
+}
+
+export async function resolveDriveImageSrc(rawUrl: string): Promise<string | null> {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed === '-') return null;
+
+  if (trimmed.startsWith('data:image/')) {
+    return trimmed;
+  }
+
+  if (resolvedDriveImageCache.has(trimmed)) {
+    return resolvedDriveImageCache.get(trimmed)!;
+  }
+
+  const directFileId = extractDriveFileId(trimmed);
+  if (directFileId) {
+    const formatted = `https://lh3.googleusercontent.com/d/${directFileId}`;
+    resolvedDriveImageCache.set(trimmed, formatted);
+    return formatted;
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+
+  if (failedDriveImageCache.has(trimmed)) {
+    return null;
+  }
+
+  if (pendingDriveImagePromises.has(trimmed)) {
+    return pendingDriveImagePromises.get(trimmed)!;
+  }
+
+  const promise = (async (): Promise<string | null> => {
+    try {
+      const scriptUrl = getConfiguredAppsScriptUrl();
+      if (scriptUrl) {
+        const cleanFileName = trimmed.includes('/')
+          ? trimmed.split('/').pop()!.trim()
+          : trimmed;
+
+        for (const candidate of [trimmed, cleanFileName]) {
+          try {
+            const sep = scriptUrl.includes('?') ? '&' : '?';
+            const reqUrl = `${scriptUrl}${sep}filename=${encodeURIComponent(candidate)}`;
+            const res = await fetch(reqUrl);
+            if (res.ok) {
+              const data = (await res.json()) as {
+                success?: boolean;
+                ok?: boolean;
+                base64?: string;
+                mimeType?: string;
+                fileId?: string;
+                url?: string;
+              };
+              if (data.base64) {
+                const mime = data.mimeType || 'image/jpeg';
+                const dataUrl = data.base64.startsWith('data:image/')
+                  ? data.base64
+                  : `data:${mime};base64,${data.base64}`;
+                resolvedDriveImageCache.set(trimmed, dataUrl);
+                return dataUrl;
+              }
+              if (data.fileId) {
+                const driveUrl = `https://lh3.googleusercontent.com/d/${data.fileId}`;
+                resolvedDriveImageCache.set(trimmed, driveUrl);
+                return driveUrl;
+              }
+              if (data.url) {
+                const formattedUrl = formatDriveImageUrl(data.url);
+                resolvedDriveImageCache.set(trimmed, formattedUrl);
+                return formattedUrl;
+              }
+            }
+          } catch {
+            // continue to next candidate
+          }
+        }
+      }
+      failedDriveImageCache.add(trimmed);
+      return null;
+    } finally {
+      pendingDriveImagePromises.delete(trimmed);
+    }
+  })();
+
+  pendingDriveImagePromises.set(trimmed, promise);
+  return promise;
 }
 
 let lastWebhookError: string | null = null;

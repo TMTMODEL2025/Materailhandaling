@@ -35,6 +35,7 @@ import {
   updateRepairAdditionalDetails,
   updateRepairReplyDetails,
   updateRepairFinancialDetails,
+  isPhotoValue,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -44,6 +45,7 @@ import { SheetWebhookModal } from './components/SheetWebhookModal';
 import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
+import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { APP_VERSION } from './version';
 import { showSuccessToast } from './utils/swal';
 
@@ -1679,6 +1681,12 @@ export default function App() {
                                             </button>
                                           </div>
                                         )
+                                      ) : isPhotoValue(val) ? (
+                                        <DrivePhotoImg
+                                          src={val}
+                                          alt={col.label}
+                                          className="h-9 w-12 rounded border border-slate-200 object-cover"
+                                        />
                                       ) : (
                                         renderHighlightedText(val)
                                       )}
@@ -1974,6 +1982,12 @@ export default function App() {
                                   </button>
                                 </div>
                               )
+                            ) : isPhotoValue(val) ? (
+                              <DrivePhotoImg
+                                src={val}
+                                alt={col.label}
+                                className="h-9 w-12 rounded border border-slate-200 object-cover"
+                              />
                             ) : (
                               renderHighlightedText(val)
                             )}

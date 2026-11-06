@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { X, Check, Camera, Pencil } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
-import { formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
+import { isPhotoValue } from '../services/googleSheets';
+import { DrivePhotoImg } from './DrivePhotoImg';
 import { showSuccessToast } from '../utils/swal';
 
 interface RecordDetailModalProps {
@@ -29,6 +30,7 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   const [editValue, setEditValue] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccessColId, setSaveSuccessColId] = useState<string | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   if (!row) return null;
 
@@ -122,13 +124,7 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 col.label.includes('ภาพ') ||
                 ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'].includes(col.id);
 
-              const hasValidPhoto =
-                rawVal.startsWith('data:image/') ||
-                rawVal.startsWith('http://') ||
-                rawVal.startsWith('https://') ||
-                rawVal.includes('.jpg') ||
-                rawVal.includes('.jpeg') ||
-                rawVal.includes('.png');
+              const hasValidPhoto = isPhotoValue(rawVal);
 
               // Hide photo fields if there is no attached photo
               if (isPhotoColumn && (!rawVal || rawVal === '-' || !hasValidPhoto)) {
@@ -243,16 +239,11 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                     <div className="flex items-center justify-end gap-1.5 flex-wrap">
                       {hasValidPhoto && isPhotoColumn ? (
                         <div className="flex flex-col items-end gap-1">
-                          <img
-                            src={formatDriveImageUrl(val)}
-                            onError={(e) => {
-                              const fallback = getDriveThumbnailUrl(val);
-                              if (fallback && e.currentTarget.src !== fallback) {
-                                e.currentTarget.src = fallback;
-                              }
-                            }}
+                          <DrivePhotoImg
+                            src={val}
                             alt={col.label}
-                            className="max-h-36 max-w-xs rounded-lg border border-slate-200 object-cover shadow-xs"
+                            onClick={() => setPreviewPhoto(val)}
+                            className="max-h-36 max-w-xs cursor-pointer rounded-lg border border-slate-200 object-cover shadow-xs transition-opacity hover:opacity-95"
                           />
                         </div>
                       ) : (
@@ -312,6 +303,31 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPreviewPhoto(null);
+          }}
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw]">
+            <DrivePhotoImg
+              src={previewPhoto}
+              alt="ดูรูปภาพขนาดเต็ม"
+              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 shadow-lg hover:bg-slate-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
