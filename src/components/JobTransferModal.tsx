@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { JobTransferPayload, SheetRow } from '../types';
 import {
+  SHEET_TABS,
+  fetchSheetTabData,
   appendJobTransferRecord,
   completeJobTransferRecord,
 } from '../services/googleSheets';
@@ -34,6 +36,7 @@ interface ActiveDeliveryJob {
   origin: string;
   destination: string;
   startTime: string;
+  startedAtMs?: number;
   rounds: number;
   note: string;
 }
@@ -103,6 +106,38 @@ function calculateDurationString(startTime: string, endTime: string): string {
   )}`;
 }
 
+const FINISH_BUTTON_DELAY_SECONDS = 60;
+
+function calculateElapsedSeconds(
+  startTime: string,
+  endTime: string,
+  startedAtMs?: number
+): number {
+  if (
+    typeof startedAtMs === 'number' &&
+    Number.isFinite(startedAtMs) &&
+    startedAtMs > 0
+  ) {
+    return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+  }
+  const parseSec = (t: string): number | null => {
+    const parts = t.trim().split(':').map(Number);
+    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
+    const [h, m, s = 0] = parts;
+    return h * 3600 + m * 60 + s;
+  };
+
+  const startSec = parseSec(startTime);
+  const endSec = parseSec(endTime);
+  if (startSec === null || endSec === null) return 0;
+
+  let diff = endSec - startSec;
+  if (diff < 0) {
+    diff += 24 * 3600;
+  }
+  return Math.max(0, diff);
+}
+
 export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   isOpen,
   onClose,
@@ -136,11 +171,37 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fallbackRows, setFallbackRows] = useState<SheetRow[]>([]);
+
+  useEffect(() => {
+    if (
+      (!isOpen && !inlineMode) ||
+      existingRows.length > 0 ||
+      fallbackRows.length > 0
+    ) {
+      return;
+    }
+    const transferTab = SHEET_TABS.find((t) => t.gid === '606634465');
+    if (!transferTab) return;
+    let cancelled = false;
+    void fetchSheetTabData(transferTab, { limit: 250 })
+      .then((res) => {
+        if (!cancelled && res.rows.length > 0) {
+          setFallbackRows(res.rows);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, inlineMode, existingRows.length, fallbackRows.length]);
 
   const updateActiveJob = (job: ActiveDeliveryJob | null) => {
     setActiveJob(job);
     saveStoredActiveJob(job);
   };
+
+  const sourceRows = existingRows.length > 0 ? existingRows : fallbackRows;
 
   // Extract unique reference options directly from real spreadsheet rows
   const referenceOptions = useMemo(() => {
@@ -158,7 +219,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const origins = new Set<string>();
     const destinations = new Set<string>();
 
-    existingRows.forEach((row) => {
+    sourceRows.forEach((row) => {
       const emp = row.values['B']?.trim() ?? '';
       const drv = row.values['C']?.trim() ?? '';
       const veh = row.values['D']?.trim() ?? '';
@@ -167,8 +228,15 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const org = row.values['H']?.trim() ?? '';
       const dst = row.values['J']?.trim() ?? '';
 
-      if (emp && !employeeMap.has(emp)) {
-        employeeMap.set(emp, { name: drv, vehicle: veh, trailer: trl });
+      if (emp) {
+        const existing = employeeMap.get(emp);
+        if (!existing) {
+          employeeMap.set(emp, { name: drv, vehicle: veh, trailer: trl });
+        } else {
+          if (!existing.name && drv) existing.name = drv;
+          if (!existing.vehicle && veh) existing.vehicle = veh;
+          if (!existing.trailer && trl) existing.trailer = trl;
+        }
       }
       if (drv && !driverMap.has(drv)) {
         driverMap.set(drv, { empId: emp, vehicle: veh, trailer: trl });
@@ -191,7 +259,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       origins: Array.from(origins),
       destinations: Array.from(destinations),
     };
-  }, [existingRows]);
+  }, [sourceRows]);
 
   // Live clock timer when a job is in transit
   useEffect(() => {
@@ -220,11 +288,15 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
   const handleEmployeeIdChange = (val: string) => {
     setEmployeeId(val);
-    const match = referenceOptions.employeeMap.get(val.trim());
+    const trimmed = val.trim();
+    const match = referenceOptions.employeeMap.get(trimmed);
     if (match) {
       if (match.name) setDriverName(match.name);
-      if (match.vehicle && !vehicleNumber) setVehicleNumber(match.vehicle);
+      if (match.vehicle) setVehicleNumber(match.vehicle);
       if (match.trailer && !trailerNumber) setTrailerNumber(match.trailer);
+    } else if (!trimmed) {
+      setDriverName('');
+      setVehicleNumber('');
     }
   };
 
@@ -277,8 +349,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const cleanRounds =
         Number.isNaN(numericRounds) || numericRounds < 1 ? 1 : numericRounds;
 
+      const autoDate = date.trim() || getCurrentThaiDateString();
       const payload: JobTransferPayload = {
-        date: date.trim(),
+        date: autoDate,
         employeeId: employeeId.trim(),
         driverName: driverName.trim(),
         vehicleNumber: vehicleNumber.trim(),
@@ -310,6 +383,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         origin: payload.origin,
         destination: payload.destination,
         startTime: payload.startTime,
+        startedAtMs: Date.now(),
         rounds: payload.rounds,
         note: payload.note,
       };
@@ -335,6 +409,12 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   // Step 2: Arrived at destination -> press "จบ"
   const handleInitiateFinishDelivery = () => {
     if (!activeJob) return;
+    const elapsedSec = calculateElapsedSeconds(
+      activeJob.startTime,
+      liveNowTime,
+      activeJob.startedAtMs
+    );
+    if (elapsedSec < FINISH_BUTTON_DELAY_SECONDS) return;
     setSubmitError(null);
     setPendingEndTime(getCurrentTimeString());
     setFlowStep('CONFIRM_FINISH');
@@ -390,6 +470,18 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const liveElapsedDuration = activeJob
     ? calculateDurationString(activeJob.startTime, liveNowTime)
     : '0:00:00';
+
+  const remainingFinishCooldownSec = activeJob
+    ? Math.max(
+        0,
+        FINISH_BUTTON_DELAY_SECONDS -
+          calculateElapsedSeconds(
+            activeJob.startTime,
+            liveNowTime,
+            activeJob.startedAtMs
+          )
+      )
+    : 0;
 
   const finalConfirmedDuration = activeJob
     ? calculateDurationString(activeJob.startTime, pendingEndTime)
@@ -580,11 +672,15 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
             <button
               type="button"
               onClick={handleInitiateFinishDelivery}
-              disabled={isSubmitting}
-              className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-5 py-2 text-xs sm:text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap"
+              disabled={isSubmitting || remainingFinishCooldownSec > 0}
+              className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-5 py-2 text-xs sm:text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
-              <span>จบงานส่งสินค้า</span>
+              <span>
+                {remainingFinishCooldownSec > 0
+                  ? `จบงานส่งสินค้า (รอ ${remainingFinishCooldownSec} วินาที)`
+                  : 'จบงานส่งสินค้า'}
+              </span>
             </button>
           </div>
         </div>
@@ -657,110 +753,75 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
           className="overflow-y-auto px-3.5 py-3 sm:px-5 sm:py-4"
         >
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            {/* วันที่ */}
-            <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                วันที่ <span className="text-red-600">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                placeholder="5/11/2569"
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
-              />
+            {/* วันที่ (ซ่อนจากหน้าฟอร์ม แต่บันทึกลงฐานข้อมูลอัตโนมัติ) */}
+            <div className="hidden">
+              <input type="hidden" value={date} readOnly />
             </div>
 
-            {/* จำนวนรอบ */}
-            <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                จำนวนรอบ
-              </label>
-              <input
-                type="number"
-                min="1"
-                required
-                value={rounds}
-                onChange={(e) => setRounds(e.target.value)}
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
-              />
+            {/* จำนวนรอบ (ซ่อนจากหน้าฟอร์ม แต่บันทึกลงฐานข้อมูลอัตโนมัติ) */}
+            <div className="hidden">
+              <input type="hidden" value={rounds} readOnly />
             </div>
 
             {/* รหัสพนักงาน */}
             <div>
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                รหัสพนักงาน
+                รหัสพนักงาน <span className="text-red-600">*</span>
               </label>
-              <input
-                type="text"
-                list="datalist-employees"
+              <select
+                required
                 value={employeeId}
                 onChange={(e) => handleEmployeeIdChange(e.target.value)}
-                placeholder="รหัสพนักงาน"
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
-              />
-              <datalist id="datalist-employees">
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+              >
+                <option value="">-- เลือกรหัสพนักงาน --</option>
+                {employeeId &&
+                  !referenceOptions.employees.includes(employeeId) && (
+                    <option value={employeeId}>{employeeId}</option>
+                  )}
                 {referenceOptions.employees.map((emp) => {
                   const info = referenceOptions.employeeMap.get(emp);
                   return (
-                    <option
-                      key={emp}
-                      value={emp}
-                      label={info?.name ? `${info.name} (${info.vehicle})` : undefined}
-                    />
+                    <option key={emp} value={emp}>
+                      {emp}
+                      {info?.name ? ` - ${info.name}` : ''}
+                      {info?.vehicle ? ` (${info.vehicle})` : ''}
+                    </option>
                   );
                 })}
-              </datalist>
+              </select>
             </div>
 
-            {/* ชื่อพนักงานขับรถ */}
+            {/* ชื่อพนักงานขับรถ (ช่องทึบ Read-only / Disabled ดึงข้อมูลอัตโนมัติ) */}
             <div>
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 ชื่อพนักงานขับรถ <span className="text-red-600">*</span>
               </label>
               <input
                 type="text"
-                required
-                list="datalist-drivers"
+                readOnly
+                disabled
                 value={driverName}
                 onChange={(e) => handleDriverNameChange(e.target.value)}
-                placeholder="ชื่อพนักงาน"
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                placeholder="ดึงข้อมูลอัตโนมัติ"
+                className="mt-0.5 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-600 select-none focus:outline-none disabled:bg-slate-100 disabled:text-slate-600 disabled:opacity-100"
               />
-              <datalist id="datalist-drivers">
-                {referenceOptions.drivers.map((drv) => {
-                  const info = referenceOptions.driverMap.get(drv);
-                  return (
-                    <option
-                      key={drv}
-                      value={drv}
-                      label={info?.empId ? `รหัส ${info.empId}` : undefined}
-                    />
-                  );
-                })}
-              </datalist>
             </div>
 
-            {/* เบอร์รถ */}
+            {/* เบอร์รถ (ช่องทึบ Read-only / Disabled ดึงข้อมูลอัตโนมัติ) */}
             <div>
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 เบอร์รถ <span className="text-red-600">*</span>
               </label>
               <input
                 type="text"
-                required
-                list="datalist-vehicles"
+                readOnly
+                disabled
                 value={vehicleNumber}
                 onChange={(e) => setVehicleNumber(e.target.value)}
-                placeholder="TT-20, FL-10"
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
+                placeholder="ดึงข้อมูลอัตโนมัติ"
+                className="mt-0.5 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 font-mono text-xs sm:text-sm font-medium text-slate-600 tabular-nums select-none focus:outline-none disabled:bg-slate-100 disabled:text-slate-600 disabled:opacity-100"
               />
-              <datalist id="datalist-vehicles">
-                {referenceOptions.vehicles.map((v) => (
-                  <option key={v} value={v} />
-                ))}
-              </datalist>
             </div>
 
             {/* เบอร์หาง */}
@@ -768,19 +829,22 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 เบอร์หาง
               </label>
-              <input
-                type="text"
-                list="datalist-trailers"
+              <select
                 value={trailerNumber}
                 onChange={(e) => setTrailerNumber(e.target.value)}
-                placeholder="TTL-60"
-                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 tabular-nums focus:border-slate-900 focus:outline-none"
-              />
-              <datalist id="datalist-trailers">
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+              >
+                <option value="">-- เลือกเบอร์หาง (ถ้ามี) --</option>
+                {trailerNumber &&
+                  !referenceOptions.trailers.includes(trailerNumber) && (
+                    <option value={trailerNumber}>{trailerNumber}</option>
+                  )}
                 {referenceOptions.trailers.map((t) => (
-                  <option key={t} value={t} />
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
 
             {/* ประเภทสินค้า */}
@@ -788,20 +852,23 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 ประเภทสินค้า <span className="text-red-600">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 required
-                list="datalist-products"
                 value={productType}
                 onChange={(e) => setProductType(e.target.value)}
-                placeholder="ประเภทสินค้า"
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
-              />
-              <datalist id="datalist-products">
+              >
+                <option value="">-- เลือกประเภทสินค้า --</option>
+                {productType &&
+                  !referenceOptions.products.includes(productType) && (
+                    <option value={productType}>{productType}</option>
+                  )}
                 {referenceOptions.products.map((p) => (
-                  <option key={p} value={p} />
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
 
             {/* น้ำหนัก (กก.) */}
@@ -825,20 +892,22 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 ต้นทาง <span className="text-red-600">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 required
-                list="datalist-origins"
                 value={origin}
                 onChange={(e) => setOrigin(e.target.value)}
-                placeholder="FAC H, FAC E"
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
-              />
-              <datalist id="datalist-origins">
+              >
+                <option value="">-- เลือกต้นทาง --</option>
+                {origin && !referenceOptions.origins.includes(origin) && (
+                  <option value={origin}>{origin}</option>
+                )}
                 {referenceOptions.origins.map((o) => (
-                  <option key={o} value={o} />
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
 
             {/* ปลายทาง */}
@@ -846,20 +915,23 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
                 ปลายทาง <span className="text-red-600">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 required
-                list="datalist-destinations"
                 value={destination}
                 onChange={(e) => setDestination(e.target.value)}
-                placeholder="FAC E, FAC G"
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
-              />
-              <datalist id="datalist-destinations">
+              >
+                <option value="">-- เลือกปลายทาง --</option>
+                {destination &&
+                  !referenceOptions.destinations.includes(destination) && (
+                    <option value={destination}>{destination}</option>
+                  )}
                 {referenceOptions.destinations.map((d) => (
-                  <option key={d} value={d} />
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
 
             {/* หมายเหตุ */}
