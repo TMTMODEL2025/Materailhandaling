@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Copy, Check, Camera } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
+import { formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
 
 interface RecordDetailModalProps {
   row: SheetRow | null;
@@ -82,7 +83,13 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                       <div className="flex flex-col items-end gap-1">
                         {val.startsWith('data:image/') || val.startsWith('http') ? (
                           <img
-                            src={val}
+                            src={formatDriveImageUrl(val)}
+                            onError={(e) => {
+                              const fallback = getDriveThumbnailUrl(val);
+                              if (fallback && e.currentTarget.src !== fallback) {
+                                e.currentTarget.src = fallback;
+                              }
+                            }}
                             alt={col.label}
                             className="max-h-36 max-w-xs rounded-lg border border-slate-200 object-cover shadow-xs"
                           />

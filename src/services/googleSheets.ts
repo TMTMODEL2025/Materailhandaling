@@ -108,6 +108,28 @@ export const GOOGLE_APPS_SCRIPT_CODE = `// โค้ดสำหรับเช�
 // 5. กด "การทำให้ใช้งานได้ (Deploy)" แล้วคัดลอก URL ของเว็บแอปมาวางในแอป 1 ครั้ง (หรือกดเรียกใช้ฟังก์ชัน เชื่อมต่ออัตโนมัติ ด้านล่าง)
 
 const SHEET_ID = '${GOOGLE_SHEET_ID}';
+const DRIVE_FOLDER_ID = '1y9_CzTkunm85vparUxDGg_lvCH0sa6P0';
+
+function saveBase64ImageToDrive(base64Data, prefix) {
+  if (!base64Data || typeof base64Data !== 'string') return '';
+  if (base64Data.indexOf('http') === 0) return base64Data;
+  if (base64Data.indexOf('data:image') !== 0) return base64Data;
+
+  try {
+    var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    var parts = base64Data.split(',');
+    var contentType = parts[0].split(':')[1].split(';')[0];
+    var decoded = Utilities.base64Decode(parts[1]);
+    var ext = contentType.indexOf('png') >= 0 ? 'png' : 'jpg';
+    var fileName = (prefix || 'repair') + '_' + Utilities.formatDate(new Date(), 'GMT+7', 'yyyyMMdd_HHmmss') + '_' + Math.floor(Math.random() * 1000) + '.' + ext;
+    var blob = Utilities.newBlob(decoded, contentType, fileName);
+    var file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return 'https://lh3.googleusercontent.com/d/' + file.getId();
+  } catch (err) {
+    return '';
+  }
+}
 
 function เชื่อมต่ออัตโนมัติ() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -239,9 +261,20 @@ function doPost(e) {
     if (action === 'appendRepairRequest') {
       const sheet = ss.getSheetByName('บันทึกงานซ่อม');
       const rowValues = body.rowValues || [];
+      const photoUrls = [];
+      for (let j = 0; j < 9; j++) {
+        const val = rowValues[16 + j];
+        if (val && typeof val === 'string' && val.indexOf('data:image') === 0) {
+          const driveUrl = saveBase64ImageToDrive(val, 'repair_' + (rowValues[6] || rowValues[0] || 'photo') + '_' + (j + 1));
+          rowValues[16 + j] = driveUrl || val;
+          photoUrls.push(driveUrl || val);
+        } else {
+          photoUrls.push(val || '');
+        }
+      }
       sheet.appendRow(rowValues);
       const rowNumber = sheet.getLastRow();
-      return jsonResponse({ ok: true, rowNumber: rowNumber });
+      return jsonResponse({ ok: true, rowNumber: rowNumber, photoUrls: photoUrls });
     }
 
     if (action === 'approveRepairRequest') {
@@ -294,15 +327,23 @@ function doPost(e) {
         }
       }
 
+      const photoUrls = [];
       if (targetRow >= 2 && Array.isArray(body.photos)) {
         for (let j = 0; j < 9; j++) {
-          const p = body.photos[j];
-          if (p !== undefined) {
+          let p = body.photos[j];
+          if (p !== undefined && p !== null) {
+            if (typeof p === 'string' && p.indexOf('data:image') === 0) {
+              const driveUrl = saveBase64ImageToDrive(p, 'repair_' + (repairRequestNo || sequenceNo || targetRow) + '_' + (j + 1));
+              p = driveUrl || p;
+            }
             sheet.getRange(targetRow, 17 + j).setValue(String(p || ''));
+            photoUrls.push(String(p || ''));
+          } else {
+            photoUrls.push('');
           }
         }
       }
-      return jsonResponse({ ok: true, rowNumber: targetRow });
+      return jsonResponse({ ok: true, rowNumber: targetRow, photoUrls: photoUrls });
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action' });
@@ -318,10 +359,53 @@ function jsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }`;
 
+export const DRIVE_FOLDER_ID = '1y9_CzTkunm85vparUxDGg_lvCH0sa6P0';
+
+export function extractDriveFileId(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  const lh3Match = trimmed.match(/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/);
+  if (lh3Match) return lh3Match[1];
+  const fileDMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileDMatch) return fileDMatch[1];
+  const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) return idMatch[1];
+  const openMatch = trimmed.match(/open\?id=([a-zA-Z0-9_-]+)/);
+  if (openMatch) return openMatch[1];
+  return null;
+}
+
+export function formatDriveImageUrl(url: string): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('data:image/')) return trimmed;
+  const fileId = extractDriveFileId(trimmed);
+  if (fileId) {
+    return `https://lh3.googleusercontent.com/d/${fileId}`;
+  }
+  return trimmed;
+}
+
+export function getDriveThumbnailUrl(url: string): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('data:image/')) return trimmed;
+  const fileId = extractDriveFileId(trimmed);
+  if (fileId) {
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
+  }
+  return trimmed;
+}
+
 async function callAppsScriptWebhook(
   scriptUrl: string,
   payload: Record<string, unknown>
-): Promise<{ ok?: boolean; rowNumber?: number | null; error?: string }> {
+): Promise<{
+  ok?: boolean;
+  rowNumber?: number | null;
+  error?: string;
+  photoUrls?: string[];
+}> {
   const response = await fetch(scriptUrl, {
     method: 'POST',
     headers: {
@@ -340,6 +424,7 @@ async function callAppsScriptWebhook(
       ok?: boolean;
       rowNumber?: number | null;
       error?: string;
+      photoUrls?: string[];
     };
     return data;
   } catch {
@@ -1970,6 +2055,13 @@ export async function appendRepairRecord(
       });
       if (res.ok !== false) {
         syncedToSheet = true;
+        if (Array.isArray(res.photoUrls) && res.photoUrls.length > 0) {
+          res.photoUrls.forEach((url, idx) => {
+            if (url) {
+              valuesMap[photoCols[idx]] = url;
+            }
+          });
+        }
       }
     } catch {
       // ignore
@@ -2163,10 +2255,28 @@ export async function updateRepairPhotos(
   const scriptUrl = getConfiguredAppsScriptUrl();
   if (scriptUrl) {
     try {
-      await callAppsScriptWebhook(scriptUrl, {
+      const res = await callAppsScriptWebhook(scriptUrl, {
         action: 'updateRepairPhotos',
         ...payload,
       });
+      if (res.ok !== false && Array.isArray(res.photoUrls) && res.photoUrls.length > 0) {
+        const updatedUrls = res.photoUrls;
+        for (const reqItem of localStore.repairRequests) {
+          if (
+            (payload.sequenceNo && reqItem.sequenceNo === payload.sequenceNo) ||
+            (payload.repairRequestNo && reqItem.values['G'] === payload.repairRequestNo) ||
+            (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
+          ) {
+            updatedUrls.slice(0, 9).forEach((photo, idx) => {
+              if (photo) reqItem.values[photoCols[idx]] = photo;
+            });
+          }
+        }
+        if (existingIdx >= 0) {
+          localStore.repairPhotoEdits[existingIdx].photos = updatedUrls;
+        }
+        writeLocalMutationsStore(localStore);
+      }
       return;
     } catch {
       // ignore

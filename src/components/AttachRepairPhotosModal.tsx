@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Upload, Trash2, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import { SheetRow } from '../types';
-import { updateRepairPhotos } from '../services/googleSheets';
+import { updateRepairPhotos, formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
 
 interface AttachRepairPhotosModalProps {
   isOpen: boolean;
@@ -287,7 +287,13 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                     className="group relative flex flex-col items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-2xs"
                   >
                     <img
-                      src={src}
+                      src={formatDriveImageUrl(src)}
+                      onError={(e) => {
+                        const fallback = getDriveThumbnailUrl(src);
+                        if (fallback && e.currentTarget.src !== fallback) {
+                          e.currentTarget.src = fallback;
+                        }
+                      }}
                       alt={`รูปที่ ${idx + 1}`}
                       onClick={() => setPreviewPhoto(src)}
                       className="h-28 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
@@ -356,7 +362,13 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
         >
           <div className="relative max-h-[90vh] max-w-[90vw]">
             <img
-              src={previewPhoto}
+              src={formatDriveImageUrl(previewPhoto)}
+              onError={(e) => {
+                const fallback = getDriveThumbnailUrl(previewPhoto);
+                if (fallback && e.currentTarget.src !== fallback) {
+                  e.currentTarget.src = fallback;
+                }
+              }}
               alt="ดูรูปภาพขนาดเต็ม"
               className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
             />
