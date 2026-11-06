@@ -119,6 +119,7 @@ function getRowApprovalStatus(row: SheetRow): string {
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
+  const [repairTabRows, setRepairTabRows] = useState<SheetRow[]>([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [groupPages, setGroupPages] = useState<Record<string, number>>({});
@@ -193,6 +194,7 @@ export default function App() {
         setSheetData(result);
 
         if (activeTab.gid === '944294225') {
+          setRepairTabRows(result.rows);
           setPendingApprovalCount(calculatePendingApprovalCount(result.rows));
         } else {
           const repairTabConfig = SHEET_TABS.find((t) => t.gid === '944294225');
@@ -202,6 +204,7 @@ export default function App() {
               signal: controller.signal,
             }).then((repairRes) => {
               if (!controller.signal.aborted) {
+                setRepairTabRows(repairRes.rows);
                 setPendingApprovalCount(calculatePendingApprovalCount(repairRes.rows));
               }
             }).catch(() => {});
@@ -256,6 +259,8 @@ export default function App() {
     setEndDateFilter('');
     setSortConfig(null);
     setCurrentPage(1);
+    setCollapsedGroups({});
+    setGroupPages({});
     setEditingGateRowNumber(null);
     setEditingColumnId(null);
     setConfirmingGateRowNumber(null);
@@ -587,11 +592,15 @@ export default function App() {
 
   useEffect(() => {
     if (repairGroupedRows) {
-      const initial: Record<string, boolean> = {};
-      repairGroupedRows.forEach((_, status) => {
-        initial[status] = true; // collapsed by default
+      setCollapsedGroups((prev) => {
+        const next = { ...prev };
+        repairGroupedRows.forEach((_, status) => {
+          if (next[status] === undefined) {
+            next[status] = true; // collapsed by default
+          }
+        });
+        return next;
       });
-      setCollapsedGroups(initial);
     }
   }, [repairGroupedRows]);
 
@@ -2191,7 +2200,7 @@ export default function App() {
       <RepairRequestModal
         isOpen={isRepairModalOpen}
         onClose={() => setIsRepairModalOpen(false)}
-        existingRows={sheetData?.rows ?? []}
+        existingRows={activeTab.gid === '944294225' ? (sheetData?.rows ?? repairTabRows) : repairTabRows}
         onSavedSuccess={() => {
           setSaveSuccessMsg('บันทึกข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
           loadData({ silent: true });
@@ -2205,7 +2214,7 @@ export default function App() {
       <ManagerApprovalModal
         isOpen={isApprovalModalOpen}
         onClose={() => setIsApprovalModalOpen(false)}
-        rows={activeTab.gid === '944294225' ? (sheetData?.rows ?? []) : []}
+        rows={activeTab.gid === '944294225' ? (sheetData?.rows ?? repairTabRows) : repairTabRows}
         onApprovedSuccess={() => {
           setSaveSuccessMsg('บันทึกผลการพิจารณาอนุมัติงานซ่อมเรียบร้อยแล้ว');
           loadData({ silent: true });

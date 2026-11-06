@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { X, Copy, Check, Link2 } from 'lucide-react';
+import { X, Copy, Check, Link2, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   GOOGLE_APPS_SCRIPT_CODE,
   GOOGLE_SHEET_ID,
   getConfiguredAppsScriptUrl,
   saveConfiguredAppsScriptUrl,
+  getLastWebhookError,
+  connectAdminGoogleAccountOnce,
+  flushPendingMutationsToGoogleSheet,
 } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
 
@@ -22,11 +25,16 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
   const [urlInput, setUrlInput] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isSyncingOAuth, setIsSyncingOAuth] = useState<boolean>(false);
   const [showScript, setShowScript] = useState<boolean>(false);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setUrlInput(getConfiguredAppsScriptUrl());
+      setWebhookError(getLastWebhookError());
+      setSyncError(null);
       setCopied(false);
     }
   }, [isOpen]);
@@ -43,11 +51,35 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
     }
   };
 
+  const handleConnectGoogleDirect = async () => {
+    setIsSyncingOAuth(true);
+    setSyncError(null);
+    try {
+      await connectAdminGoogleAccountOnce();
+      await flushPendingMutationsToGoogleSheet();
+      setWebhookError(getLastWebhookError());
+      showSuccessToast(
+        'เชื่อมต่อและซิงค์ข้อมูลสำเร็จ!',
+        'เชื่อมต่อบัญชี Google และซิงค์ข้อมูลลง Google Sheets เรียบร้อยแล้ว'
+      );
+      onSaved();
+      onClose();
+    } catch (err) {
+      setSyncError(
+        err instanceof Error ? err.message : 'ไม่สามารถเชื่อมต่อบัญชี Google ได้'
+      );
+    } finally {
+      setIsSyncingOAuth(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     try {
       await saveConfiguredAppsScriptUrl(urlInput);
+      await flushPendingMutationsToGoogleSheet().catch(() => {});
+      setWebhookError(getLastWebhookError());
       showSuccessToast(
         'บันทึกการเชื่อมต่อ Webhook สำเร็จ!',
         'ระบบบันทึก URL Webhook เรียบร้อยแล้ว'
@@ -63,7 +95,7 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-2.5 sm:p-4 backdrop-blur-xs"
       onClick={() => {
-        if (!isSaving) onClose();
+        if (!isSaving && !isSyncingOAuth) onClose();
       }}
     >
       <div
@@ -89,6 +121,53 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
 
         <form onSubmit={handleSave} className="overflow-y-auto px-4 py-3.5 sm:px-5">
           <div className="space-y-3 text-xs text-slate-700">
+            {webhookError && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <div className="space-y-1">
+                    <div className="font-semibold">
+                      ตรวจพบข้อผิดพลาดจาก Apps Script Webhook:
+                    </div>
+                    <div className="font-mono text-[11px] break-all text-amber-800">
+                      {webhookError}
+                    </div>
+                    <div className="text-[11px] text-amber-800">
+                      กรุณากดปุ่ม <strong>คัดลอกโค้ด Apps Script</strong> ด้านล่างไปวางทับโค้ดเดิมแล้วกด Deploy ใหม่ หรือกดปุ่มเชื่อมต่อบัญชี Google ด้านล่างเพื่อซิงค์ข้อมูลลงชีตโดยตรง
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {syncError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {syncError}
+              </div>
+            )}
+
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-semibold text-emerald-950">
+                    ซิงค์ข้อมูลลง Google Sheet โดยตรง (Google Sheets API)
+                  </div>
+                  <div className="text-[11px] text-emerald-800">
+                    ใช้ในกรณีที่ยังไม่ได้อัปเดตโค้ด Apps Script เพื่อส่งข้อมูลที่ค้างอยู่เข้าตารางทันที
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleConnectGoogleDirect}
+                  disabled={isSyncingOAuth || isSaving}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncingOAuth ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingOAuth ? 'กำลังซิงค์...' : 'เชื่อมต่อและซิงค์ทันที'}</span>
+                </button>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-900">
                 Apps Script Web App URL
@@ -173,7 +252,7 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || isSyncingOAuth}
               className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
               {isSaving ? 'กำลังบันทึก...' : 'บันทึกการเชื่อมต่อ'}

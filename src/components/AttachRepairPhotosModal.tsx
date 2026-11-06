@@ -21,34 +21,47 @@ function compressImageFile(file: File): Promise<string> {
       const img = new Image();
       img.onerror = () => reject(new Error('รูปภาพไม่ถูกต้อง'));
       img.onload = () => {
-        const MAX_WIDTH = 1280;
-        const MAX_HEIGHT = 1280;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height = Math.round((height * MAX_WIDTH) / width);
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width = Math.round((width * MAX_HEIGHT) / height);
-            height = MAX_HEIGHT;
-          }
-        }
-
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(e.target?.result as string);
-          return;
+        const MAX_CHARS = 45000;
+        let maxDim = 800;
+        let quality = 0.65;
+        let compressedDataUrl = '';
+
+        while (maxDim >= 320) {
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+
+          if (compressedDataUrl.length <= MAX_CHARS) {
+            break;
+          }
+          maxDim = Math.round(maxDim * 0.78);
+          quality = Math.max(0.45, quality - 0.08);
         }
 
-        ctx.drawImage(img, 0, 0, width, height);
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.72);
         resolve(compressedDataUrl);
       };
       img.src = e.target?.result as string;

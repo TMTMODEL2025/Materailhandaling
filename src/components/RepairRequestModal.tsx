@@ -34,34 +34,46 @@ function compressImageFile(file: File): Promise<string> {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1000;
-        const MAX_HEIGHT = 1000;
-        let width = img.width;
-        let height = img.height;
+        const MAX_CHARS = 45000;
+        let maxDim = 800;
+        let quality = 0.65;
+        let dataUrl = '';
 
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
+        while (maxDim >= 320) {
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
           }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
           }
+
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+
+          if (dataUrl.length <= MAX_CHARS) {
+            break;
+          }
+          maxDim = Math.round(maxDim * 0.78);
+          quality = Math.max(0.45, quality - 0.08);
         }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(e.target?.result as string);
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-        // Compress to JPEG with 0.72 quality
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
         resolve(dataUrl);
       };
       img.onerror = reject;

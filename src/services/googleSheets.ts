@@ -100,15 +100,16 @@ export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {
 export const GOOGLE_APPS_SCRIPT_CODE = `// โค้ดสำหรับเชื่อมต่อ Google Sheets แบบไม่ต้องยืนยันสิทธิ์ล็อกอิน (No-Login)
 // วิธีติดตั้งเพียงครั้งเดียว:
 // 1. เปิดไฟล์ Google Sheet -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
-// 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดนี้ลงไป กดบันทึก (Ctrl+S)
-// 3. กดปุ่ม "การทำให้ใช้งานได้ (Deploy)" มุมขวาบน -> "การทำให้ใช้งานได้รายการใหม่ (New deployment)"
+// 2. ลบโค้ดเดิมในไฟล์ออกทั้งหมด (หากมีไฟล์ .gs อื่นที่ประกาศ SHEET_ID ซ้ำ ให้ลบตัวแปรซ้ำออก) แล้ววางโค้ดนี้ลงไป กดบันทึก (Ctrl+S)
+// 3. กดปุ่ม "การทำให้ใช้งานได้ (Deploy)" มุมขวาบน -> "การทำให้ใช้งานได้รายการใหม่ (New deployment)" (หรือจัดการการทำให้ใช้งานได้ -> แก้ไข -> เวอร์ชันใหม่)
 // 4. เลือกประเภทเป็น "เว็บแอป (Web app)"
 //    - ดำเนินการในฐานะ (Execute as): เลือก "ฉัน (Me)"
 //    - ผู้ที่มีสิทธิ์เข้าถึง (Who has access): เลือก "ทุกคน (Anyone)"
 // 5. กด "การทำให้ใช้งานได้ (Deploy)" แล้วคัดลอก URL ของเว็บแอปมาวางในแอป 1 ครั้ง (หรือกดเรียกใช้ฟังก์ชัน เชื่อมต่ออัตโนมัติ ด้านล่าง)
 
-const SHEET_ID = '${GOOGLE_SHEET_ID}';
-const DRIVE_FOLDER_ID = '1y9_CzTkunm85vparUxDGg_lvCH0sa6P0';
+function getTargetSpreadsheet_() {
+  return SpreadsheetApp.openById('${GOOGLE_SHEET_ID}');
+}
 
 function saveBase64ImageToDrive(base64Data, prefix) {
   if (!base64Data || typeof base64Data !== 'string') return '';
@@ -116,7 +117,12 @@ function saveBase64ImageToDrive(base64Data, prefix) {
   if (base64Data.indexOf('data:image') !== 0) return base64Data;
 
   try {
-    var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    var folder;
+    try {
+      folder = DriveApp.getFolderById('1y9_CzTkunm85vparUxDGg_lvCH0sa6P0');
+    } catch (folderErr) {
+      folder = DriveApp.getRootFolder();
+    }
     var parts = base64Data.split(',');
     var contentType = parts[0].split(':')[1].split(';')[0];
     var decoded = Utilities.base64Decode(parts[1]);
@@ -127,12 +133,12 @@ function saveBase64ImageToDrive(base64Data, prefix) {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     return 'https://lh3.googleusercontent.com/d/' + file.getId();
   } catch (err) {
-    return '';
+    return base64Data.length <= 48000 ? base64Data : '';
   }
 }
 
 function เชื่อมต่ออัตโนมัติ() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = getTargetSpreadsheet_();
   const url = ScriptApp.getService().getUrl();
   if (url) {
     const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
@@ -148,7 +154,7 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents || '{}');
     const action = body.action;
-    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const ss = getTargetSpreadsheet_();
 
     if (action === 'registerWebhookUrl') {
       const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
@@ -266,8 +272,9 @@ function doPost(e) {
         const val = rowValues[16 + j];
         if (val && typeof val === 'string' && val.indexOf('data:image') === 0) {
           const driveUrl = saveBase64ImageToDrive(val, 'repair_' + (rowValues[6] || rowValues[0] || 'photo') + '_' + (j + 1));
-          rowValues[16 + j] = driveUrl || val;
-          photoUrls.push(driveUrl || val);
+          const safeVal = driveUrl || (val.length <= 48000 ? val : '');
+          rowValues[16 + j] = safeVal;
+          photoUrls.push(safeVal);
         } else {
           photoUrls.push(val || '');
         }
@@ -487,6 +494,12 @@ export function getDriveThumbnailUrl(url: string): string {
   return trimmed;
 }
 
+let lastWebhookError: string | null = null;
+
+export function getLastWebhookError(): string | null {
+  return lastWebhookError;
+}
+
 async function callAppsScriptWebhook(
   scriptUrl: string,
   payload: Record<string, unknown>
@@ -506,20 +519,45 @@ async function callAppsScriptWebhook(
   });
 
   if (!response.ok) {
-    throw new Error(`Apps Script HTTP ${response.status}`);
+    lastWebhookError = `Apps Script HTTP ${response.status}`;
+    throw new Error(lastWebhookError);
   }
 
+  const rawText = await response.text();
+  let data: {
+    ok?: boolean;
+    rowNumber?: number | null;
+    error?: string;
+    photoUrls?: string[];
+  };
+
   try {
-    const data = (await response.json()) as {
+    data = JSON.parse(rawText) as {
       ok?: boolean;
       rowNumber?: number | null;
       error?: string;
       photoUrls?: string[];
     };
-    return data;
   } catch {
-    return { ok: true };
+    const htmlErrMatch = rawText.match(/font-family:monospace[^>]*>([^<]+)</i);
+    const extractedErr = htmlErrMatch?.[1]
+      ? htmlErrMatch[1]
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&')
+          .trim()
+      : 'Apps Script ไม่ได้ส่งค่ากลับเป็น JSON (กรุณาตรวจสอบโค้ดและ Deploy เวอร์ชันใหม่)';
+    lastWebhookError = extractedErr;
+    throw new Error(extractedErr);
   }
+
+  if (data.ok === false) {
+    lastWebhookError = data.error || 'Apps Script เกิดข้อผิดพลาดในการทำงาน';
+    throw new Error(lastWebhookError);
+  }
+
+  lastWebhookError = null;
+  return data;
 }
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
@@ -624,6 +662,38 @@ function getSilentAccessToken(): string | null {
   if (cachedAccessToken && cachedTokenExpiresAt > Date.now() + 30000) {
     return cachedAccessToken;
   }
+  return null;
+}
+
+async function getOrConnectAccessToken(allowPopup = true): Promise<string | null> {
+  const silent = getSilentAccessToken();
+  if (silent) return silent;
+
+  try {
+    const res = await fetch('/api/google-token');
+    if (res.ok) {
+      const data = (await res.json()) as {
+        accessToken?: string | null;
+        expiresAt?: number;
+      };
+      if (data.accessToken && data.expiresAt && data.expiresAt > Date.now() + 30000) {
+        cachedAccessToken = data.accessToken;
+        cachedTokenExpiresAt = data.expiresAt;
+        return cachedAccessToken;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (allowPopup && !isSigningIn) {
+    try {
+      return await connectAdminGoogleAccountOnce();
+    } catch {
+      return null;
+    }
+  }
+
   return null;
 }
 
@@ -909,6 +979,15 @@ interface StoredRepairReplyEdit {
   updatedAt: string;
 }
 
+interface StoredRepairFinancialEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  sparePartsCost: string;
+  laborCost: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -920,6 +999,7 @@ interface MutationsStore {
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
+  repairFinancialEdits: StoredRepairFinancialEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -934,6 +1014,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairPhotoEdits: [],
     repairDetailEdits: [],
     repairReplyEdits: [],
+    repairFinancialEdits: [],
   };
 }
 
@@ -972,6 +1053,9 @@ function readLocalMutationsStore(): MutationsStore {
       repairReplyEdits: Array.isArray(parsed.repairReplyEdits)
         ? parsed.repairReplyEdits
         : [],
+      repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
+        ? parsed.repairFinancialEdits
+        : [],
     };
   } catch {
     return createEmptyMutationsStore();
@@ -982,7 +1066,25 @@ function writeLocalMutationsStore(store: MutationsStore): void {
   try {
     localStorage.setItem(LOCAL_MUTATIONS_STORAGE_KEY, JSON.stringify(store));
   } catch {
-    // ignore storage errors
+    try {
+      const compactStore: MutationsStore = {
+        ...store,
+        repairRequests: store.repairRequests.map((r) => {
+          const cleanValues: Record<string, string> = {};
+          Object.entries(r.values).forEach(([k, v]) => {
+            cleanValues[k] = v && v.length > 48000 ? '' : v;
+          });
+          return { ...r, values: cleanValues };
+        }),
+        repairPhotoEdits: store.repairPhotoEdits.map((p) => ({
+          ...p,
+          photos: p.photos.map((ph) => (ph && ph.length > 48000 ? '' : ph)),
+        })),
+      };
+      localStorage.setItem(LOCAL_MUTATIONS_STORAGE_KEY, JSON.stringify(compactStore));
+    } catch {
+      // ignore storage errors
+    }
   }
 }
 
@@ -998,7 +1100,17 @@ async function fetchCombinedMutationsStore(
       (remote.jobTransfers ?? []).forEach((jt) => mergedJobMap.set(jt.recordId, jt));
       local.jobTransfers.forEach((jt) => {
         const existing = mergedJobMap.get(jt.recordId);
-        mergedJobMap.set(jt.recordId, existing ? { ...existing, ...jt, values: { ...existing.values, ...jt.values } } : jt);
+        mergedJobMap.set(
+          jt.recordId,
+          existing
+            ? {
+                ...existing,
+                ...jt,
+                syncedToSheet: Boolean(existing.syncedToSheet || jt.syncedToSheet),
+                values: { ...existing.values, ...jt.values },
+              }
+            : jt
+        );
       });
 
       const mergedDpMap = new Map<string, StoredDeliveryPoint>();
@@ -1035,7 +1147,20 @@ async function fetchCombinedMutationsStore(
 
       const mergedRepReqMap = new Map<string, StoredRepairRequest>();
       (remote.repairRequests ?? []).forEach((r) => mergedRepReqMap.set(r.id, r));
-      local.repairRequests.forEach((r) => mergedRepReqMap.set(r.id, r));
+      local.repairRequests.forEach((r) => {
+        const existing = mergedRepReqMap.get(r.id);
+        mergedRepReqMap.set(
+          r.id,
+          existing
+            ? {
+                ...existing,
+                ...r,
+                syncedToSheet: Boolean(existing.syncedToSheet || r.syncedToSheet),
+                values: { ...existing.values, ...r.values },
+              }
+            : r
+        );
+      });
 
       const mergedRepAppMap = new Map<string, StoredRepairApproval>();
       (remote.repairApprovals ?? []).forEach((a) =>
@@ -1087,6 +1212,20 @@ async function fetchCombinedMutationsStore(
         )
       );
 
+      const mergedFinancialEditMap = new Map<string, StoredRepairFinancialEdit>();
+      (remote.repairFinancialEdits ?? []).forEach((f) =>
+        mergedFinancialEditMap.set(
+          f.sequenceNo || f.repairRequestNo || String(f.rowNumber),
+          f
+        )
+      );
+      (local.repairFinancialEdits ?? []).forEach((f) =>
+        mergedFinancialEditMap.set(
+          f.sequenceNo || f.repairRequestNo || String(f.rowNumber),
+          f
+        )
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -1098,6 +1237,7 @@ async function fetchCombinedMutationsStore(
         repairPhotoEdits: Array.from(mergedPhotoEditMap.values()),
         repairDetailEdits: Array.from(mergedDetailEditMap.values()),
         repairReplyEdits: Array.from(mergedReplyEditMap.values()),
+        repairFinancialEdits: Array.from(mergedFinancialEditMap.values()),
       };
     }
   } catch {
@@ -1145,11 +1285,118 @@ async function postJobTransferRowToGoogleSheetsApi(
   return rowNumber;
 }
 
+async function postRepairRowToGoogleSheetsApi(
+  rowValues: Array<string | number>,
+  accessToken: string
+): Promise<number | null> {
+  const safeRowValues = rowValues.map((val) =>
+    typeof val === 'string' && val.length > 48000 ? '' : val
+  );
+  const range = encodeURIComponent('บันทึกงานซ่อม!A:A');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [safeRowValues],
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      invalidateCachedToken();
+    }
+    throw new Error(`Google Sheets API HTTP ${response.status}`);
+  }
+
+  let rowNumber: number | null = null;
+  try {
+    const resJson = await response.json();
+    const updatedRange: string = resJson?.updates?.updatedRange ?? '';
+    const match = updatedRange.match(/![A-Z]+(\d+)/i);
+    if (match && match[1]) {
+      rowNumber = parseInt(match[1], 10);
+    }
+  } catch {
+    // ignore parse error
+  }
+  return rowNumber;
+}
+
+async function resolveJobTransferSheetRowNumber(
+  accessToken: string,
+  fallbackRowNumber: number | null,
+  recordId: string
+): Promise<number> {
+  try {
+    const count = await fetchSheetRowCount('606634465');
+    const startRow = Math.max(2, count - 250);
+    const endRow = count + 20;
+    const range = encodeURIComponent(`บันทึกการย้ายงาน!Q${startRow}:Q${endRow}`);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const rows: string[][] = data?.values ?? [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if ((rows[i]?.[0] ?? '').trim() === recordId.trim()) {
+          return startRow + i;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return fallbackRowNumber && fallbackRowNumber >= 2 ? fallbackRowNumber : 0;
+}
+
+async function resolveRepairSheetRowNumber(
+  accessToken: string,
+  fallbackRowNumber: number,
+  sequenceNo?: string,
+  repairRequestNo?: string
+): Promise<number> {
+  const seq = (sequenceNo ?? '').trim();
+  const reqNo = (repairRequestNo ?? '').trim();
+  if (seq || reqNo) {
+    try {
+      const count = await fetchSheetRowCount('944294225');
+      const startRow = Math.max(2, count - 300);
+      const endRow = count + 30;
+      const range = encodeURIComponent(`บันทึกงานซ่อม!A${startRow}:G${endRow}`);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const rows: string[][] = data?.values ?? [];
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const rowSeq = String(rows[i]?.[0] ?? '').trim();
+          const rowReqNo = String(rows[i]?.[6] ?? '').trim();
+          if ((reqNo && rowReqNo === reqNo) || (seq && rowSeq === seq)) {
+            return startRow + i;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return fallbackRowNumber >= 2 ? fallbackRowNumber : 0;
+}
+
 export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
   try {
     const store = await fetchCombinedMutationsStore();
     const scriptUrl = getConfiguredAppsScriptUrl();
-    const token = getSilentAccessToken();
+    const token = await getOrConnectAccessToken(false);
     if (!scriptUrl && !token) return;
 
     const localStore = readLocalMutationsStore();
@@ -1187,15 +1434,31 @@ export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
       ];
 
       let sheetRowNumber: number | null = null;
+      let synced = false;
+
       if (scriptUrl) {
-        const res = await callAppsScriptWebhook(scriptUrl, {
-          action: 'appendJobTransfer',
-          rowValues,
-        });
-        sheetRowNumber = res.rowNumber ?? null;
-      } else if (token) {
-        sheetRowNumber = await postJobTransferRowToGoogleSheetsApi(rowValues, token);
+        try {
+          const res = await callAppsScriptWebhook(scriptUrl, {
+            action: 'appendJobTransfer',
+            rowValues,
+          });
+          sheetRowNumber = res.rowNumber ?? null;
+          synced = true;
+        } catch {
+          // try token next
+        }
       }
+
+      if (!synced && token) {
+        try {
+          sheetRowNumber = await postJobTransferRowToGoogleSheetsApi(rowValues, token);
+          synced = true;
+        } catch {
+          // keep unsynced
+        }
+      }
+
+      if (!synced) continue;
 
       jt.syncedToSheet = true;
       if (sheetRowNumber && sheetRowNumber > 0) {
@@ -1218,6 +1481,83 @@ export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recordId: jt.recordId,
+          sheetRowNumber,
+        }),
+      }).catch(() => {});
+    }
+
+    const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+    for (const req of store.repairRequests) {
+      if (req.syncedToSheet) continue;
+      const v = req.values;
+      const rowValues: Array<string | number> = new Array(38).fill('');
+      rowValues[0] = Number(req.sequenceNo) || req.sequenceNo;
+      rowValues[1] = v['B'] ?? '';
+      rowValues[2] = v['C'] ?? '';
+      rowValues[3] = v['D'] ?? '';
+      rowValues[4] = v['E'] ?? '';
+      rowValues[5] = v['F'] ?? '';
+      rowValues[6] = v['G'] ?? '';
+      rowValues[13] = v['N'] ?? '';
+      rowValues[14] = v['O'] ?? '';
+      rowValues[15] = v['P'] || 'รอคิวซ่อม';
+      photoCols.forEach((col, idx) => {
+        rowValues[16 + idx] = v[col] ?? '';
+      });
+      rowValues[26] = v['AA'] ?? '';
+      rowValues[30] = v['AE'] ?? '';
+      rowValues[31] = v['AF'] ?? '';
+      rowValues[32] = v['AG'] ?? '';
+      rowValues[33] = v['AH'] ?? '';
+      rowValues[34] = v['AI'] || '2.⚠️รออนุมัติ';
+      rowValues[35] = v['AJ'] || req.id;
+
+      let sheetRowNumber: number | null = null;
+      let synced = false;
+
+      if (scriptUrl) {
+        try {
+          const res = await callAppsScriptWebhook(scriptUrl, {
+            action: 'appendRepairRequest',
+            rowValues,
+          });
+          sheetRowNumber = res.rowNumber ?? null;
+          synced = true;
+        } catch {
+          // try token next
+        }
+      }
+
+      if (!synced && token) {
+        try {
+          sheetRowNumber = await postRepairRowToGoogleSheetsApi(rowValues, token);
+          synced = true;
+        } catch {
+          // keep unsynced
+        }
+      }
+
+      if (!synced) continue;
+
+      req.syncedToSheet = true;
+      if (sheetRowNumber && sheetRowNumber > 0) {
+        req.rowNumber = sheetRowNumber;
+      }
+
+      const localReq = localStore.repairRequests.find((item) => item.id === req.id);
+      if (localReq) {
+        localReq.syncedToSheet = true;
+        if (sheetRowNumber && sheetRowNumber > 0) {
+          localReq.rowNumber = sheetRowNumber;
+        }
+        localChanged = true;
+      }
+
+      void fetch('/api/mutations/mark-synced', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repairId: req.id,
           sheetRowNumber,
         }),
       }).catch(() => {});
@@ -1577,12 +1917,15 @@ export async function fetchSheetTabData(
     }
   } else if (tab.gid === '944294225') {
     for (const req of mutationsStore.repairRequests) {
+      const reqG = (req.values['G'] ?? '').trim();
       const exists = parsedRows.some(
         (r) =>
-          (r.values['A'] ?? '').trim() === req.sequenceNo ||
-          (r.values['B'] ?? '').trim() === req.values['B'] &&
-          (r.values['D'] ?? '').trim() === req.values['D'] &&
-          (r.values['F'] ?? '').trim() === req.values['F']
+          (req.id && (r.values['AJ'] ?? '').trim() === req.id) ||
+          (reqG !== '' && (r.values['G'] ?? '').trim() === reqG) ||
+          ((r.values['B'] ?? '').trim() === (req.values['B'] ?? '').trim() &&
+            (r.values['C'] ?? '').trim() === (req.values['C'] ?? '').trim() &&
+            (r.values['D'] ?? '').trim() === (req.values['D'] ?? '').trim() &&
+            (r.values['F'] ?? '').trim() === (req.values['F'] ?? '').trim())
       );
       if (!exists && !search) {
         parsedRows.push({
@@ -1647,6 +1990,20 @@ export async function fetchSheetTabData(
           if (re.replyDetails && re.replyDetails.trim() !== '') {
             target.values['AI'] = '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
           }
+        }
+      }
+    }
+    if (Array.isArray(mutationsStore.repairFinancialEdits)) {
+      for (const fe of mutationsStore.repairFinancialEdits) {
+        const target = parsedRows.find(
+          (r) =>
+            (fe.sequenceNo && (r.values['A'] ?? '').trim() === fe.sequenceNo) ||
+            (fe.repairRequestNo && (r.values['G'] ?? '').trim() === fe.repairRequestNo) ||
+            (fe.rowNumber > 0 && r.rowNumber === fe.rowNumber)
+        );
+        if (target) {
+          target.values['N'] = fe.sparePartsCost;
+          target.values['O'] = fe.laborCost;
         }
       }
     }
@@ -1742,13 +2099,13 @@ export async function appendJobTransferRecord(
         syncedToSheet = true;
       }
     } catch {
-      // fall through to silent token or local store
+      // fall through to OAuth token or local store
     }
   }
 
-  // 2. Try silent cached OAuth token (without opening any login popup!)
+  // 2. Try Google Sheets REST API v4 with cached or connected OAuth token
   if (!syncedToSheet) {
-    const token = getSilentAccessToken();
+    const token = await getOrConnectAccessToken(true);
     if (token) {
       try {
         rowNumber = await postJobTransferRowToGoogleSheetsApi(rowValues, token);
@@ -1759,9 +2116,12 @@ export async function appendJobTransferRecord(
     }
   }
 
-  // 3. Always persist to local & backend store so mobile user never hits an auth error
-  const fallbackRowNumber = rowNumber ?? 56085 + Math.floor(Math.random() * 500);
+  // 3. Always persist to local & backend store
+  const currentSheetCount = await fetchSheetRowCount('606634465');
   const localStore = readLocalMutationsStore();
+  const baseRow = Math.max(currentSheetCount, 56278) + localStore.jobTransfers.length + 1;
+  const fallbackRowNumber = rowNumber ?? baseRow;
+
   localStore.jobTransfers.push({
     recordId,
     rowNumber: fallbackRowNumber,
@@ -1777,8 +2137,10 @@ export async function appendJobTransferRecord(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         recordId,
+        rowNumber: fallbackRowNumber,
         baseRowNumber: fallbackRowNumber - 1,
         values: valuesMap,
+        syncedToSheet,
       }),
     });
     if (res.ok) {
@@ -1854,26 +2216,33 @@ export async function completeJobTransferRecord(params: {
     }
   }
 
-  // 4. Write via silent cached token if available (No popup)
-  const token = getSilentAccessToken();
-  if (token && params.rowNumber && params.rowNumber > 0) {
+  // 4. Write via Google Sheets API v4
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const targetRange = encodeURIComponent(
-        `บันทึกการย้ายงาน!K${params.rowNumber}:M${params.rowNumber}`
+      const targetRow = await resolveJobTransferSheetRowNumber(
+        token,
+        params.rowNumber,
+        params.recordId
       );
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${targetRange}?valueInputOption=USER_ENTERED`;
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [[params.endTime, params.duration, finalStatus]],
-        }),
-      });
-      if (!response.ok && (response.status === 401 || response.status === 403)) {
-        invalidateCachedToken();
+      if (targetRow >= 2) {
+        const targetRange = encodeURIComponent(
+          `บันทึกการย้ายงาน!K${targetRow}:M${targetRow}`
+        );
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${targetRange}?valueInputOption=USER_ENTERED`;
+        const response = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[params.endTime, params.duration, finalStatus]],
+          }),
+        });
+        if (!response.ok && (response.status === 401 || response.status === 403)) {
+          invalidateCachedToken();
+        }
       }
     } catch {
       // ignore
@@ -2183,13 +2552,49 @@ export async function updateJobTransferNote(params: {
   }
 }
 
+async function fetchNextRepairSequenceAndRow(): Promise<{
+  sequenceNo: string;
+  rowNumber: number;
+}> {
+  let maxSeq = 4271;
+  let sheetCount = 4271;
+  try {
+    const res = await queryGviz('944294225', 'select count(A), max(A)');
+    const cVal = res.table?.rows?.[0]?.c?.[0]?.v;
+    const mVal = res.table?.rows?.[0]?.c?.[1]?.v;
+    if (typeof cVal === 'number' && cVal > 0) {
+      sheetCount = cVal;
+      if (cVal > maxSeq) maxSeq = cVal;
+    }
+    if (typeof mVal === 'number' && mVal > maxSeq) {
+      maxSeq = mVal;
+    }
+  } catch {
+    // ignore
+  }
+
+  const localStore = readLocalMutationsStore();
+  for (const r of localStore.repairRequests) {
+    const num = parseInt(r.sequenceNo, 10);
+    if (!Number.isNaN(num) && num > maxSeq) {
+      maxSeq = num;
+    }
+  }
+
+  const nextSeq = maxSeq + 1;
+  return {
+    sequenceNo: String(nextSeq),
+    rowNumber: Math.max(sheetCount + 2, nextSeq + 1),
+  };
+}
+
 export async function appendRepairRecord(
   payload: import('../types').RepairRequestPayload
 ): Promise<{ id: string; rowNumber: number; sequenceNo: string }> {
   const id = Math.random().toString(16).slice(2, 10);
-  const count = await fetchSheetRowCount('944294225');
-  const sequenceNo = String(count > 0 ? count + 1 : 4268);
-  const rowNumber = count > 0 ? count + 1 : 4268;
+  const { sequenceNo, rowNumber: initialRowNumber } =
+    await fetchNextRepairSequenceAndRow();
+  let rowNumber = initialRowNumber;
 
   // Row values mapping 38 columns (A - AL)
   const rowValues: Array<string | number> = new Array(38).fill('');
@@ -2248,6 +2653,9 @@ export async function appendRepairRecord(
       });
       if (res.ok !== false) {
         syncedToSheet = true;
+        if (res.rowNumber && res.rowNumber > 0) {
+          rowNumber = res.rowNumber;
+        }
         if (Array.isArray(res.photoUrls) && res.photoUrls.length > 0) {
           res.photoUrls.forEach((url, idx) => {
             if (url) {
@@ -2257,26 +2665,22 @@ export async function appendRepairRecord(
         }
       }
     } catch {
-      // ignore
+      // fall through to Google Sheets API v4
     }
   }
 
-  const token = getSilentAccessToken();
-  if (!syncedToSheet && token) {
-    try {
-      const range = encodeURIComponent('บันทึกงานซ่อม!A:A');
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-      await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ values: [rowValues] }),
-      });
-      syncedToSheet = true;
-    } catch {
-      // ignore
+  if (!syncedToSheet) {
+    const token = await getOrConnectAccessToken(true);
+    if (token) {
+      try {
+        const apiRowNumber = await postRepairRowToGoogleSheetsApi(rowValues, token);
+        if (apiRowNumber && apiRowNumber > 0) {
+          rowNumber = apiRowNumber;
+        }
+        syncedToSheet = true;
+      } catch {
+        // fall through to local/server persistence
+      }
     }
   }
 
@@ -2291,17 +2695,21 @@ export async function appendRepairRecord(
   });
   writeLocalMutationsStore(localStore);
 
-  void fetch('/api/mutations/repair-request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      rowNumber,
-      sequenceNo,
-      values: valuesMap,
-      syncedToSheet,
-    }),
-  }).catch(() => {});
+  try {
+    await fetch('/api/mutations/repair-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        rowNumber,
+        sequenceNo,
+        values: valuesMap,
+        syncedToSheet,
+      }),
+    });
+  } catch {
+    // ignore
+  }
 
   return { id, rowNumber, sequenceNo };
 }
@@ -2350,45 +2758,56 @@ export async function approveRepairRecord(
       });
       return;
     } catch {
-      // ignore
+      // fall through
     }
   }
 
-  const token = getSilentAccessToken();
-  if (token && payload.rowNumber > 0) {
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AE${payload.rowNumber}:AI${payload.rowNumber}`);
-      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-      await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [[
-            payload.approverName,
-            payload.approvalDate,
-            payload.approvalTime,
-            payload.note || '',
-            payload.approvalStatus,
-          ]],
-        }),
-      });
-
-      if (payload.repairStatus) {
-        const statusRange = encodeURIComponent(`บันทึกงานซ่อม!P${payload.rowNumber}`);
-        const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
-        await fetch(statusUrl, {
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        payload.rowNumber,
+        payload.sequenceNo
+      );
+      if (targetRow >= 2) {
+        const updateRange = encodeURIComponent(
+          `บันทึกงานซ่อม!AE${targetRow}:AI${targetRow}`
+        );
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+        await fetch(updateUrl, {
           method: 'PUT',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            values: [[payload.repairStatus]],
+            values: [
+              [
+                payload.approverName,
+                payload.approvalDate,
+                payload.approvalTime,
+                payload.note || '',
+                payload.approvalStatus,
+              ],
+            ],
           }),
         });
+
+        if (payload.repairStatus) {
+          const statusRange = encodeURIComponent(`บันทึกงานซ่อม!P${targetRow}`);
+          const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
+          await fetch(statusUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [[payload.repairStatus]],
+            }),
+          });
+        }
       }
     } catch {
       // ignore
@@ -2472,31 +2891,41 @@ export async function updateRepairPhotos(
       }
       return;
     } catch {
-      // ignore
+      // fall through
     }
   }
 
-  // 4. Update via Google Sheets API (if token available) on exact existing row
-  const token = getSilentAccessToken();
-  if (token && payload.rowNumber > 0) {
+  // 4. Update via Google Sheets API on exact existing row
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!Q${payload.rowNumber}:Y${payload.rowNumber}`);
-      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-      const rowValues: string[] = new Array(9).fill('');
-      payload.photos.slice(0, 9).forEach((photo, idx) => {
-        rowValues[idx] = photo;
-      });
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        payload.rowNumber,
+        payload.sequenceNo,
+        payload.repairRequestNo
+      );
+      if (targetRow >= 2) {
+        const updateRange = encodeURIComponent(
+          `บันทึกงานซ่อม!Q${targetRow}:Y${targetRow}`
+        );
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+        const rowValues: string[] = new Array(9).fill('');
+        payload.photos.slice(0, 9).forEach((photo, idx) => {
+          rowValues[idx] = photo && photo.length <= 48000 ? photo : '';
+        });
 
-      await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [rowValues],
-        }),
-      });
+        await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [rowValues],
+          }),
+        });
+      }
     } catch {
       // ignore
     }
@@ -2563,26 +2992,34 @@ export async function updateRepairAdditionalDetails(params: {
       });
       return;
     } catch {
-      // ignore
+      // fall through
     }
   }
 
-  // 4. Update via Google Sheets API (if token available) on exact existing row
-  const token = getSilentAccessToken();
-  if (token && params.rowNumber > 0) {
+  // 4. Update via Google Sheets API on exact existing row
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AK${params.rowNumber}`);
-      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-      await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [[params.additionalDetails.trim()]],
-        }),
-      });
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        params.rowNumber,
+        params.sequenceNo,
+        params.repairRequestNo
+      );
+      if (targetRow >= 2) {
+        const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AK${targetRow}`);
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+        await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[params.additionalDetails.trim()]],
+          }),
+        });
+      }
     } catch {
       // ignore
     }
@@ -2652,40 +3089,48 @@ export async function updateRepairReplyDetails(params: {
       });
       return;
     } catch {
-      // ignore
+      // fall through
     }
   }
 
-  // 4. Update via Google Sheets API (if token available) on exact existing row
-  const token = getSilentAccessToken();
-  if (token && params.rowNumber > 0) {
+  // 4. Update via Google Sheets API on exact existing row
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AM${params.rowNumber}`);
-      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-      await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [[params.replyDetails.trim()]],
-        }),
-      });
-
-      if (params.replyDetails.trim()) {
-        const statusRange = encodeURIComponent(`บันทึกงานซ่อม!AI${params.rowNumber}`);
-        const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
-        await fetch(statusUrl, {
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        params.rowNumber,
+        params.sequenceNo,
+        params.repairRequestNo
+      );
+      if (targetRow >= 2) {
+        const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AM${targetRow}`);
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+        await fetch(updateUrl, {
           method: 'PUT',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            values: [['4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว']],
+            values: [[params.replyDetails.trim()]],
           }),
         });
+
+        if (params.replyDetails.trim()) {
+          const statusRange = encodeURIComponent(`บันทึกงานซ่อม!AI${targetRow}`);
+          const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
+          await fetch(statusUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [['4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว']],
+            }),
+          });
+        }
       }
     } catch {
       // ignore
@@ -2711,7 +3156,39 @@ export async function updateRepairFinancialDetails(params: {
       req.values['O'] = params.laborCost;
     }
   }
+
+  if (!localStore.repairFinancialEdits) {
+    localStore.repairFinancialEdits = [];
+  }
+
+  const editEntry: StoredRepairFinancialEdit = {
+    rowNumber: params.rowNumber,
+    sequenceNo: params.sequenceNo.trim(),
+    repairRequestNo: params.repairRequestNo?.trim() || '',
+    sparePartsCost: params.sparePartsCost.trim(),
+    laborCost: params.laborCost.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const existingIdx = localStore.repairFinancialEdits.findIndex(
+    (f) =>
+      (params.sequenceNo && f.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && f.repairRequestNo === params.repairRequestNo) ||
+      (params.rowNumber > 0 && f.rowNumber === params.rowNumber)
+  );
+
+  if (existingIdx >= 0) {
+    localStore.repairFinancialEdits[existingIdx] = editEntry;
+  } else {
+    localStore.repairFinancialEdits.push(editEntry);
+  }
   writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/repair-financial', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
 
   const scriptUrl = getConfiguredAppsScriptUrl();
   if (scriptUrl) {
@@ -2722,25 +3199,35 @@ export async function updateRepairFinancialDetails(params: {
       });
       return;
     } catch {
-      // ignore
+      // fall through
     }
   }
 
-  const token = getSilentAccessToken();
-  if (token && params.rowNumber > 0) {
+  const token = await getOrConnectAccessToken(true);
+  if (token) {
     try {
-      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!N${params.rowNumber}:O${params.rowNumber}`);
-      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-      await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [[params.sparePartsCost, params.laborCost]],
-        }),
-      });
+      const targetRow = await resolveRepairSheetRowNumber(
+        token,
+        params.rowNumber,
+        params.sequenceNo,
+        params.repairRequestNo
+      );
+      if (targetRow >= 2) {
+        const updateRange = encodeURIComponent(
+          `บันทึกงานซ่อม!N${targetRow}:O${targetRow}`
+        );
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+        await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[params.sparePartsCost, params.laborCost]],
+          }),
+        });
+      }
     } catch {
       // ignore
     }

@@ -95,6 +95,15 @@ interface StoredRepairReplyEdit {
   updatedAt: string;
 }
 
+interface StoredRepairFinancialEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  sparePartsCost: string;
+  laborCost: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -106,6 +115,7 @@ interface MutationsStore {
   repairPhotoEdits: StoredRepairPhotoEdit[];
   repairDetailEdits: StoredRepairDetailEdit[];
   repairReplyEdits: StoredRepairReplyEdit[];
+  repairFinancialEdits: StoredRepairFinancialEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -133,6 +143,9 @@ function readStore(): MutationsStore {
         repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [],
         repairDetailEdits: Array.isArray(parsed.repairDetailEdits) ? parsed.repairDetailEdits : [],
         repairReplyEdits: Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [],
+        repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
+          ? parsed.repairFinancialEdits
+          : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -161,6 +174,7 @@ function readStore(): MutationsStore {
     repairPhotoEdits: [],
     repairDetailEdits: [],
     repairReplyEdits: [],
+    repairFinancialEdits: [],
   };
 }
 
@@ -174,7 +188,7 @@ function writeStore(store: MutationsStore): void {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '50mb' }));
 
   app.get('/api/mutations', (_req, res) => {
     const store = readStore();
@@ -235,16 +249,31 @@ async function startServer() {
 
   app.post('/api/mutations/mark-synced', (req, res) => {
     const store = readStore();
-    const { recordId, sheetRowNumber } = req.body ?? {};
-    if (typeof recordId === 'string') {
+    const { recordId, repairId, sheetRowNumber } = req.body ?? {};
+    let changed = false;
+    if (typeof recordId === 'string' && recordId) {
       for (const jt of store.jobTransfers) {
         if (jt.recordId === recordId) {
           jt.syncedToSheet = true;
           if (typeof sheetRowNumber === 'number' && sheetRowNumber > 0) {
             jt.rowNumber = sheetRowNumber;
           }
+          changed = true;
         }
       }
+    }
+    if (typeof repairId === 'string' && repairId) {
+      for (const rr of store.repairRequests) {
+        if (rr.id === repairId) {
+          rr.syncedToSheet = true;
+          if (typeof sheetRowNumber === 'number' && sheetRowNumber > 0) {
+            rr.rowNumber = sheetRowNumber;
+          }
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
       writeStore(store);
     }
     res.json({ ok: true });
@@ -260,8 +289,11 @@ async function startServer() {
     const baseRowNumber =
       typeof body.baseRowNumber === 'number' && body.baseRowNumber > 0
         ? body.baseRowNumber
-        : 22990;
-    const rowNumber = baseRowNumber + store.jobTransfers.length + 1;
+        : 56278;
+    const rowNumber =
+      typeof body.rowNumber === 'number' && body.rowNumber > 0
+        ? body.rowNumber
+        : baseRowNumber + store.jobTransfers.length + 1;
 
     const values: Record<string, string> = body.values ?? {};
     const entry: StoredJobTransfer = {
@@ -269,9 +301,15 @@ async function startServer() {
       rowNumber,
       values,
       createdAt: new Date().toISOString(),
+      syncedToSheet: Boolean(body.syncedToSheet),
     };
 
-    store.jobTransfers.push(entry);
+    const existingIdx = store.jobTransfers.findIndex((j) => j.recordId === recordId);
+    if (existingIdx >= 0) {
+      store.jobTransfers[existingIdx] = entry;
+    } else {
+      store.jobTransfers.push(entry);
+    }
     writeStore(store);
 
     res.json({ recordId, rowNumber, entry });
@@ -679,6 +717,57 @@ async function startServer() {
       store.repairReplyEdits[existingIdx] = editEntry;
     } else {
       store.repairReplyEdits.push(editEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, edit: editEntry });
+  });
+
+  app.put('/api/mutations/repair-financial', (req, res) => {
+    const store = readStore();
+    const { rowNumber, sequenceNo, repairRequestNo, sparePartsCost, laborCost } =
+      req.body ?? {};
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const seq = String(sequenceNo ?? '').trim();
+    const reqNo = String(repairRequestNo ?? '').trim();
+    const spare = String(sparePartsCost ?? '').trim();
+    const labor = String(laborCost ?? '').trim();
+
+    for (const reqItem of store.repairRequests) {
+      if (
+        (seq && reqItem.sequenceNo === seq) ||
+        (reqNo && reqItem.values['G'] === reqNo) ||
+        (rn > 0 && reqItem.rowNumber === rn)
+      ) {
+        reqItem.values['N'] = spare;
+        reqItem.values['O'] = labor;
+      }
+    }
+
+    if (!store.repairFinancialEdits) {
+      store.repairFinancialEdits = [];
+    }
+
+    const existingIdx = store.repairFinancialEdits.findIndex(
+      (f) =>
+        (seq && f.sequenceNo === seq) ||
+        (reqNo && f.repairRequestNo === reqNo) ||
+        (rn > 0 && f.rowNumber === rn)
+    );
+
+    const editEntry: StoredRepairFinancialEdit = {
+      rowNumber: rn,
+      sequenceNo: seq,
+      repairRequestNo: reqNo,
+      sparePartsCost: spare,
+      laborCost: labor,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.repairFinancialEdits[existingIdx] = editEntry;
+    } else {
+      store.repairFinancialEdits.push(editEntry);
     }
 
     writeStore(store);
