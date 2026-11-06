@@ -1329,18 +1329,10 @@ export default function App() {
                           activeTab.gid === '378250263' && col.id === 'A';
                         const isEditableJobNoteCell =
                           activeTab.gid === '606634465' && col.id === 'N';
-                        const isEditableRepairDetailCell =
-                          activeTab.gid === '944294225' &&
-                          (col.id === 'AK' || col.label.includes('รายละเอียดเพิ่มเติม'));
-                        const isEditableRepairReplyCell =
-                          activeTab.gid === '944294225' &&
-                          (col.id === 'AM' || col.label.includes('ตอบกลับข้อมูลเพิ่มเติม'));
                         const isEditableInlineCell =
                           isEditableGateCell ||
                           isEditableVehicleRegCell ||
-                          isEditableJobNoteCell ||
-                          isEditableRepairDetailCell ||
-                          isEditableRepairReplyCell;
+                          isEditableJobNoteCell;
                         const isEditingThisRow =
                           isEditableInlineCell &&
                           editingGateRowNumber === row.rowNumber &&
@@ -1435,19 +1427,13 @@ export default function App() {
                                     placeholder={
                                       isEditableJobNoteCell
                                         ? 'พิมพ์หมายเหตุ...'
-                                        : isEditableRepairDetailCell
-                                          ? 'พิมพ์รายละเอียดเพิ่มเติม...'
-                                          : isEditableRepairReplyCell
-                                            ? 'พิมพ์ตอบกลับข้อมูลเพิ่มเติม...'
-                                            : undefined
+                                        : undefined
                                     }
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
                                         e.preventDefault();
                                         if (
                                           (isEditableJobNoteCell ||
-                                            isEditableRepairDetailCell ||
-                                            isEditableRepairReplyCell ||
                                             editingGateValue.trim()) &&
                                           editingGateValue.trim() !== val.trim()
                                         ) {
@@ -1469,8 +1455,6 @@ export default function App() {
                                     onClick={() => {
                                       if (
                                         (isEditableJobNoteCell ||
-                                          isEditableRepairDetailCell ||
-                                          isEditableRepairReplyCell ||
                                           editingGateValue.trim()) &&
                                         editingGateValue.trim() !== val.trim()
                                       ) {
@@ -1613,6 +1597,42 @@ export default function App() {
         tabName={activeTab.name}
         onClose={() => setSelectedRow(null)}
         onOpenAttachPhotos={(row) => setAttachingPhotoRow(row)}
+        onUpdateAdditionalDetails={async (row, newDetails) => {
+          const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
+          const repairRequestNo = (row.values['G'] ?? '').trim();
+          await updateRepairAdditionalDetails({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            additionalDetails: newDetails,
+          });
+          row.values['AK'] = newDetails;
+          setSaveSuccessMsg(
+            newDetails
+              ? `บันทึกรายละเอียดเพิ่มเติมเรียบร้อยแล้ว`
+              : `ล้างรายละเอียดเพิ่มเติมเรียบร้อยแล้ว`
+          );
+          loadData({ silent: true });
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+        }}
+        onUpdateReplyDetails={async (row, newReply) => {
+          const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
+          const repairRequestNo = (row.values['G'] ?? '').trim();
+          await updateRepairReplyDetails({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            replyDetails: newReply,
+          });
+          row.values['AM'] = newReply;
+          setSaveSuccessMsg(
+            newReply
+              ? `บันทึกตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`
+              : `ล้างตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`
+          );
+          loadData({ silent: true });
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+        }}
       />
 
       {/* Attach / Edit Repair Photos Modal */}

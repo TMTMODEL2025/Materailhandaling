@@ -724,7 +724,7 @@ const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
     'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
     'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
-    'AJ', 'AL',
+    'AJ', 'AK', 'AL', 'AM',
   ]),
 };
 
@@ -776,6 +776,8 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'ID',
     'id',
     'สถานะการเปลี่ยนแปลง',
+    'รายละเอียดเพิ่มเติม',
+    'ตอบกลับข้อมูลเพิ่มเติม',
   ]),
 };
 
