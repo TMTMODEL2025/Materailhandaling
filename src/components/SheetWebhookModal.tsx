@@ -6,6 +6,7 @@ import {
   getConfiguredAppsScriptUrl,
   saveConfiguredAppsScriptUrl,
 } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface SheetWebhookModalProps {
   isOpen: boolean;
@@ -47,6 +48,10 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
     setIsSaving(true);
     try {
       await saveConfiguredAppsScriptUrl(urlInput);
+      showSuccessToast(
+        'บันทึกการเชื่อมต่อ Webhook สำเร็จ!',
+        'ระบบบันทึก URL Webhook เรียบร้อยแล้ว'
+      );
       onSaved();
       onClose();
     } finally {

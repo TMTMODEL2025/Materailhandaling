@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Upload, Trash2, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import { SheetRow } from '../types';
 import { updateRepairPhotos, formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface AttachRepairPhotosModalProps {
   isOpen: boolean;
@@ -140,6 +141,11 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
       PHOTO_COLS.forEach((col, idx) => {
         row.values[col] = photos[idx] || '';
       });
+
+      showSuccessToast(
+        'บันทึกรูปถ่ายสำเร็จ!',
+        'ระบบอัปเดตรูปถ่ายเพิ่มเติมในแถวเดิมเรียบร้อยแล้ว'
+      );
 
       onPhotosUpdated(photos);
       onClose();

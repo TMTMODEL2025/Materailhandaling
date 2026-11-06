@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Copy, Check, Camera, Pencil } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
 import { formatDriveImageUrl, getDriveThumbnailUrl } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface RecordDetailModalProps {
   row: SheetRow | null;
@@ -60,6 +61,15 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
       row.values[colId] = cleanVal;
       setEditingColId(null);
       setSaveSuccessColId(colId);
+
+      const isReply = colId === 'AM' || colId.includes('ตอบกลับ');
+      showSuccessToast(
+        isReply ? 'บันทึกการตอบกลับสำเร็จ!' : 'บันทึกรายละเอียดเพิ่มเติมสำเร็จ!',
+        isReply
+          ? 'ส่งข้อความตอบกลับและอัปเดตสถานะเรียบร้อยแล้ว'
+          : 'ระบบบันทึกรายละเอียดเพิ่มเติมเรียบร้อยแล้ว'
+      );
+
       setTimeout(() => setSaveSuccessColId(null), 3000);
     } catch {
       // ignore

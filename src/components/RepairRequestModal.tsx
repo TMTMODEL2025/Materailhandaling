@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { X, AlertCircle, Wrench, Send, Camera, Image as ImageIcon, Trash2 } from 'lucide-react';
 import { SheetRow, RepairRequestPayload } from '../types';
 import { appendRepairRecord } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface RepairRequestModalProps {
   isOpen: boolean;
@@ -238,6 +239,11 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
       };
 
       await appendRepairRecord(payload);
+
+      showSuccessToast(
+        'บันทึกแจ้งซ่อมสำเร็จ!',
+        'ระบบบันทึกรายการแจ้งซ่อมลงฐานข้อมูลเรียบร้อยแล้ว'
+      );
 
       // Reset form
       setSymptoms('');

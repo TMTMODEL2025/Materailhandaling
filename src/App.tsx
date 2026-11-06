@@ -43,6 +43,7 @@ import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { APP_VERSION } from './version';
+import { showSuccessToast } from './utils/swal';
 
 const PAGE_SIZE = 30;
 
@@ -252,11 +253,11 @@ export default function App() {
           setEditingGateRowNumber(null);
           setEditingColumnId(null);
           setConfirmingGateRowNumber(null);
-          setSaveSuccessMsg(
-            newValue
-              ? `บันทึกการตอบกลับข้อมูลเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-              : `ล้างการตอบกลับข้อมูลเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-          );
+          const msg = newValue
+            ? `บันทึกการตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`
+            : `ล้างการตอบกลับข้อมูลเพิ่มเติมเรียบร้อยแล้ว`;
+          setSaveSuccessMsg(msg);
+          showSuccessToast('บันทึกการตอบกลับสำเร็จ!', msg);
         } else {
           await updateRepairAdditionalDetails({
             rowNumber: row.rowNumber,
@@ -271,11 +272,11 @@ export default function App() {
           setEditingGateRowNumber(null);
           setEditingColumnId(null);
           setConfirmingGateRowNumber(null);
-          setSaveSuccessMsg(
-            newValue
-              ? `บันทึกรายละเอียดเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-              : `ล้างรายละเอียดเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-          );
+          const msg = newValue
+            ? `บันทึกรายละเอียดเพิ่มเติมเรียบร้อยแล้ว`
+            : `ล้างรายละเอียดเพิ่มเติมเรียบร้อยแล้ว`;
+          setSaveSuccessMsg(msg);
+          showSuccessToast('บันทึกรายละเอียดเพิ่มเติมสำเร็จ!', msg);
         }
       } else if (isJobTransferTab) {
         const date = (row.values['A'] ?? '').trim();
@@ -294,11 +295,11 @@ export default function App() {
 
         setEditingGateRowNumber(null);
         setConfirmingGateRowNumber(null);
-        setSaveSuccessMsg(
-          newValue
-            ? `บันทึกหมายเหตุ "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-            : `ล้างหมายเหตุของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
-        );
+        const msg = newValue
+          ? `บันทึกหมายเหตุเรียบร้อยแล้ว`
+          : `ล้างหมายเหตุเรียบร้อยแล้ว`;
+        setSaveSuccessMsg(msg);
+        showSuccessToast('บันทึกหมายเหตุสำเร็จ!', msg);
       } else if (isVehicleTab) {
         const driverName = (row.values['I'] ?? '').trim();
         const shift = (row.values['L'] ?? '').trim();
@@ -312,9 +313,9 @@ export default function App() {
 
         setEditingGateRowNumber(null);
         setConfirmingGateRowNumber(null);
-        setSaveSuccessMsg(
-          `อัปเดตทะเบียนรถจาก "${oldValue}" เป็น "${newValue}" เรียบร้อยแล้ว`
-        );
+        const msg = `อัปเดตทะเบียนรถจาก "${oldValue}" เป็น "${newValue}" เรียบร้อยแล้ว`;
+        setSaveSuccessMsg(msg);
+        showSuccessToast('อัปเดตทะเบียนรถสำเร็จ!', msg);
       } else {
         const deliveryPoint = (row.values['B'] ?? '').trim();
         const now = new Date();
@@ -331,9 +332,9 @@ export default function App() {
 
         setEditingGateRowNumber(null);
         setConfirmingGateRowNumber(null);
-        setSaveSuccessMsg(
-          `อัปเดตประตูของจุดส่งสินค้า ${deliveryPoint} เป็น "${newValue}" และอัปเดตวันที่เป็น ${updatedDate} เรียบร้อยแล้ว`
-        );
+        const msg = `อัปเดตประตูของจุดส่งสินค้า ${deliveryPoint} เป็น "${newValue}" เรียบร้อยแล้ว`;
+        setSaveSuccessMsg(msg);
+        showSuccessToast('อัปเดตข้อมูลสำเร็จ!', msg);
       }
 
       loadData({ silent: true });

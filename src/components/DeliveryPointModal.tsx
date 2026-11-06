@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { DeliveryPointPayload, SheetRow } from '../types';
 import { appendDeliveryPointRecord } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface DeliveryPointModalProps {
   isOpen: boolean;
@@ -113,6 +114,11 @@ export const DeliveryPointModal: React.FC<DeliveryPointModalProps> = ({
       setDeliveryPoint('');
       setGate('');
       setIsConfirmStep(false);
+
+      showSuccessToast(
+        'เพิ่มจุดส่งสินค้าสำเร็จ!',
+        'ระบบบันทึกจุดส่งสินค้าเรียบร้อยแล้ว'
+      );
 
       onSavedSuccess();
       onClose();

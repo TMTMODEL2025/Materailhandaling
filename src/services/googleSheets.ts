@@ -398,6 +398,10 @@ function doPost(e) {
       if (targetRow >= 2) {
         // AM is column 39 (1-based)
         sheet.getRange(targetRow, 39).setValue(String(body.replyDetails || '').trim());
+        if (body.replyDetails && String(body.replyDetails).trim() !== '') {
+          // AI is column 35 (1-based)
+          sheet.getRange(targetRow, 35).setValue('4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว');
+        }
       }
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
@@ -1603,6 +1607,9 @@ export async function fetchSheetTabData(
         );
         if (target) {
           target.values['AM'] = re.replyDetails;
+          if (re.replyDetails && re.replyDetails.trim() !== '') {
+            target.values['AI'] = '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
+          }
         }
       }
     }
@@ -2563,6 +2570,9 @@ export async function updateRepairReplyDetails(params: {
       (params.rowNumber > 0 && reqItem.rowNumber === params.rowNumber)
     ) {
       reqItem.values['AM'] = params.replyDetails.trim();
+      if (params.replyDetails.trim()) {
+        reqItem.values['AI'] = '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
+      }
     }
   }
 
@@ -2621,6 +2631,21 @@ export async function updateRepairReplyDetails(params: {
           values: [[params.replyDetails.trim()]],
         }),
       });
+
+      if (params.replyDetails.trim()) {
+        const statusRange = encodeURIComponent(`บันทึกงานซ่อม!AI${params.rowNumber}`);
+        const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
+        await fetch(statusUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [['4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว']],
+          }),
+        });
+      }
     } catch {
       // ignore
     }

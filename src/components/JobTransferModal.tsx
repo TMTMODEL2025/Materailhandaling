@@ -11,6 +11,7 @@ import {
   appendJobTransferRecord,
   completeJobTransferRecord,
 } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface JobTransferModalProps {
   isOpen: boolean;
@@ -315,6 +316,10 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
       updateActiveJob(startedJob);
       setFlowStep('IN_TRANSIT');
+      showSuccessToast(
+        'เริ่มส่งสินค้าสำเร็จ!',
+        'ระบบบันทึกสถานะอยู่ระหว่างการส่งเรียบร้อยแล้ว'
+      );
       onSavedSuccess();
     } catch (err: unknown) {
       setSubmitError(
@@ -361,6 +366,11 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       setDestination('');
       setNote('');
       setFlowStep('FORM');
+
+      showSuccessToast(
+        'จบงานส่งสินค้าสำเร็จ!',
+        'ระบบบันทึกสถานะส่งสินค้าเรียบร้อยแล้ว'
+      );
 
       onSavedSuccess();
       if (!inlineMode) {

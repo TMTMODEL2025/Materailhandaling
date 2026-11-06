@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { X, CheckCircle2, XCircle, Clock, AlertCircle, HelpCircle } from 'lucide-react';
 import { SheetRow, RepairApprovalPayload } from '../types';
 import { approveRepairRecord, updateRepairAdditionalDetails } from '../services/googleSheets';
+import { showSuccessToast } from '../utils/swal';
 
 interface ManagerApprovalModalProps {
   isOpen: boolean;
@@ -33,8 +34,10 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   onApprovedSuccess,
 }) => {
   const [filterMode, setFilterMode] = useState<'PENDING' | 'ALL'>('PENDING');
+  const DEFAULT_APPROVER_NAME = 'นายกฤษฎา เกิดเสม';
+
   const [approverName, setApproverName] = useState<string>(
-    () => localStorage.getItem('gsheets_manager_approver_name') || ''
+    () => localStorage.getItem('gsheets_manager_approver_name') || DEFAULT_APPROVER_NAME
   );
   const [selectedRow, setSelectedRow] = useState<SheetRow | null>(null);
   const [decision, setDecision] = useState<'3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '4.⚠️ขอข้อมูลเพิ่มเติม'>('3.✔️อนุมัติ');
@@ -47,12 +50,16 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   const pendingRows = useMemo(() => {
     return rows.filter((r) => {
       const status = (r.values['AI'] ?? '').trim();
+      const replyText = (r.values['AM'] ?? '').trim();
       return (
         status === '2.⚠️รอพิจารณา' ||
         status === 'รอพิจารณา' ||
         status === 'รออนุมัติ' ||
         status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
+        status === '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
         status.includes('ขอข้อมูล') ||
+        status.includes('ตอบกลับ') ||
+        Boolean(replyText) ||
         !status
       );
     });
@@ -127,6 +134,15 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
           // ignore
         }
       }
+
+      const toastTitle =
+        decision === '3.✔️อนุมัติ'
+          ? 'บันทึกการอนุมัติสำเร็จ!'
+          : decision === '4.⚠️ขอข้อมูลเพิ่มเติม'
+          ? 'ส่งคำขอข้อมูลเพิ่มเติมสำเร็จ!'
+          : 'บันทึกการไม่อนุมัติสำเร็จ!';
+
+      showSuccessToast(toastTitle, 'ระบบบันทึกผลการพิจารณาเรียบร้อยแล้ว');
 
       setSelectedRow(null);
       onApprovedSuccess();
@@ -286,9 +302,19 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                 </div>
                 {selectedRow.values['AK'] && (
                   <div className="col-span-2">
-                    <span className="text-slate-500">รายละเอียดเพิ่มเติมที่มีอยู่:</span>
-                    <div className="mt-0.5 whitespace-pre-wrap rounded border border-amber-200 bg-amber-50/50 p-2 text-xs text-amber-900">
+                    <span className="text-slate-500 font-medium">คำขอข้อมูลเพิ่มเติมจากผู้อนุมัติ:</span>
+                    <div className="mt-0.5 whitespace-pre-wrap rounded border border-amber-200 bg-amber-50/70 p-2 text-xs text-amber-900">
                       {selectedRow.values['AK']}
+                    </div>
+                  </div>
+                )}
+                {selectedRow.values['AM'] && (
+                  <div className="col-span-2">
+                    <span className="text-emerald-800 font-bold flex items-center gap-1">
+                      <span>💬</span> ข้อความตอบกลับข้อมูลเพิ่มเติมจากผู้แจ้งซ่อม:
+                    </span>
+                    <div className="mt-0.5 whitespace-pre-wrap rounded border border-emerald-300 bg-emerald-50 p-2.5 text-xs font-semibold text-emerald-950 shadow-2xs">
+                      {selectedRow.values['AM']}
                     </div>
                   </div>
                 )}
@@ -419,18 +445,30 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                 const rep = r.values['AA'] || '';
                 const appStatus = (r.values['AI'] ?? '').trim();
                 const approver = r.values['AE'] || '';
+                const reqInfoText = (r.values['AK'] ?? '').trim();
+                const replyText = (r.values['AM'] ?? '').trim();
 
-                const isApproved = appStatus.includes('อนุมัติ') && !appStatus.includes('ไม่อนุมัติ') && !appStatus.includes('รอ');
+                const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
+                const isApproved =
+                  appStatus.includes('อนุมัติ') &&
+                  !appStatus.includes('ไม่อนุมัติ') &&
+                  !appStatus.includes('รอ') &&
+                  !isReplied;
                 const isRejected = appStatus.includes('ไม่อนุมัติ');
-                const isNeedInfo = appStatus.includes('ขอข้อมูล');
+                const isNeedInfo =
+                  (appStatus.includes('ขอข้อมูล') || Boolean(reqInfoText)) && !isReplied;
+
+                const displayStatusLabel = isReplied
+                  ? '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว'
+                  : appStatus;
 
                 return (
                   <div
                     key={r.rowNumber}
-                    className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-2 py-3.5 border-b border-slate-100 last:border-0 sm:flex-row sm:items-start sm:justify-between"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-bold text-slate-900">
                           ลำดับ {seq}
                         </span>
@@ -438,10 +476,12 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                           {veh}
                         </span>
                         <span className="text-xs text-slate-500">{dt}</span>
-                        {appStatus && (
+                        {displayStatusLabel && (
                           <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                              isApproved
+                            className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                              isReplied
+                                ? 'bg-emerald-100 text-emerald-950 border border-emerald-400 shadow-2xs'
+                                : isApproved
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : isRejected
                                 ? 'bg-red-50 text-red-700 border border-red-200'
@@ -450,7 +490,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                                 : 'bg-amber-50 text-amber-700 border border-amber-200'
                             }`}
                           >
-                            {appStatus}
+                            {displayStatusLabel}
                           </span>
                         )}
                       </div>
@@ -458,17 +498,31 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                         <strong className="font-medium text-slate-900">{typ}:</strong>{' '}
                         <span className="text-slate-600 line-clamp-1">{sym || '-'}</span>
                       </div>
-                      {r.values['AK'] && (
-                        <div className="mt-0.5 text-xs text-amber-800 line-clamp-1">
-                          <strong>ขอข้อมูลเพิ่ม:</strong> {r.values['AK']}
+
+                      {reqInfoText && (
+                        <div className="mt-1 text-xs text-amber-900 bg-amber-50/80 p-1.5 rounded border border-amber-200">
+                          <strong className="font-semibold text-amber-950">คำขอข้อมูลเพิ่ม:</strong> {reqInfoText}
                         </div>
                       )}
-                      <div className="mt-0.5 text-[11px] text-slate-400">
+
+                      {replyText && (
+                        <div className="mt-1.5 rounded-lg border border-emerald-300 bg-emerald-50/90 p-2 text-xs text-emerald-950 shadow-2xs">
+                          <div className="font-bold text-emerald-900 flex items-center gap-1 mb-0.5">
+                            <span className="text-sm">💬</span>
+                            <span>ประวัติ / ข้อความตอบกลับข้อมูลเพิ่มเติม:</span>
+                          </div>
+                          <div className="whitespace-pre-wrap font-semibold text-emerald-950 bg-white/90 p-2 rounded border border-emerald-200/80">
+                            {replyText}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-1 text-[11px] text-slate-400">
                         ผู้แจ้ง: {rep || '-'} {approver ? `· ผู้อนุมัติ: ${approver}` : ''}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
                       <button
                         type="button"
                         onClick={() => handleOpenDecision(r, '3.✔️อนุมัติ')}
