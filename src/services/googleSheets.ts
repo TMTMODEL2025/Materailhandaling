@@ -725,6 +725,7 @@ const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '606634465': new Set(['P', 'Q', 'R', 'S', 'T', 'U', 'V']),
   '1156877149': new Set(['D', 'Z']),
   '944294225': new Set([
+    'A', 'B', 'C', 'G',
     'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
     'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
@@ -742,6 +743,11 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'จำนวนรอบ',
   ]),
   '944294225': new Set([
+    'ลำดับ',
+    'วันที่แจ้งซ่อม',
+    'เวลาแจ้งซ่อม',
+    'เวลาแจงซ่อม',
+    'เลขที่ขอซ่อม',
     'เลขที่แจ้งซ่อม SAP',
     'เลขที่แจ้งซ่อมSAP',
     'กำหนดการ',

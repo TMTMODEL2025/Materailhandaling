@@ -8,6 +8,7 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
   SlidersHorizontal,
   ExternalLink,
@@ -85,9 +86,40 @@ function parseIsoInputDateToTimestamp(isoDate: string): number | null {
   return new Date(y, m - 1, d).setHours(0, 0, 0, 0);
 }
 
+function calculatePendingApprovalCount(rows: SheetRow[]): number {
+  return rows.filter((r) => {
+    const status = (r.values['AI'] ?? '').trim();
+    const replyText = (r.values['AM'] ?? '').trim();
+    return (
+      status === '2.⚠️รออนุมัติ' ||
+      status === 'รออนุมัติ' ||
+      status === '2.⚠️รอพิจารณา' ||
+      status === 'รอพิจารณา' ||
+      status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
+      status === '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
+      status.includes('ขอข้อมูล') ||
+      status.includes('ตอบกลับ') ||
+      status.includes('รอ') ||
+      Boolean(replyText) ||
+      !status
+    );
+  }).length;
+}
+
+function getRowApprovalStatus(row: SheetRow): string {
+  const appStatus = (row.values['AI'] ?? '').trim();
+  const replyText = (row.values['AM'] ?? '').trim();
+  const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
+  if (isReplied) return '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
+  if (!appStatus || appStatus === '2.⚠️รอพิจารณา' || appStatus === 'รอพิจารณา') return '2.⚠️รออนุมัติ';
+  return appStatus;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +189,22 @@ export default function App() {
           signal: controller.signal,
         });
         setSheetData(result);
+
+        if (activeTab.gid === '944294225') {
+          setPendingApprovalCount(calculatePendingApprovalCount(result.rows));
+        } else {
+          const repairTabConfig = SHEET_TABS.find((t) => t.gid === '944294225');
+          if (repairTabConfig) {
+            void fetchSheetTabData(repairTabConfig, {
+              limit: 250,
+              signal: controller.signal,
+            }).then((repairRes) => {
+              if (!controller.signal.aborted) {
+                setPendingApprovalCount(calculatePendingApprovalCount(repairRes.rows));
+              }
+            }).catch(() => {});
+          }
+        }
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') {
           return;
@@ -375,6 +423,17 @@ export default function App() {
   }, [sheetData]);
 
   const quickFilterOptions = useMemo<string[]>(() => {
+    if (activeTab.gid === '944294225') {
+      return [
+        'รอคิวซ่อม',
+        'ซ่อมเสร็จแล้ว',
+        'กำลังซ่อม',
+        'ตรวจสอบแล้ว',
+        'ผู้ใช้งานแจ้งซ่อม',
+        'รออะไหล่',
+        'รอข้อมูลเพิ่มเติม',
+      ];
+    }
     if (!sheetData || !quickFilterColumn) return [];
     const counts = new Map<string, number>();
     sheetData.rows.forEach((row) => {
@@ -387,7 +446,7 @@ export default function App() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 7)
       .map(([val]) => val);
-  }, [sheetData, quickFilterColumn]);
+  }, [sheetData, quickFilterColumn, activeTab.gid]);
 
   // Filter rows by date range, search query, selected column, and quick filter
   const filteredRows = useMemo<SheetRow[]>(() => {
@@ -412,12 +471,26 @@ export default function App() {
         }
       }
 
-      if (
-        quickFilterValue !== 'ALL' &&
-        quickFilterColumn &&
-        row.values[quickFilterColumn.id]?.trim() !== quickFilterValue
-      ) {
-        return false;
+      if (quickFilterValue !== 'ALL') {
+        if (activeTab.gid === '944294225') {
+          const statusVal = (row.values['P'] ?? '').trim();
+          const reporterVal = (row.values['AA'] ?? '').trim();
+          const detailVal = (row.values['AK'] ?? '').trim();
+          const appVal = (row.values['AI'] ?? '').trim();
+
+          if (quickFilterValue === 'ผู้ใช้งานแจ้งซ่อม') {
+            if (!reporterVal) return false;
+          } else if (quickFilterValue === 'รอข้อมูลเพิ่มเติม') {
+            if (!statusVal.includes('ข้อมูลเพิ่มเติม') && !detailVal && !appVal.includes('ข้อมูลเพิ่มเติม')) return false;
+          } else {
+            if (!statusVal.includes(quickFilterValue) && !appVal.includes(quickFilterValue)) return false;
+          }
+        } else if (
+          quickFilterColumn &&
+          row.values[quickFilterColumn.id]?.trim() !== quickFilterValue
+        ) {
+          return false;
+        }
       }
 
       if (!q) return true;
@@ -496,6 +569,29 @@ export default function App() {
     const start = (currentPage - 1) * PAGE_SIZE;
     return sortedRows.slice(start, start + PAGE_SIZE);
   }, [sortedRows, currentPage]);
+
+  const repairGroupedRows = useMemo(() => {
+    if (activeTab.gid !== '944294225') return null;
+    const groups = new Map<string, SheetRow[]>();
+    sortedRows.forEach((row) => {
+      const status = getRowApprovalStatus(row);
+      if (!groups.has(status)) {
+        groups.set(status, []);
+      }
+      groups.get(status)!.push(row);
+    });
+    return groups;
+  }, [sortedRows, activeTab.gid]);
+
+  useEffect(() => {
+    if (repairGroupedRows) {
+      const initial: Record<string, boolean> = {};
+      repairGroupedRows.forEach((_, status) => {
+        initial[status] = true; // collapsed by default
+      });
+      setCollapsedGroups(initial);
+    }
+  }, [repairGroupedRows]);
 
   // Contextual real-time summary metric based on actual columns in current sheet
   const contextualMetric = useMemo<{ label: string; value: string; subtext: string }>(() => {
@@ -740,10 +836,15 @@ export default function App() {
                 }}
                 className="flex w-full items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-left text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
               >
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-emerald-600" />
-                  <span>ผู้จัดการอนุมัติงานซ่อม</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span className="truncate">ผู้จัดการอนุมัติงานซ่อม</span>
                 </div>
+                {pendingApprovalCount > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-red-600 px-2 py-0.5 font-mono text-[11px] font-bold text-white shadow-2xs shrink-0 animate-pulse">
+                    {pendingApprovalCount.toLocaleString('th-TH')}
+                  </span>
+                )}
               </button>
 
               <button
@@ -832,6 +933,11 @@ export default function App() {
                 >
                   <CheckCircle className="h-3.5 w-3.5" />
                   <span>ผู้อนุมัติ</span>
+                  {pendingApprovalCount > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center rounded-full bg-red-600 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white animate-pulse">
+                      {pendingApprovalCount.toLocaleString('th-TH')}
+                    </span>
+                  )}
                 </button>
               </>
             )}
@@ -976,86 +1082,94 @@ export default function App() {
               {/* Controls Row */}
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 {/* Date Range Filter (Available for tables with dates, especially บันทึกการย้ายงาน) */}
-                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
-                  <Calendar className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                  <span className="hidden sm:inline text-[11px] font-medium text-slate-500">วันที่:</span>
-                  <input
-                    type="date"
-                    aria-label="วันที่เริ่มต้น"
-                    title="วันที่เริ่มต้น"
-                    value={startDateFilter}
-                    onChange={(e) => setStartDateFilter(e.target.value)}
-                    className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
-                  />
-                  <span className="text-slate-400">-</span>
-                  <input
-                    type="date"
-                    aria-label="วันที่สิ้นสุด"
-                    title="วันที่สิ้นสุด"
-                    value={endDateFilter}
-                    onChange={(e) => setEndDateFilter(e.target.value)}
-                    className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
-                  />
-                  {(startDateFilter || endDateFilter) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStartDateFilter('');
-                        setEndDateFilter('');
-                      }}
-                      title="ล้างช่วงวันที่"
-                      className="rounded p-0.5 text-slate-400 hover:text-slate-700"
+                {activeTab.gid !== '944294225' && (
+                  <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
+                    <Calendar className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    <span className="hidden sm:inline text-[11px] font-medium text-slate-500">วันที่:</span>
+                    <input
+                      type="date"
+                      aria-label="วันที่เริ่มต้น"
+                      title="วันที่เริ่มต้น"
+                      value={startDateFilter}
+                      onChange={(e) => setStartDateFilter(e.target.value)}
+                      className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
+                    />
+                    <span className="text-slate-400">-</span>
+                    <input
+                      type="date"
+                      aria-label="วันที่สิ้นสุด"
+                      title="วันที่สิ้นสุด"
+                      value={endDateFilter}
+                      onChange={(e) => setEndDateFilter(e.target.value)}
+                      className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
+                    />
+                    {(startDateFilter || endDateFilter) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStartDateFilter('');
+                          setEndDateFilter('');
+                        }}
+                        title="ล้างช่วงวันที่"
+                        className="rounded p-0.5 text-slate-400 hover:text-slate-700"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {activeTab.gid !== '944294225' && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                    <SlidersHorizontal className="h-3 w-3 text-slate-500 shrink-0" />
+                    <select
+                      id="col-filter"
+                      aria-label="ค้นหาในคอลัมน์"
+                      value={selectedColumnId}
+                      onChange={(e) => setSelectedColumnId(e.target.value)}
+                      className="bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
+                      <option value="ALL">ทุกคอลัมน์</option>
+                      {sheetData?.columns.map((col) => (
+                        <option key={col.id} value={col.id}>
+                          {col.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-                <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                  <SlidersHorizontal className="h-3 w-3 text-slate-500 shrink-0" />
+                {activeTab.gid !== '944294225' && (
                   <select
-                    id="col-filter"
-                    aria-label="ค้นหาในคอลัมน์"
-                    value={selectedColumnId}
-                    onChange={(e) => setSelectedColumnId(e.target.value)}
-                    className="bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
+                    id="limit-select"
+                    aria-label="จำนวนดึงข้อมูล"
+                    value={rowLimit}
+                    onChange={(e) => setRowLimit(Number(e.target.value))}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
                   >
-                    <option value="ALL">ทุกคอลัมน์</option>
-                    {sheetData?.columns.map((col) => (
-                      <option key={col.id} value={col.id}>
-                        {col.label}
-                      </option>
-                    ))}
+                    <option value={100}>100 แถว</option>
+                    <option value={250}>250 แถว</option>
+                    <option value={500}>500 แถว</option>
+                    <option value={1000}>1,000 แถว</option>
                   </select>
-                </div>
+                )}
 
-                <select
-                  id="limit-select"
-                  aria-label="จำนวนดึงข้อมูล"
-                  value={rowLimit}
-                  onChange={(e) => setRowLimit(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
-                >
-                  <option value={100}>100 แถว</option>
-                  <option value={250}>250 แถว</option>
-                  <option value={500}>500 แถว</option>
-                  <option value={1000}>1,000 แถว</option>
-                </select>
+                {activeTab.gid !== '944294225' && (
+                  <select
+                    id="refresh-select"
+                    aria-label="อัปเดตอัตโนมัติ"
+                    value={refreshIntervalSec}
+                    onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
+                  >
+                    <option value={15}>ซิงค์ 15วิ</option>
+                    <option value={30}>ซิงค์ 30วิ</option>
+                    <option value={60}>ซิงค์ 60วิ</option>
+                    <option value={0}>ปิดซิงค์</option>
+                  </select>
+                )}
 
-                <select
-                  id="refresh-select"
-                  aria-label="อัปเดตอัตโนมัติ"
-                  value={refreshIntervalSec}
-                  onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
-                >
-                  <option value={15}>ซิงค์ 15วิ</option>
-                  <option value={30}>ซิงค์ 30วิ</option>
-                  <option value={60}>ซิงค์ 60วิ</option>
-                  <option value={0}>ปิดซิงค์</option>
-                </select>
-
-                {sheetData && sheetData.totalRowsInSheet > rowLimit && (
+                {activeTab.gid !== '944294225' && sheetData && sheetData.totalRowsInSheet > rowLimit && (
                   <button
                     type="submit"
                     className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
@@ -1079,27 +1193,31 @@ export default function App() {
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={handleExportCsv}
-                  disabled={!sheetData || sortedRows.length === 0}
-                  title="ส่งออก CSV"
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">CSV</span>
-                </button>
+                {activeTab.gid !== '944294225' && (
+                  <button
+                    type="button"
+                    onClick={handleExportCsv}
+                    disabled={!sheetData || sortedRows.length === 0}
+                    title="ส่งออก CSV"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">CSV</span>
+                  </button>
+                )}
 
-                <a
-                  href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="เปิดตารางต้นฉบับ"
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-                >
-                  <span className="hidden sm:inline">ชีตต้นฉบับ</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
+                {activeTab.gid !== '944294225' && (
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="เปิดตารางต้นฉบับ"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+                  >
+                    <span className="hidden sm:inline">ชีตต้นฉบับ</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
               </div>
             </form>
 
@@ -1179,24 +1297,26 @@ export default function App() {
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
-                    <th className="w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('__ROW__')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>แถว</span>
-                        {sortConfig?.colId === '__ROW__' ? (
-                          sortConfig.direction === 'asc' ? (
-                            <ArrowUp className="h-3 w-3 text-slate-900" />
+                    {activeTab.gid !== '944294225' && (
+                      <th className="w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleSort('__ROW__')}
+                          className="inline-flex items-center gap-1 hover:text-slate-900"
+                        >
+                          <span>แถว</span>
+                          {sortConfig?.colId === '__ROW__' ? (
+                            sortConfig.direction === 'asc' ? (
+                              <ArrowUp className="h-3 w-3 text-slate-900" />
+                            ) : (
+                              <ArrowDown className="h-3 w-3 text-slate-900" />
+                            )
                           ) : (
-                            <ArrowDown className="h-3 w-3 text-slate-900" />
-                          )
-                        ) : (
-                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
-                        )}
-                      </button>
-                    </th>
+                            <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                          )}
+                        </button>
+                      </th>
+                    )}
                     {sheetData?.columns.map((col) => {
                       const isSorted = sortConfig?.colId === col.id;
                       const isNumeric = col.type === 'number';
@@ -1240,9 +1360,11 @@ export default function App() {
                 {isLoading && !sheetData ? (
                   Array.from({ length: 10 }).map((_, idx) => (
                     <tr key={idx} className="animate-pulse">
-                      <td className="px-4 py-3">
-                        <div className="h-4 w-12 rounded bg-slate-200" />
-                      </td>
+                      {activeTab.gid !== '944294225' && (
+                        <td className="px-4 py-3">
+                          <div className="h-4 w-12 rounded bg-slate-200" />
+                        </td>
+                      )}
                       {Array.from({ length: 6 }).map((__, cIdx) => (
                         <td key={cIdx} className="px-4 py-3">
                           <div className="h-4 w-28 rounded bg-slate-200" />
@@ -1258,7 +1380,7 @@ export default function App() {
                 ) : paginatedRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={(sheetData?.columns.length ?? 5) + 1 + (activeTab.gid === '944294225' ? 1 : 0)}
+                      colSpan={(sheetData?.columns.length ?? 5) + (activeTab.gid === '944294225' ? 1 : 2)}
                       className="px-6 py-14 text-center"
                     >
                       <div className="mx-auto max-w-md">
@@ -1312,9 +1434,11 @@ export default function App() {
                       onClick={() => setSelectedRow(row)}
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >
-                      <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                        <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
-                      </td>
+                      {activeTab.gid !== '944294225' && (
+                        <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                          <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
+                        </td>
+                      )}
                       {sheetData?.columns.map((col) => {
                         const val = row.values[col.id] ?? '';
                         const isNumeric = col.type === 'number';
