@@ -18,6 +18,8 @@ import {
   Pencil,
   Check,
   Link2,
+  Wrench,
+  CheckCircle,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -32,6 +34,8 @@ import { RecordDetailModal } from './components/RecordDetailModal';
 import { JobTransferModal } from './components/JobTransferModal';
 import { DeliveryPointModal } from './components/DeliveryPointModal';
 import { SheetWebhookModal } from './components/SheetWebhookModal';
+import { RepairRequestModal } from './components/RepairRequestModal';
+import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 
 const PAGE_SIZE = 30;
 
@@ -81,6 +85,8 @@ export default function App() {
   // Job Transfer & Delivery Point creation modals
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
+  const [isRepairModalOpen, setIsRepairModalOpen] = useState<boolean>(false);
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -603,6 +609,41 @@ export default function App() {
               );
             })}
           </nav>
+
+          <div className="mt-5 border-t border-slate-200 pt-3">
+            <div className="px-2.5 pb-2 text-xs font-semibold text-slate-400">
+              ระบบอนุมัติและแจ้งซ่อม
+            </div>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setIsApprovalModalOpen(true);
+                }}
+                className="flex w-full items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-left text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-emerald-600" />
+                  <span>ผู้จัดการอนุมัติงานซ่อม</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setIsRepairModalOpen(true);
+                }}
+                className="flex w-full items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-left text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-200"
+              >
+                <div className="flex items-center gap-2">
+                  <Wrench className="h-4 w-4 text-slate-600" />
+                  <span>+ บันทึกแจ้งซ่อม</span>
+                </div>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -645,6 +686,27 @@ export default function App() {
                 <Plus className="h-3.5 w-3.5" />
                 <span>เพิ่มจุดส่งสินค้า</span>
               </button>
+            )}
+
+            {activeTab.gid === '944294225' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsRepairModalOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  <span>แจ้งซ่อม</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsApprovalModalOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap shrink-0"
+                >
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  <span>ผู้อนุมัติ</span>
+                </button>
+              </>
             )}
 
             <button
@@ -1333,6 +1395,34 @@ export default function App() {
         onClose={() => setIsWebhookModalOpen(false)}
         onSaved={() => {
           setSaveSuccessMsg('บันทึกการเชื่อมต่อ Google Sheets (ไม่ต้องล็อกอิน) เรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* Repair Request Modal */}
+      <RepairRequestModal
+        isOpen={isRepairModalOpen}
+        onClose={() => setIsRepairModalOpen(false)}
+        existingRows={sheetData?.rows ?? []}
+        onSavedSuccess={() => {
+          setSaveSuccessMsg('บันทึกข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* Manager Approval Modal */}
+      <ManagerApprovalModal
+        isOpen={isApprovalModalOpen}
+        onClose={() => setIsApprovalModalOpen(false)}
+        rows={activeTab.gid === '944294225' ? (sheetData?.rows ?? []) : []}
+        onApprovedSuccess={() => {
+          setSaveSuccessMsg('บันทึกผลการพิจารณาอนุมัติงานซ่อมเรียบร้อยแล้ว');
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);

@@ -50,12 +50,35 @@ interface StoredJobTransferNoteEdit {
   updatedAt: string;
 }
 
+interface StoredRepairRequest {
+  id: string;
+  rowNumber: number;
+  sequenceNo: string;
+  values: Record<string, string>;
+  createdAt: string;
+  syncedToSheet?: boolean;
+}
+
+interface StoredRepairApproval {
+  rowNumber: number;
+  sequenceNo: string;
+  approvalStatus: string;
+  approverName: string;
+  approvalDate: string;
+  approvalTime: string;
+  repairStatus?: string;
+  note?: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
   deliveryPointEdits: StoredDeliveryPointEdit[];
   vehicleRegEdits: StoredVehicleRegEdit[];
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
+  repairRequests: StoredRepairRequest[];
+  repairApprovals: StoredRepairApproval[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -78,6 +101,8 @@ function readStore(): MutationsStore {
         jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
           ? parsed.jobTransferNoteEdits
           : [],
+        repairRequests: Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [],
+        repairApprovals: Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -101,6 +126,8 @@ function readStore(): MutationsStore {
     deliveryPointEdits: [],
     vehicleRegEdits: [],
     jobTransferNoteEdits: [],
+    repairRequests: [],
+    repairApprovals: [],
   };
 }
 
@@ -382,6 +409,97 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true, edit: editEntry });
+  });
+
+  app.post('/api/mutations/repair-request', (req, res) => {
+    const store = readStore();
+    const body = req.body ?? {};
+    const id =
+      typeof body.id === 'string' && body.id.trim()
+        ? body.id.trim()
+        : Math.random().toString(16).slice(2, 10);
+    const rowNumber =
+      typeof body.rowNumber === 'number' && body.rowNumber > 0
+        ? body.rowNumber
+        : 4270 + store.repairRequests.length;
+    const sequenceNo = String(body.sequenceNo ?? rowNumber - 1);
+    const values: Record<string, string> = body.values ?? {};
+
+    const entry: StoredRepairRequest = {
+      id,
+      rowNumber,
+      sequenceNo,
+      values,
+      createdAt: new Date().toISOString(),
+      syncedToSheet: Boolean(body.syncedToSheet),
+    };
+
+    store.repairRequests.push(entry);
+    writeStore(store);
+
+    res.json({ ok: true, entry });
+  });
+
+  app.put('/api/mutations/repair-approval', (req, res) => {
+    const store = readStore();
+    const {
+      rowNumber,
+      sequenceNo,
+      approvalStatus,
+      approverName,
+      approvalDate,
+      approvalTime,
+      repairStatus,
+      note,
+    } = req.body ?? {};
+
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+    const seq = String(sequenceNo ?? '').trim();
+    const status = String(approvalStatus ?? '').trim();
+    const approver = String(approverName ?? '').trim();
+    const appDate = String(approvalDate ?? '').trim();
+    const appTime = String(approvalTime ?? '').trim();
+    const repStatus = String(repairStatus ?? '').trim();
+    const nt = String(note ?? '').trim();
+
+    for (const reqItem of store.repairRequests) {
+      if (
+        (seq && reqItem.sequenceNo === seq) ||
+        (rn > 0 && reqItem.rowNumber === rn)
+      ) {
+        reqItem.values['AE'] = approver;
+        reqItem.values['AF'] = appDate;
+        reqItem.values['AG'] = appTime;
+        reqItem.values['AI'] = status;
+        if (repStatus) reqItem.values['P'] = repStatus;
+        if (nt) reqItem.values['AH'] = nt;
+      }
+    }
+
+    const existingIdx = store.repairApprovals.findIndex(
+      (a) => (seq && a.sequenceNo === seq) || (rn > 0 && a.rowNumber === rn)
+    );
+
+    const approvalEntry: StoredRepairApproval = {
+      rowNumber: rn,
+      sequenceNo: seq,
+      approvalStatus: status,
+      approverName: approver,
+      approvalDate: appDate,
+      approvalTime: appTime,
+      repairStatus: repStatus || undefined,
+      note: nt || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      store.repairApprovals[existingIdx] = approvalEntry;
+    } else {
+      store.repairApprovals.push(approvalEntry);
+    }
+
+    writeStore(store);
+    res.json({ ok: true, approval: approvalEntry });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

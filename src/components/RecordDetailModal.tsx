@@ -70,14 +70,28 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                   <div className="shrink-0 text-xs font-medium text-slate-500">
                     {col.label}
                   </div>
-                  <div className="flex min-w-0 items-center justify-end gap-1.5 text-right">
-                    <span
-                      className={`break-words whitespace-pre-wrap text-xs sm:text-sm font-medium text-slate-900 ${
-                        isNumericOrDate ? 'font-mono tabular-nums' : ''
-                      }`}
-                    >
-                      {val}
-                    </span>
+                  <div className="flex min-w-0 flex-col items-end gap-1.5 text-right">
+                    {val.startsWith('data:image/') || val.includes('.jpg') || val.includes('.png') || val.includes('.jpeg') ? (
+                      <div className="flex flex-col items-end gap-1">
+                        {val.startsWith('data:image/') ? (
+                          <img
+                            src={val}
+                            alt={col.label}
+                            className="max-h-36 max-w-xs rounded-lg border border-slate-200 object-cover shadow-xs"
+                          />
+                        ) : (
+                          <span className="font-mono text-xs text-slate-700">{val}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span
+                        className={`break-words whitespace-pre-wrap text-xs sm:text-sm font-medium text-slate-900 ${
+                          isNumericOrDate ? 'font-mono tabular-nums' : ''
+                        }`}
+                      >
+                        {val}
+                      </span>
+                    )}
                     {val !== '-' && (
                       <button
                         type="button"

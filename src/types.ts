@@ -53,4 +53,27 @@ export interface DeliveryPointPayload {
   gate: string;
 }
 
+export interface RepairRequestPayload {
+  date: string;
+  time: string;
+  vehicleNumber: string;
+  repairType: string;
+  symptoms: string;
+  reporterName: string;
+  note?: string;
+  repairRequestNo?: string;
+  photos?: string[];
+}
+
+export interface RepairApprovalPayload {
+  rowNumber: number;
+  sequenceNo: string;
+  approvalStatus: '3.✔️อนุมัติ' | '1.❌ไม่อนุมัติ' | '2.⚠️รอพิจารณา';
+  approverName: string;
+  approvalDate: string;
+  approvalTime: string;
+  repairStatus?: string;
+  note?: string;
+}
+
 

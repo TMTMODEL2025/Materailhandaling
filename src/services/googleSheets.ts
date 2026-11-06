@@ -230,6 +230,43 @@ function doPost(e) {
       return jsonResponse({ ok: true });
     }
 
+    if (action === 'appendRepairRequest') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const rowValues = body.rowValues || [];
+      sheet.appendRow(rowValues);
+      const rowNumber = sheet.getLastRow();
+      return jsonResponse({ ok: true, rowNumber: rowNumber });
+    }
+
+    if (action === 'approveRepairRequest') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+
+      if (sequenceNo && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const seqData = sheet.getRange(startRow, 1, numRows, 1).getValues();
+        for (let i = seqData.length - 1; i >= 0; i--) {
+          if (String(seqData[i][0] || '').trim() === sequenceNo) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        if (body.approverName) sheet.getRange(targetRow, 31).setValue(String(body.approverName).trim());
+        if (body.approvalDate) sheet.getRange(targetRow, 32).setValue(String(body.approvalDate).trim());
+        if (body.approvalTime) sheet.getRange(targetRow, 33).setValue(String(body.approvalTime).trim());
+        if (body.note) sheet.getRange(targetRow, 34).setValue(String(body.note).trim());
+        if (body.approvalStatus) sheet.getRange(targetRow, 35).setValue(String(body.approvalStatus).trim());
+        if (body.repairStatus) sheet.getRange(targetRow, 16).setValue(String(body.repairStatus).trim());
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -518,12 +555,35 @@ interface StoredJobTransferNoteEdit {
   updatedAt: string;
 }
 
+interface StoredRepairRequest {
+  id: string;
+  rowNumber: number;
+  sequenceNo: string;
+  values: Record<string, string>;
+  createdAt: string;
+  syncedToSheet?: boolean;
+}
+
+interface StoredRepairApproval {
+  rowNumber: number;
+  sequenceNo: string;
+  approvalStatus: string;
+  approverName: string;
+  approvalDate: string;
+  approvalTime: string;
+  repairStatus?: string;
+  note?: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
   deliveryPointEdits: StoredDeliveryPointEdit[];
   vehicleRegEdits: StoredVehicleRegEdit[];
   jobTransferNoteEdits: StoredJobTransferNoteEdit[];
+  repairRequests: StoredRepairRequest[];
+  repairApprovals: StoredRepairApproval[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -533,6 +593,8 @@ function createEmptyMutationsStore(): MutationsStore {
     deliveryPointEdits: [],
     vehicleRegEdits: [],
     jobTransferNoteEdits: [],
+    repairRequests: [],
+    repairApprovals: [],
   };
 }
 
@@ -554,6 +616,12 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
         ? parsed.jobTransferNoteEdits
+        : [],
+      repairRequests: Array.isArray(parsed.repairRequests)
+        ? parsed.repairRequests
+        : [],
+      repairApprovals: Array.isArray(parsed.repairApprovals)
+        ? parsed.repairApprovals
         : [],
     };
   } catch {
@@ -616,12 +684,26 @@ async function fetchCombinedMutationsStore(
         mergedNoteMap.set(`${e.date}|${e.driverName}|${e.vehicleNumber}|${e.startTime}`, e)
       );
 
+      const mergedRepReqMap = new Map<string, StoredRepairRequest>();
+      (remote.repairRequests ?? []).forEach((r) => mergedRepReqMap.set(r.id, r));
+      local.repairRequests.forEach((r) => mergedRepReqMap.set(r.id, r));
+
+      const mergedRepAppMap = new Map<string, StoredRepairApproval>();
+      (remote.repairApprovals ?? []).forEach((a) =>
+        mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
+      );
+      local.repairApprovals.forEach((a) =>
+        mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
         deliveryPointEdits: Array.from(mergedDpEditMap.values()),
         vehicleRegEdits: mergedVehEdits,
         jobTransferNoteEdits: Array.from(mergedNoteMap.values()),
+        repairRequests: Array.from(mergedRepReqMap.values()),
+        repairApprovals: Array.from(mergedRepAppMap.values()),
       };
     }
   } catch {
@@ -1090,6 +1172,38 @@ export async function fetchSheetTabData(
       );
       if (target) {
         target.values['A'] = edit.newRegistration;
+      }
+    }
+  } else if (tab.gid === '944294225') {
+    for (const req of mutationsStore.repairRequests) {
+      const exists = parsedRows.some(
+        (r) =>
+          (r.values['A'] ?? '').trim() === req.sequenceNo ||
+          (r.values['B'] ?? '').trim() === req.values['B'] &&
+          (r.values['D'] ?? '').trim() === req.values['D'] &&
+          (r.values['F'] ?? '').trim() === req.values['F']
+      );
+      if (!exists && !search) {
+        parsedRows.push({
+          rowNumber: req.rowNumber,
+          values: { ...req.values },
+          rawValues: { ...req.values, A: Number(req.sequenceNo) || req.rowNumber },
+        });
+      }
+    }
+    for (const app of mutationsStore.repairApprovals) {
+      const target = parsedRows.find(
+        (r) =>
+          (app.sequenceNo && (r.values['A'] ?? '').trim() === app.sequenceNo) ||
+          (app.rowNumber > 0 && r.rowNumber === app.rowNumber)
+      );
+      if (target) {
+        target.values['AE'] = app.approverName;
+        target.values['AF'] = app.approvalDate;
+        target.values['AG'] = app.approvalTime;
+        target.values['AI'] = app.approvalStatus;
+        if (app.repairStatus) target.values['P'] = app.repairStatus;
+        if (app.note) target.values['AH'] = app.note;
       }
     }
   }
@@ -1623,3 +1737,206 @@ export async function updateJobTransferNote(params: {
     }
   }
 }
+
+export async function appendRepairRecord(
+  payload: import('../types').RepairRequestPayload
+): Promise<{ id: string; rowNumber: number; sequenceNo: string }> {
+  const id = Math.random().toString(16).slice(2, 10);
+  const count = await fetchSheetRowCount('944294225');
+  const sequenceNo = String(count > 0 ? count + 1 : 4268);
+  const rowNumber = count > 0 ? count + 1 : 4268;
+
+  // Row values mapping 38 columns (A - AL)
+  const rowValues: Array<string | number> = new Array(38).fill('');
+  rowValues[0] = Number(sequenceNo) || sequenceNo; // A: ลำดับ
+  rowValues[1] = payload.date; // B: วันที่แจ้งซ่อม
+  rowValues[2] = payload.time; // C: เวลาแจงซ่อม
+  rowValues[3] = payload.vehicleNumber; // D: เบอร์รถ
+  rowValues[4] = payload.repairType; // E: ประเภทการซ่อม
+  rowValues[5] = payload.symptoms; // F: อาการ
+  rowValues[6] = payload.repairRequestNo || ''; // G: เลขที่ขอซ่อม
+  rowValues[15] = 'รอคิวซ่อม'; // P: สถานะ
+  // Q to Y: รูปถ่ายที่ 1 - 9 (indices 16 to 24)
+  const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
+  if (Array.isArray(payload.photos)) {
+    payload.photos.slice(0, 9).forEach((photo, idx) => {
+      rowValues[16 + idx] = photo;
+    });
+  }
+  rowValues[26] = payload.reporterName; // AA: ผู้แจ้งซ่อม
+  rowValues[33] = payload.note || ''; // AH: หมายเหตุ
+  rowValues[34] = '2.⚠️รอพิจารณา'; // AI: สถานะการอนุมัติ
+  rowValues[35] = id; // AJ: ID
+
+  const valuesMap: Record<string, string> = {
+    A: sequenceNo,
+    B: payload.date,
+    C: payload.time,
+    D: payload.vehicleNumber,
+    E: payload.repairType,
+    F: payload.symptoms,
+    G: payload.repairRequestNo || '',
+    P: 'รอคิวซ่อม',
+    AA: payload.reporterName,
+    AH: payload.note || '',
+    AI: '2.⚠️รอพิจารณา',
+    AJ: id,
+  };
+
+  if (Array.isArray(payload.photos)) {
+    payload.photos.slice(0, 9).forEach((photo, idx) => {
+      valuesMap[photoCols[idx]] = photo;
+    });
+  }
+
+  let syncedToSheet = false;
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'appendRepairRequest',
+        rowValues,
+      });
+      if (res.ok !== false) {
+        syncedToSheet = true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const token = getSilentAccessToken();
+  if (!syncedToSheet && token) {
+    try {
+      const range = encodeURIComponent('บันทึกงานซ่อม!A:A');
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: [rowValues] }),
+      });
+      syncedToSheet = true;
+    } catch {
+      // ignore
+    }
+  }
+
+  const localStore = readLocalMutationsStore();
+  localStore.repairRequests.push({
+    id,
+    rowNumber,
+    sequenceNo,
+    values: valuesMap,
+    createdAt: new Date().toISOString(),
+    syncedToSheet,
+  });
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/repair-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id,
+      rowNumber,
+      sequenceNo,
+      values: valuesMap,
+      syncedToSheet,
+    }),
+  }).catch(() => {});
+
+  return { id, rowNumber, sequenceNo };
+}
+
+export async function approveRepairRecord(
+  payload: import('../types').RepairApprovalPayload
+): Promise<void> {
+  const localStore = readLocalMutationsStore();
+  const existingIdx = localStore.repairApprovals.findIndex(
+    (a) =>
+      (payload.sequenceNo && a.sequenceNo === payload.sequenceNo) ||
+      (payload.rowNumber > 0 && a.rowNumber === payload.rowNumber)
+  );
+
+  const approvalEntry = {
+    rowNumber: payload.rowNumber,
+    sequenceNo: payload.sequenceNo,
+    approvalStatus: payload.approvalStatus,
+    approverName: payload.approverName,
+    approvalDate: payload.approvalDate,
+    approvalTime: payload.approvalTime,
+    repairStatus: payload.repairStatus,
+    note: payload.note,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    localStore.repairApprovals[existingIdx] = approvalEntry;
+  } else {
+    localStore.repairApprovals.push(approvalEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  void fetch('/api/mutations/repair-approval', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'approveRepairRequest',
+        ...payload,
+      });
+      return;
+    } catch {
+      // ignore
+    }
+  }
+
+  const token = getSilentAccessToken();
+  if (token && payload.rowNumber > 0) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AE${payload.rowNumber}:AI${payload.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[
+            payload.approverName,
+            payload.approvalDate,
+            payload.approvalTime,
+            payload.note || '',
+            payload.approvalStatus,
+          ]],
+        }),
+      });
+
+      if (payload.repairStatus) {
+        const statusRange = encodeURIComponent(`บันทึกงานซ่อม!P${payload.rowNumber}`);
+        const statusUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${statusRange}?valueInputOption=USER_ENTERED`;
+        await fetch(statusUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[payload.repairStatus]],
+          }),
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
