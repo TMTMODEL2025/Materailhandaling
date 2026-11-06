@@ -346,6 +346,34 @@ function doPost(e) {
       return jsonResponse({ ok: true, rowNumber: targetRow, photoUrls: photoUrls });
     }
 
+    if (action === 'updateRepairAdditionalDetails') {
+      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      const lastRow = sheet.getLastRow();
+      let targetRow = Number(body.rowNumber) || 0;
+      const sequenceNo = String(body.sequenceNo || '').trim();
+      const repairRequestNo = String(body.repairRequestNo || '').trim();
+
+      if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
+        const startRow = Math.max(2, lastRow - 300);
+        const numRows = lastRow - startRow + 1;
+        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (let i = checkData.length - 1; i >= 0; i--) {
+          const rowSeq = String(checkData[i][0] || '').trim();
+          const rowReqNo = String(checkData[i][6] || '').trim();
+          if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
+            targetRow = startRow + i;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        // AK is column 37 (1-based)
+        sheet.getRange(targetRow, 37).setValue(String(body.additionalDetails || '').trim());
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -667,7 +695,7 @@ const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
     'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
     'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
-    'AJ', 'AK', 'AL',
+    'AJ', 'AL',
   ]),
 };
 
@@ -718,7 +746,6 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'หมายเหตุ',
     'ID',
     'id',
-    'รายละเอียดเพิ่มเติม',
     'สถานะการเปลี่ยนแปลง',
   ]),
 };
@@ -794,6 +821,14 @@ interface StoredRepairPhotoEdit {
   updatedAt: string;
 }
 
+interface StoredRepairDetailEdit {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  additionalDetails: string;
+  updatedAt: string;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -803,6 +838,7 @@ interface MutationsStore {
   repairRequests: StoredRepairRequest[];
   repairApprovals: StoredRepairApproval[];
   repairPhotoEdits: StoredRepairPhotoEdit[];
+  repairDetailEdits: StoredRepairDetailEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -815,6 +851,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairRequests: [],
     repairApprovals: [],
     repairPhotoEdits: [],
+    repairDetailEdits: [],
   };
 }
 
@@ -846,6 +883,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
         ? parsed.repairPhotoEdits
+        : [],
+      repairDetailEdits: Array.isArray(parsed.repairDetailEdits)
+        ? parsed.repairDetailEdits
         : [],
     };
   } catch {
@@ -934,6 +974,20 @@ async function fetchCombinedMutationsStore(
         )
       );
 
+      const mergedDetailEditMap = new Map<string, StoredRepairDetailEdit>();
+      (remote.repairDetailEdits ?? []).forEach((d) =>
+        mergedDetailEditMap.set(
+          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+          d
+        )
+      );
+      (local.repairDetailEdits ?? []).forEach((d) =>
+        mergedDetailEditMap.set(
+          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+          d
+        )
+      );
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -943,6 +997,7 @@ async function fetchCombinedMutationsStore(
         repairRequests: Array.from(mergedRepReqMap.values()),
         repairApprovals: Array.from(mergedRepAppMap.values()),
         repairPhotoEdits: Array.from(mergedPhotoEditMap.values()),
+        repairDetailEdits: Array.from(mergedDetailEditMap.values()),
       };
     }
   } catch {
@@ -1459,6 +1514,19 @@ export async function fetchSheetTabData(
         pe.photos.slice(0, 9).forEach((photo, idx) => {
           target.values[photoCols[idx]] = photo;
         });
+      }
+    }
+    if (Array.isArray(mutationsStore.repairDetailEdits)) {
+      for (const de of mutationsStore.repairDetailEdits) {
+        const target = parsedRows.find(
+          (r) =>
+            (de.sequenceNo && (r.values['A'] ?? '').trim() === de.sequenceNo) ||
+            (de.repairRequestNo && (r.values['G'] ?? '').trim() === de.repairRequestNo) ||
+            (de.rowNumber > 0 && r.rowNumber === de.rowNumber)
+        );
+        if (target) {
+          target.values['AK'] = de.additionalDetails;
+        }
       }
     }
   }
@@ -2302,6 +2370,92 @@ export async function updateRepairPhotos(
         },
         body: JSON.stringify({
           values: [rowValues],
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function updateRepairAdditionalDetails(params: {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  additionalDetails: string;
+}): Promise<void> {
+  const localStore = readLocalMutationsStore();
+  const editEntry: StoredRepairDetailEdit = {
+    rowNumber: params.rowNumber,
+    sequenceNo: params.sequenceNo.trim(),
+    repairRequestNo: params.repairRequestNo?.trim() || '',
+    additionalDetails: params.additionalDetails.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  for (const reqItem of localStore.repairRequests) {
+    if (
+      (params.sequenceNo && reqItem.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && reqItem.values['G'] === params.repairRequestNo) ||
+      (params.rowNumber > 0 && reqItem.rowNumber === params.rowNumber)
+    ) {
+      reqItem.values['AK'] = params.additionalDetails.trim();
+    }
+  }
+
+  if (!localStore.repairDetailEdits) {
+    localStore.repairDetailEdits = [];
+  }
+
+  const existingIdx = localStore.repairDetailEdits.findIndex(
+    (e) =>
+      (params.sequenceNo && e.sequenceNo === params.sequenceNo) ||
+      (params.repairRequestNo && e.repairRequestNo === params.repairRequestNo) ||
+      (params.rowNumber > 0 && e.rowNumber === params.rowNumber)
+  );
+
+  if (existingIdx >= 0) {
+    localStore.repairDetailEdits[existingIdx] = editEntry;
+  } else {
+    localStore.repairDetailEdits.push(editEntry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Persist to server store
+  void fetch('/api/mutations/repair-details', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  }).catch(() => {});
+
+  // 3. Webhook update on existing row
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateRepairAdditionalDetails',
+        ...params,
+      });
+      return;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. Update via Google Sheets API (if token available) on exact existing row
+  const token = getSilentAccessToken();
+  if (token && params.rowNumber > 0) {
+    try {
+      const updateRange = encodeURIComponent(`บันทึกงานซ่อม!AK${params.rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+      await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[params.additionalDetails.trim()]],
         }),
       });
     } catch {

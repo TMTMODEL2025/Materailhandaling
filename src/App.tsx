@@ -31,6 +31,7 @@ import {
   updateDeliveryPointGate,
   updateVehicleRegistration,
   updateJobTransferNote,
+  updateRepairAdditionalDetails,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -210,13 +211,16 @@ export default function App() {
     const newValue = editingGateValue.trim();
     const isVehicleTab = activeTab.gid === '378250263';
     const isJobTransferTab = activeTab.gid === '606634465';
+    const isRepairTab = activeTab.gid === '944294225';
     const oldValue = isVehicleTab
       ? (row.values['A'] ?? '').trim()
       : isJobTransferTab
         ? (row.values['N'] ?? '').trim()
-        : (row.values['C'] ?? '').trim();
+        : isRepairTab
+          ? (row.values['AK'] ?? '').trim()
+          : (row.values['C'] ?? '').trim();
 
-    if (!isJobTransferTab && !newValue) return;
+    if (!isJobTransferTab && !isRepairTab && !newValue) return;
     if (newValue === oldValue) {
       setEditingGateRowNumber(null);
       setConfirmingGateRowNumber(null);
@@ -227,7 +231,28 @@ export default function App() {
     setError(null);
 
     try {
-      if (isJobTransferTab) {
+      if (isRepairTab) {
+        const sequenceNo = (row.values['A'] ?? String(row.rowNumber)).trim();
+        const repairRequestNo = (row.values['G'] ?? '').trim();
+
+        await updateRepairAdditionalDetails({
+          rowNumber: row.rowNumber,
+          sequenceNo,
+          repairRequestNo,
+          additionalDetails: newValue,
+        });
+
+        // Update local row immediately
+        row.values['AK'] = newValue;
+
+        setEditingGateRowNumber(null);
+        setConfirmingGateRowNumber(null);
+        setSaveSuccessMsg(
+          newValue
+            ? `บันทึกรายละเอียดเพิ่มเติม "${newValue}" ของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+            : `ล้างรายละเอียดเพิ่มเติมของรายการที่ #${row.rowNumber.toLocaleString('th-TH')} เรียบร้อยแล้ว`
+        );
+      } else if (isJobTransferTab) {
         const date = (row.values['A'] ?? '').trim();
         const driverName = (row.values['C'] ?? '').trim();
         const vehicleNumber = (row.values['D'] ?? '').trim();
@@ -1177,6 +1202,11 @@ export default function App() {
                         </th>
                       );
                     })}
+                    {activeTab.gid === '944294225' && (
+                      <th className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap">
+                        จัดการ
+                      </th>
+                    )}
                   </tr>
                 </thead>
 
@@ -1192,12 +1222,17 @@ export default function App() {
                           <div className="h-4 w-28 rounded bg-slate-200" />
                         </td>
                       ))}
+                      {activeTab.gid === '944294225' && (
+                        <td className="px-4 py-3 text-center">
+                          <div className="mx-auto h-4 w-20 rounded bg-slate-200" />
+                        </td>
+                      )}
                     </tr>
                   ))
                 ) : paginatedRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={(sheetData?.columns.length ?? 5) + 1}
+                      colSpan={(sheetData?.columns.length ?? 5) + 1 + (activeTab.gid === '944294225' ? 1 : 0)}
                       className="px-6 py-14 text-center"
                     >
                       <div className="mx-auto max-w-md">
@@ -1252,37 +1287,7 @@ export default function App() {
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >
                       <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
-                          {activeTab.gid === '944294225' && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedRow(row);
-                                }}
-                                title="ดูรายละเอียดทั้งหมด"
-                                className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2 py-0.5 text-[10px] font-semibold transition-colors"
-                              >
-                                <Eye className="h-3 w-3" />
-                                <span>รายละเอียด</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setAttachingPhotoRow(row);
-                                }}
-                                title="แนบรูปเพิ่ม / แก้ไขรูปถ่าย"
-                                className="inline-flex items-center gap-1 rounded bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 transition-colors"
-                              >
-                                <Camera className="h-3 w-3 text-slate-600" />
-                                <span className="hidden sm:inline">แนบรูป</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
                       </td>
                       {sheetData?.columns.map((col) => {
                         const val = row.values[col.id] ?? '';
@@ -1299,10 +1304,14 @@ export default function App() {
                           activeTab.gid === '378250263' && col.id === 'A';
                         const isEditableJobNoteCell =
                           activeTab.gid === '606634465' && col.id === 'N';
+                        const isEditableRepairDetailCell =
+                          activeTab.gid === '944294225' &&
+                          (col.id === 'AK' || col.label.includes('รายละเอียดเพิ่มเติม'));
                         const isEditableInlineCell =
                           isEditableGateCell ||
                           isEditableVehicleRegCell ||
-                          isEditableJobNoteCell;
+                          isEditableJobNoteCell ||
+                          isEditableRepairDetailCell;
                         const isEditingThisRow =
                           isEditableInlineCell &&
                           editingGateRowNumber === row.rowNumber;
@@ -1373,13 +1382,18 @@ export default function App() {
                                     value={editingGateValue}
                                     onChange={(e) => setEditingGateValue(e.target.value)}
                                     placeholder={
-                                      isEditableJobNoteCell ? 'พิมพ์หมายเหตุ...' : undefined
+                                      isEditableJobNoteCell
+                                        ? 'พิมพ์หมายเหตุ...'
+                                        : isEditableRepairDetailCell
+                                          ? 'พิมพ์รายละเอียดเพิ่มเติม...'
+                                          : undefined
                                     }
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
                                         e.preventDefault();
                                         if (
                                           (isEditableJobNoteCell ||
+                                            isEditableRepairDetailCell ||
                                             editingGateValue.trim()) &&
                                           editingGateValue.trim() !== val.trim()
                                         ) {
@@ -1399,6 +1413,7 @@ export default function App() {
                                     onClick={() => {
                                       if (
                                         (isEditableJobNoteCell ||
+                                          isEditableRepairDetailCell ||
                                           editingGateValue.trim()) &&
                                         editingGateValue.trim() !== val.trim()
                                       ) {
@@ -1445,6 +1460,33 @@ export default function App() {
                           </td>
                         );
                       })}
+                      {activeTab.gid === '944294225' && (
+                        <td
+                          className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRow(row)}
+                              title="ดูรายละเอียดทั้งหมด"
+                              className="inline-flex items-center gap-1 rounded bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>รายละเอียด</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAttachingPhotoRow(row)}
+                              title="แนบรูปเพิ่ม / แก้ไขรูปถ่าย"
+                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 px-2 py-1 text-xs font-semibold transition-colors shadow-2xs"
+                            >
+                              <Camera className="h-3.5 w-3.5 text-slate-600" />
+                              <span>แนบรูป</span>
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
