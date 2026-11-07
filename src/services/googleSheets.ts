@@ -1081,6 +1081,7 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
     M: 'รูปพนักงาน',
     N: 'เวลาเลิกงาน',
     O: 'ทีม',
+    P: 'รหัสพนักงาน',
   },
   '1295975917': {
     A: 'หมายเลขหางพ่วง',
@@ -4101,6 +4102,93 @@ export async function appendFuelRecord(
   return { id, rowNumber: fallbackRowNumber };
 }
 
+export function normalizeDriverNameKey(rawName: string): string {
+  return String(rawName || '')
+    .replace(/^(นาย|นางสาว|นาง|ด\.ช\.|ด\.ญ\.)\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
+let cachedAccountEmployeeMap: Map<string, string> | null = null;
+let cachedAccountEmployeeMapAt = 0;
 
+function parseSimpleCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
 
+export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
+  if (
+    cachedAccountEmployeeMap &&
+    cachedAccountEmployeeMap.size > 0 &&
+    Date.now() - cachedAccountEmployeeMapAt < 60_000
+  ) {
+    return cachedAccountEmployeeMap;
+  }
+
+  const map = new Map<string, string>();
+
+  const [accountCsvRes, transferEmpRes] = await Promise.allSettled([
+    fetch(
+      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
+    ).then((r) => (r.ok ? r.text() : '')),
+    queryGviz(
+      '606634465',
+      'select B, C where B is not null and C is not null group by B, C limit 500'
+    ),
+  ]);
+
+  if (accountCsvRes.status === 'fulfilled' && accountCsvRes.value) {
+    const lines = accountCsvRes.value.split(/\r?\n/).filter((l) => l.trim());
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseSimpleCsvLine(lines[i]);
+      const username = (cols[1] || '').trim();
+      const fullName = (cols[3] || '').trim();
+      const empCode = (cols[4] || username).trim();
+      const key = normalizeDriverNameKey(fullName);
+      if (key && empCode) {
+        map.set(key, empCode);
+      }
+    }
+  }
+
+  if (
+    transferEmpRes.status === 'fulfilled' &&
+    transferEmpRes.value?.table?.rows
+  ) {
+    for (const r of transferEmpRes.value.table.rows) {
+      const empCode = String(r.c?.[0]?.v ?? '').trim();
+      const drvName = String(r.c?.[1]?.v ?? '').trim();
+      const key = normalizeDriverNameKey(drvName);
+      if (key && empCode && !map.has(key)) {
+        map.set(key, empCode);
+      }
+    }
+  }
+
+  if (map.size > 0) {
+    cachedAccountEmployeeMap = map;
+    cachedAccountEmployeeMapAt = Date.now();
+  }
+
+  return map;
+}

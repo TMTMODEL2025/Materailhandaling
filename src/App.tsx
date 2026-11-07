@@ -123,11 +123,21 @@ function calculatePendingApprovalCount(rows: SheetRow[]): number {
   }).length;
 }
 
+const REPAIR_STATUS_GROUP_ORDER: string[] = [
+  'รอตรวจสอบ',
+  'รออนุมัติ',
+  'ขอข้อมูลเพิ่มเติม',
+  'ตอบกลับข้อมูลเพิ่มเติมแล้ว',
+  'อนุมัติ',
+  'ไม่อนุมัติ',
+];
+
 function getRowApprovalStatus(row: SheetRow): string {
   const appStatus = (row.values['AI'] ?? '').trim();
   const repairStatus = (row.values['P'] ?? '').trim();
   const inspector = (row.values['AB'] ?? '').trim();
   const replyText = (row.values['AM'] ?? '').trim();
+
   if (
     appStatus === 'รอตรวจสอบ' ||
     repairStatus === 'รอตรวจสอบ' ||
@@ -135,10 +145,27 @@ function getRowApprovalStatus(row: SheetRow): string {
   ) {
     return 'รอตรวจสอบ';
   }
+  if (appStatus.includes('ไม่อนุมัติ')) return 'ไม่อนุมัติ';
+  if (
+    appStatus.includes('อนุมัติ') &&
+    !appStatus.includes('ไม่อนุมัติ') &&
+    !appStatus.includes('รอ') &&
+    !appStatus.includes('ตอบกลับ')
+  ) {
+    return 'อนุมัติ';
+  }
   const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
-  if (isReplied) return '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว';
-  if (!appStatus || appStatus === '2.⚠️รอพิจารณา' || appStatus === 'รอพิจารณา') return '2.⚠️รออนุมัติ';
-  return appStatus;
+  if (isReplied) return 'ตอบกลับข้อมูลเพิ่มเติมแล้ว';
+  if (appStatus.includes('ขอข้อมูล')) return 'ขอข้อมูลเพิ่มเติม';
+  if (
+    !appStatus ||
+    appStatus.includes('รออนุมัติ') ||
+    appStatus.includes('รอพิจารณา') ||
+    appStatus.includes('รอ')
+  ) {
+    return 'รออนุมัติ';
+  }
+  return appStatus.replace(/^\d+\.\s*/, '').trim();
 }
 
 function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string {
@@ -631,7 +658,7 @@ export default function App() {
     ) {
       return null;
     }
-    const groups = new Map<string, SheetRow[]>();
+    const tempGroups = new Map<string, SheetRow[]>();
     sortedRows.forEach((row) => {
       const status =
         activeTab.gid === '944294225'
@@ -639,12 +666,29 @@ export default function App() {
           : activeTab.gid === '378250263'
           ? getRowVehicleShift(row, sheetData?.columns)
           : getRowJobTransferStatus(row, sheetData?.columns);
-      if (!groups.has(status)) {
-        groups.set(status, []);
+      if (!tempGroups.has(status)) {
+        tempGroups.set(status, []);
       }
-      groups.get(status)!.push(row);
+      tempGroups.get(status)!.push(row);
     });
-    return groups;
+
+    if (activeTab.gid === '944294225') {
+      const orderedGroups = new Map<string, SheetRow[]>();
+      REPAIR_STATUS_GROUP_ORDER.forEach((statusKey) => {
+        const rowsForStatus = tempGroups.get(statusKey);
+        if (rowsForStatus && rowsForStatus.length > 0) {
+          orderedGroups.set(statusKey, rowsForStatus);
+        }
+      });
+      tempGroups.forEach((rowsForStatus, statusKey) => {
+        if (!orderedGroups.has(statusKey)) {
+          orderedGroups.set(statusKey, rowsForStatus);
+        }
+      });
+      return orderedGroups;
+    }
+
+    return tempGroups;
   }, [sortedRows, activeTab.gid, sheetData?.columns]);
 
   useEffect(() => {

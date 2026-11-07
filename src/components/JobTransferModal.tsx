@@ -12,6 +12,8 @@ import {
   fetchSheetTabData,
   appendJobTransferRecord,
   completeJobTransferRecord,
+  fetchAccountEmployeeMap,
+  normalizeDriverNameKey,
 } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
 
@@ -175,6 +177,35 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fallbackRows, setFallbackRows] = useState<SheetRow[]>([]);
+  const [vehicleDbRows, setVehicleDbRows] = useState<SheetRow[]>([]);
+  const [accountEmpMap, setAccountEmpMap] = useState<Map<string, string>>(
+    new Map()
+  );
+
+  // Load ฐานข้อมูลรถ (gid: 378250263) + Account employee code mapping whenever modal opens
+  useEffect(() => {
+    if (!isOpen && !inlineMode) return;
+    const vehicleTab = SHEET_TABS.find((t) => t.gid === '378250263');
+    if (!vehicleTab) return;
+    let cancelled = false;
+    void Promise.all([
+      fetchSheetTabData(vehicleTab, { limit: 250 }),
+      fetchAccountEmployeeMap(),
+    ])
+      .then(([vehRes, empMap]) => {
+        if (cancelled) return;
+        if (vehRes.rows.length > 0) {
+          setVehicleDbRows(vehRes.rows);
+        }
+        if (empMap.size > 0) {
+          setAccountEmpMap(new Map(empMap));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, inlineMode]);
 
   useEffect(() => {
     if (
@@ -206,7 +237,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
   const sourceRows = existingRows.length > 0 ? existingRows : fallbackRows;
 
-  // Extract unique reference options directly from real spreadsheet rows
+  // Build employee/driver/vehicle options from ฐานข้อมูลรถ (gid: 378250263)
+  // while keeping products, origins, destinations, and trailers from บันทึกการย้ายงาน
   const referenceOptions = useMemo(() => {
     const employeeMap = new Map<
       string,
@@ -222,6 +254,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const origins = new Set<string>();
     const destinations = new Set<string>();
 
+    const historyNameToEmp = new Map<string, string>();
+    const historyNameToTrailer = new Map<string, string>();
+
     sourceRows.forEach((row) => {
       const emp = row.values['B']?.trim() ?? '';
       const drv = row.values['C']?.trim() ?? '';
@@ -231,25 +266,77 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const org = row.values['H']?.trim() ?? '';
       const dst = row.values['J']?.trim() ?? '';
 
-      if (emp) {
-        const existing = employeeMap.get(emp);
-        if (!existing) {
-          employeeMap.set(emp, { name: drv, vehicle: veh, trailer: trl });
-        } else {
-          if (!existing.name && drv) existing.name = drv;
-          if (!existing.vehicle && veh) existing.vehicle = veh;
-          if (!existing.trailer && trl) existing.trailer = trl;
-        }
+      const normDrv = normalizeDriverNameKey(drv);
+      if (normDrv && emp && !historyNameToEmp.has(normDrv)) {
+        historyNameToEmp.set(normDrv, emp);
       }
-      if (drv && !driverMap.has(drv)) {
-        driverMap.set(drv, { empId: emp, vehicle: veh, trailer: trl });
+      if (normDrv && trl && !historyNameToTrailer.has(normDrv)) {
+        historyNameToTrailer.set(normDrv, trl);
       }
-      if (veh) vehicles.add(veh);
+
       if (trl) trailers.add(trl);
       if (prd) products.add(prd);
       if (org) origins.add(org);
       if (dst) destinations.add(dst);
+
+      // Fallback only while ฐานข้อมูลรถ is still loading
+      if (vehicleDbRows.length === 0) {
+        if (emp) {
+          const existing = employeeMap.get(emp);
+          if (!existing) {
+            employeeMap.set(emp, { name: drv, vehicle: veh, trailer: trl });
+          } else {
+            if (!existing.name && drv) existing.name = drv;
+            if (!existing.vehicle && veh) existing.vehicle = veh;
+            if (!existing.trailer && trl) existing.trailer = trl;
+          }
+        }
+        if (drv && !driverMap.has(drv)) {
+          driverMap.set(drv, { empId: emp, vehicle: veh, trailer: trl });
+        }
+        if (veh) vehicles.add(veh);
+      }
     });
+
+    // Primary source of truth: ฐานข้อมูลรถ (gid: 378250263)
+    if (vehicleDbRows.length > 0) {
+      vehicleDbRows.forEach((row) => {
+        const veh = row.values['A']?.trim() ?? '';
+        const drv = row.values['I']?.trim() ?? '';
+        const empColP = row.values['P']?.trim() ?? '';
+
+        if (veh && veh !== '-') {
+          vehicles.add(veh);
+        }
+
+        if ((!drv || drv === '-') && (!empColP || empColP === '-')) {
+          return;
+        }
+
+        const normDrv = normalizeDriverNameKey(drv);
+        const resolvedEmpId =
+          (empColP && empColP !== '-' ? empColP : '') ||
+          accountEmpMap.get(normDrv) ||
+          historyNameToEmp.get(normDrv) ||
+          drv;
+        const resolvedTrailer = historyNameToTrailer.get(normDrv) || '';
+
+        if (resolvedEmpId) {
+          employeeMap.set(resolvedEmpId, {
+            name: drv,
+            vehicle: veh,
+            trailer: resolvedTrailer,
+          });
+        }
+        if (drv) {
+          driverMap.set(drv, {
+            empId: resolvedEmpId,
+            vehicle: veh,
+            trailer: resolvedTrailer,
+          });
+        }
+      });
+    }
 
     return {
       employeeMap,
@@ -262,7 +349,18 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       origins: Array.from(origins),
       destinations: Array.from(destinations),
     };
-  }, [sourceRows]);
+  }, [sourceRows, vehicleDbRows, accountEmpMap]);
+
+  // Keep driverName and vehicleNumber synced with ฐานข้อมูลรถ if employeeId is selected
+  useEffect(() => {
+    const trimmed = employeeId.trim();
+    if (!trimmed) return;
+    const match = referenceOptions.employeeMap.get(trimmed);
+    if (match) {
+      if (match.name) setDriverName(match.name);
+      if (match.vehicle) setVehicleNumber(match.vehicle);
+    }
+  }, [employeeId, referenceOptions.employeeMap]);
 
   // Live clock timer when a job is in transit
   useEffect(() => {
