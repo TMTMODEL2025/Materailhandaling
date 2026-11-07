@@ -1986,7 +1986,8 @@ function formatGvizCellValue(cell: GvizCell | null | undefined): string {
 async function queryGviz(
   gid: string,
   tq: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs = 12000
 ): Promise<GvizResponse> {
   const params = new URLSearchParams({
     tqx: 'out:json',
@@ -1995,24 +1996,56 @@ async function queryGviz(
     _t: String(Date.now()),
   });
   const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
-  const response = await fetch(url, { signal });
-  if (!response.ok) {
-    throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${response.status})`);
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  const abortListener = () => {
+    timeoutController.abort();
+  };
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timeoutId);
+      throw new Error('การร้องขอถูกยกเลิก');
+    }
+    signal.addEventListener('abort', abortListener, { once: true });
   }
-  const text = await response.text();
-  return parseGvizJson(text);
+
+  try {
+    const response = await fetch(url, { signal: timeoutController.signal });
+    if (!response.ok) {
+      throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${response.status})`);
+    }
+    const text = await response.text();
+    return parseGvizJson(text);
+  } finally {
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
 }
+
+const rowCountCache = new Map<string, { count: number; timestamp: number }>();
 
 export async function fetchSheetRowCount(
   gid: string,
   signal?: AbortSignal
 ): Promise<number> {
+  const cached = rowCountCache.get(gid);
+  if (cached && Date.now() - cached.timestamp < 120_000) {
+    return cached.count;
+  }
   try {
-    const res = await queryGviz(gid, 'select count(A)', signal);
+    const res = await queryGviz(gid, 'select count(A)', signal, 8000);
     const val = res.table?.rows?.[0]?.c?.[0]?.v;
-    return typeof val === 'number' ? val : 0;
+    const count = typeof val === 'number' ? val : 0;
+    if (count > 0) {
+      rowCountCache.set(gid, { count, timestamp: Date.now() });
+    }
+    return count;
   } catch {
-    return 0;
+    return cached?.count ?? 0;
   }
 }
 
@@ -2036,7 +2069,7 @@ export async function fetchSheetTabData(
   let rowOffset = 0;
 
   if (search.length > 0 && totalRowsInSheet > limit) {
-    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal);
+    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 8000);
     const stringCols = (metaRes.table?.cols ?? []).filter(
       (c) => c.type === 'string' && (c.label || FALLBACK_COLUMN_LABELS[tab.gid]?.[c.id])
     );
@@ -2047,12 +2080,13 @@ export async function fetchSheetTabData(
         .map((c) => `lower(${c.id}) contains '${escaped}'`)
         .join(' or ');
       const searchTq = `select * where ${whereClause} limit ${limit}`;
-      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal);
+      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 15000);
     } else {
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
-        options?.signal
+        options?.signal,
+        15000
       );
     }
   } else if (tab.reverseOrder && totalRowsInSheet > limit) {
@@ -2060,13 +2094,15 @@ export async function fetchSheetTabData(
     dataResponse = await queryGviz(
       tab.gid,
       `select * offset ${rowOffset}`,
-      options?.signal
+      options?.signal,
+      15000
     );
   } else {
     dataResponse = await queryGviz(
       tab.gid,
       `select * limit ${limit}`,
-      options?.signal
+      options?.signal,
+      15000
     );
   }
 

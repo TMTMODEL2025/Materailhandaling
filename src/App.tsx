@@ -26,6 +26,9 @@ import {
   Eye,
   Home,
   Fuel,
+  Scale,
+  Truck,
+  Repeat,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -289,7 +292,7 @@ export default function App() {
             : 'เกิดข้อผิดพลาดในการดึงข้อมูลจาก Google Sheets'
         );
       } finally {
-        if (!controller.signal.aborted) {
+        if (abortControllerRef.current === controller) {
           setIsLoading(false);
           setIsRefreshing(false);
         }
@@ -777,6 +780,104 @@ export default function App() {
     };
   }, [sheetData, filteredRows, quickFilterColumn, quickFilterOptions]);
 
+  // Real-time KPI summary cards specifically for הבันทึกการย้ายงาน (gid: 606634465)
+  const jobTransferKpiMetrics = useMemo(() => {
+    const weightColId =
+      sheetData?.columns.find((c) => c.label.trim() === 'น้ำหนัก')?.id ?? 'G';
+    const vehColId =
+      sheetData?.columns.find((c) => c.label.trim() === 'เบอร์รถ')?.id ?? 'D';
+    const driverColId =
+      sheetData?.columns.find((c) => c.label.trim() === 'ชื่อพนักงานขับรถ')?.id ??
+      'C';
+    const statusColId =
+      sheetData?.columns.find((c) => c.label.trim() === 'สถานะ')?.id ?? 'M';
+
+    let totalWeightKg = 0;
+    const uniqueVehicles = new Set<string>();
+    const uniqueDrivers = new Set<string>();
+    let totalRounds = 0;
+    let completedCount = 0;
+    let inTransitCount = 0;
+
+    filteredRows.forEach((r) => {
+      // 1. น้ำหนัก (กก. -> ตัน)
+      const rawWeight = r.rawValues[weightColId] ?? r.rawValues['G'];
+      if (typeof rawWeight === 'number' && !Number.isNaN(rawWeight)) {
+        totalWeightKg += rawWeight;
+      } else {
+        const strWeight = (r.values[weightColId] ?? r.values['G'] ?? '').replace(
+          /,/g,
+          ''
+        );
+        const parsedWeight = parseFloat(strWeight);
+        if (!Number.isNaN(parsedWeight)) {
+          totalWeightKg += parsedWeight;
+        }
+      }
+
+      // 2. จำนวนรถที่ย้าย (คัน) และ พนักงานขับรถ
+      const rawVeh = (r.values[vehColId] ?? r.values['D'] ?? '').trim();
+      if (rawVeh && rawVeh !== '-') {
+        uniqueVehicles.add(rawVeh.toUpperCase().replace(/\s+/g, ''));
+      }
+      const rawDrv = (r.values[driverColId] ?? r.values['C'] ?? '').trim();
+      if (rawDrv && rawDrv !== '-') {
+        uniqueDrivers.add(rawDrv.replace(/\s+/g, ' '));
+      }
+
+      // 3. รอบการย้ายรวม (เที่ยว)
+      const rawRound = r.rawValues['V'];
+      if (typeof rawRound === 'number' && !Number.isNaN(rawRound) && rawRound > 0) {
+        totalRounds += rawRound;
+      } else {
+        const strRound = (r.values['V'] ?? '').replace(/,/g, '').trim();
+        const parsedRound = parseFloat(strRound);
+        if (!Number.isNaN(parsedRound) && parsedRound > 0) {
+          totalRounds += parsedRound;
+        } else {
+          totalRounds += 1;
+        }
+      }
+
+      // 4. สถานะการส่งสินค้า
+      const statusText = (
+        r.values[statusColId] ??
+        r.values['M'] ??
+        ''
+      ).trim();
+      if (
+        statusText.includes('เรียบร้อย') ||
+        statusText.includes('สำเร็จ')
+      ) {
+        completedCount += 1;
+      } else if (
+        statusText.includes('ระหว่าง') ||
+        statusText.includes('ระว่าง') ||
+        statusText.includes('กำลังส่ง')
+      ) {
+        inTransitCount += 1;
+      }
+    });
+
+    const totalWeightTons = totalWeightKg / 1000;
+    const completionRate =
+      filteredRows.length > 0
+        ? Math.round((completedCount / filteredRows.length) * 100)
+        : 0;
+
+    return {
+      totalWeightTons,
+      totalWeightKg,
+      vehicleCount: uniqueVehicles.size,
+      driverCount: uniqueDrivers.size,
+      totalRounds,
+      totalRecords: filteredRows.length,
+      completedCount,
+      inTransitCount,
+      completionRate,
+    };
+  }, [sheetData, filteredRows]);
+
   const handleSort = (colId: string) => {
     setSortConfig((prev) => {
       if (!prev || prev.colId !== colId) {
@@ -1154,268 +1255,199 @@ export default function App() {
 
           {/* Dashboard KPI, Search & Table (Hidden on mobile when on บันทึกการย้ายงาน so mobile shows ONLY the form) */}
           <div className={activeTab.gid === '606634465' ? 'hidden md:block' : 'block'}>
-          {/* Compact KPI Summary Strip (2x2 on mobile, 4 cols on desktop, no verbose subtext) */}
-          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
-              <div className="truncate text-[11px] font-medium text-slate-500">
-                ทั้งหมดในชีต
-              </div>
-              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                {isLoading && !sheetData
-                  ? '...'
-                  : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
-              <div className="truncate text-[11px] font-medium text-slate-500">
-                แสดงผล
-              </div>
-              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                {isLoading && !sheetData
-                  ? '...'
-                  : sortedRows.length.toLocaleString('th-TH')}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
-              <div className="truncate text-[11px] font-medium text-slate-500">
-                {contextualMetric.label}
-              </div>
-              <div className="mt-0.5 truncate font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                {isLoading && !sheetData ? '...' : contextualMetric.value}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:p-3">
-              <div className="truncate text-[11px] font-medium text-slate-500">
-                อัปเดตล่าสุด
-              </div>
-              <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                {formattedFetchTime}
-              </div>
-            </div>
-          </div>
-
-          {/* Compact Search, Filter & Utility Bar */}
-          <div className="mt-2.5 rounded-lg border border-slate-200 bg-white p-2.5 sm:mt-3 sm:p-3">
-            <form
-              onSubmit={handleTriggerDeepSearch}
-              className="flex flex-col gap-2 lg:flex-row lg:items-center"
-            >
-              {/* Main Search Input */}
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`ค้นหาใน ${activeTab.name}...`}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-8 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={handleClearSearch}
-                    aria-label="ล้างคำค้นหา"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Controls Row */}
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                {/* Date Range Filter (Available for tables with dates, especially บันทึกการย้ายงาน) */}
-                {activeTab.gid !== '944294225' && (
-                  <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
-                    <Calendar className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                    <span className="hidden sm:inline text-[11px] font-medium text-slate-500">วันที่:</span>
-                    <input
-                      type="date"
-                      aria-label="วันที่เริ่มต้น"
-                      title="วันที่เริ่มต้น"
-                      value={startDateFilter}
-                      onChange={(e) => setStartDateFilter(e.target.value)}
-                      className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
-                    />
-                    <span className="text-slate-400">-</span>
-                    <input
-                      type="date"
-                      aria-label="วันที่สิ้นสุด"
-                      title="วันที่สิ้นสุด"
-                      value={endDateFilter}
-                      onChange={(e) => setEndDateFilter(e.target.value)}
-                      className="bg-transparent font-mono text-[11px] text-slate-800 focus:outline-none"
-                    />
-                    {(startDateFilter || endDateFilter) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStartDateFilter('');
-                          setEndDateFilter('');
-                        }}
-                        title="ล้างช่วงวันที่"
-                        className="rounded p-0.5 text-slate-400 hover:text-slate-700"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
+          {/* Glassmorphism 4-Card KPI Summary Strip */}
+          {activeTab.gid === '606634465' ? (
+            <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: น้ำหนักที่ย้าย (ตัน) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(14,116,144,0.10)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-sky-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        1. น้ำหนักที่ย้าย (ตัน)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : jobTransferKpiMetrics.totalWeightTons.toLocaleString(
+                                'th-TH',
+                                {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                }
+                              )}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-sky-700">
+                          ตัน
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200/70 bg-sky-500/10 text-sky-700 backdrop-blur-md">
+                      <Scale className="h-4 w-4" />
+                    </div>
                   </div>
-                )}
-
-                {activeTab.gid !== '944294225' && (
-                  <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                    <SlidersHorizontal className="h-3 w-3 text-slate-500 shrink-0" />
-                    <select
-                      id="col-filter"
-                      aria-label="ค้นหาในคอลัมน์"
-                      value={selectedColumnId}
-                      onChange={(e) => setSelectedColumnId(e.target.value)}
-                      className="bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
-                    >
-                      <option value="ALL">ทุกคอลัมน์</option>
-                      {sheetData?.columns.map((col) => (
-                        <option key={col.id} value={col.id}>
-                          {col.label}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                    รวม{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {jobTransferKpiMetrics.totalWeightKg.toLocaleString('th-TH', {
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>{' '}
+                    กก.
                   </div>
-                )}
+                </div>
 
-                {activeTab.gid !== '944294225' && (
-                  <select
-                    id="limit-select"
-                    aria-label="จำนวนดึงข้อมูล"
-                    value={rowLimit}
-                    onChange={(e) => setRowLimit(Number(e.target.value))}
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-xs font-medium text-slate-800 tabular-nums focus:border-slate-900 focus:outline-none"
-                  >
-                    <option value={100}>100 แถว</option>
-                    <option value={250}>250 แถว</option>
-                    <option value={500}>500 แถว</option>
-                    <option value={1000}>1,000 แถว</option>
-                  </select>
-                )}
+                {/* Card 2: จำนวนรถที่ย้าย (คัน) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(79,70,229,0.10)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        2. จำนวนรถที่ย้าย (คัน)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : jobTransferKpiMetrics.vehicleCount.toLocaleString(
+                                'th-TH'
+                              )}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-indigo-700">
+                          คัน
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-md">
+                      <Truck className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                    พนักงานขับรถปฏิบัติงาน{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {jobTransferKpiMetrics.driverCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    คน
+                  </div>
+                </div>
 
-                {activeTab.gid !== '944294225' && (
-                  <select
-                    id="refresh-select"
-                    aria-label="อัปเดตอัตโนมัติ"
-                    value={refreshIntervalSec}
-                    onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
-                  >
-                    <option value={15}>ซิงค์ 15วิ</option>
-                    <option value={30}>ซิงค์ 30วิ</option>
-                    <option value={60}>ซิงค์ 60วิ</option>
-                    <option value={0}>ปิดซิงค์</option>
-                  </select>
-                )}
+                {/* Card 3: รอบการย้ายรวม (เที่ยว) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(217,119,6,0.10)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        3. รอบการย้ายรวม (เที่ยว)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : jobTransferKpiMetrics.totalRounds.toLocaleString(
+                                'th-TH'
+                              )}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-amber-700">
+                          เที่ยว
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-md">
+                      <Repeat className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                    จากรายการบันทึก{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {jobTransferKpiMetrics.totalRecords.toLocaleString('th-TH')}
+                    </span>{' '}
+                    รายการ
+                  </div>
+                </div>
 
-                {activeTab.gid !== '944294225' && sheetData && sheetData.totalRowsInSheet > rowLimit && (
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
-                  >
-                    ค้นหาทั้งชีต
-                  </button>
-                )}
-
-                {(searchQuery !== '' ||
-                  selectedColumnId !== 'ALL' ||
-                  quickFilterValue !== 'ALL' ||
-                  startDateFilter !== '' ||
-                  endDateFilter !== '' ||
-                  deepSearchTerm !== '') && (
-                  <button
-                    type="button"
-                    onClick={handleClearSearch}
-                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-                  >
-                    ล้างกรอง
-                  </button>
-                )}
-
-                {activeTab.gid !== '944294225' && (
-                  <button
-                    type="button"
-                    onClick={handleExportCsv}
-                    disabled={!sheetData || sortedRows.length === 0}
-                    title="ส่งออก CSV"
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap shrink-0"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">CSV</span>
-                  </button>
-                )}
-
-                {activeTab.gid !== '944294225' && (
-                  <a
-                    href={`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=${activeTab.gid}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="เปิดตารางต้นฉบับ"
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-                  >
-                    <span className="hidden sm:inline">ชีตต้นฉบับ</span>
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                )}
+                {/* Card 4: ส่งสินค้าสำเร็จ (รายการ) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(5,150,105,0.10)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        4. ส่งสินค้าสำเร็จ (รายการ)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : jobTransferKpiMetrics.completedCount.toLocaleString(
+                                'th-TH'
+                              )}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-emerald-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-md">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                    กำลังส่ง{' '}
+                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                      {jobTransferKpiMetrics.inTransitCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    รายการ · สำเร็จ{' '}
+                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                      {jobTransferKpiMetrics.completionRate}%
+                    </span>
+                  </div>
+                </div>
               </div>
-            </form>
-
-            {/* Compact Horizontal Scrollable Quick Filter Bar */}
-            {quickFilterColumn && quickFilterOptions.length > 0 && (
-              <div className="mt-2 flex items-center gap-1 overflow-x-auto border-t border-slate-100 pt-2 no-scrollbar">
-                <button
-                  type="button"
-                  onClick={() => setQuickFilterValue('ALL')}
-                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    quickFilterValue === 'ALL'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
-                  }`}
-                >
-                  ทั้งหมด
-                </button>
-                {quickFilterOptions.map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() =>
-                      setQuickFilterValue((prev) => (prev === opt ? 'ALL' : opt))
-                    }
-                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
-                      quickFilterValue === opt
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
-                    }`}
-                  >
-                    {opt}
-                  </button>
-                ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
+                <div className="truncate text-[11px] font-medium text-slate-500">
+                  ทั้งหมดในชีต
+                </div>
+                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                  {isLoading && !sheetData
+                    ? '...'
+                    : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
+                </div>
               </div>
-            )}
 
-            {deepSearchTerm && (
-              <div className="mt-2 flex items-center justify-between rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700">
-                <span className="truncate">
-                  ค้นหาทั้งตาราง: <strong className="font-semibold text-slate-900">"{deepSearchTerm}"</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleClearSearch}
-                  className="ml-2 font-medium text-slate-900 underline hover:no-underline whitespace-nowrap shrink-0"
-                >
-                  ดูข้อมูลปกติ
-                </button>
+              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
+                <div className="truncate text-[11px] font-medium text-slate-500">
+                  แสดงผล
+                </div>
+                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                  {isLoading && !sheetData
+                    ? '...'
+                    : sortedRows.length.toLocaleString('th-TH')}
+                </div>
               </div>
-            )}
-          </div>
-          {false && saveSuccessMsg && <div />}
+
+              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
+                <div className="truncate text-[11px] font-medium text-slate-500">
+                  {contextualMetric.label}
+                </div>
+                <div className="mt-0.5 truncate font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                  {isLoading && !sheetData ? '...' : contextualMetric.value}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
+                <div className="truncate text-[11px] font-medium text-slate-500">
+                  อัปเดตล่าสุด
+                </div>
+                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
+                  {formattedFetchTime}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Error State */}
           {error && (
