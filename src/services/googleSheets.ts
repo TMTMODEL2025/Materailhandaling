@@ -40,7 +40,7 @@ onAuthStateChanged(auth, (user: User | null) => {
 });
 
 const APPS_SCRIPT_URL_STORAGE_KEY = 'gsheets_apps_script_url_v1';
-const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v2';
+const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v3';
 
 // Detect if running in a static deployment (e.g. Vercel, GitHub Pages) without Express backend API
 export let isBackendApiAvailable: boolean | null = null;
@@ -1488,9 +1488,17 @@ function createEmptyMutationsStore(): MutationsStore {
   };
 }
 
+function isRecentOptimisticMutation(updatedAt?: string, maxAgeMs = 15000): boolean {
+  if (!updatedAt) return false;
+  const ts = new Date(updatedAt).getTime();
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts <= maxAgeMs;
+}
+
 function readLocalMutationsStore(): MutationsStore {
   try {
     localStorage.removeItem('gsheets_local_mutations_v1');
+    localStorage.removeItem('gsheets_local_mutations_v2');
     const raw = localStorage.getItem(LOCAL_MUTATIONS_STORAGE_KEY);
     if (!raw) return createEmptyMutationsStore();
     const parsed = JSON.parse(raw) as Partial<MutationsStore>;
@@ -1498,12 +1506,34 @@ function readLocalMutationsStore(): MutationsStore {
     const rawRepairRequests = Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [];
     const rawRepairApprovals = Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [];
     const rawRepairInspections = Array.isArray(parsed.repairInspections) ? parsed.repairInspections : [];
+    const rawRepairPhotoEdits = Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [];
+    const rawRepairDetailEdits = Array.isArray(parsed.repairDetailEdits) ? parsed.repairDetailEdits : [];
+    const rawRepairReplyEdits = Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [];
+    const rawRepairFinancialEdits = Array.isArray(parsed.repairFinancialEdits) ? parsed.repairFinancialEdits : [];
 
     // Only retain pending unsynced items in local store. Once synced to Google Sheets, Google Sheets is the source of truth.
     const jobTransfers = rawJobTransfers.filter((jt) => !jt.syncedToSheet);
-    const repairRequests = rawRepairRequests.filter((rr) => !rr.syncedToSheet);
-    const repairApprovals = rawRepairApprovals.filter((ra) => !ra.syncedToSheet);
-    const repairInspections = rawRepairInspections.filter((ri) => !ri.syncedToSheet);
+    const repairRequests = rawRepairRequests.filter(
+      (rr) => !rr.syncedToSheet && isRecentOptimisticMutation(rr.createdAt)
+    );
+    const repairApprovals = rawRepairApprovals.filter(
+      (ra) => !ra.syncedToSheet && isRecentOptimisticMutation(ra.updatedAt)
+    );
+    const repairInspections = rawRepairInspections.filter(
+      (ri) => !ri.syncedToSheet && isRecentOptimisticMutation(ri.updatedAt)
+    );
+    const repairPhotoEdits = rawRepairPhotoEdits.filter((pe) =>
+      isRecentOptimisticMutation(pe.updatedAt)
+    );
+    const repairDetailEdits = rawRepairDetailEdits.filter((de) =>
+      isRecentOptimisticMutation(de.updatedAt)
+    );
+    const repairReplyEdits = rawRepairReplyEdits.filter((re) =>
+      isRecentOptimisticMutation(re.updatedAt)
+    );
+    const repairFinancialEdits = rawRepairFinancialEdits.filter((fe) =>
+      isRecentOptimisticMutation(fe.updatedAt)
+    );
 
     return {
       jobTransfers,
@@ -1525,18 +1555,10 @@ function readLocalMutationsStore(): MutationsStore {
       repairRequests,
       repairApprovals,
       repairInspections,
-      repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
-        ? parsed.repairPhotoEdits
-        : [],
-      repairDetailEdits: Array.isArray(parsed.repairDetailEdits)
-        ? parsed.repairDetailEdits
-        : [],
-      repairReplyEdits: Array.isArray(parsed.repairReplyEdits)
-        ? parsed.repairReplyEdits
-        : [],
-      repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
-        ? parsed.repairFinancialEdits
-        : [],
+      repairPhotoEdits,
+      repairDetailEdits,
+      repairReplyEdits,
+      repairFinancialEdits,
       fuelRecords: Array.isArray(parsed.fuelRecords)
         ? parsed.fuelRecords
         : [],
@@ -1657,7 +1679,9 @@ async function fetchCombinedMutationsStore(
       );
 
       const mergedRepReqMap = new Map<string, StoredRepairRequest>();
-      (remote.repairRequests ?? []).forEach((r) => mergedRepReqMap.set(r.id, r));
+      (remote.repairRequests ?? [])
+        .filter((r) => !r.syncedToSheet && isRecentOptimisticMutation(r.createdAt))
+        .forEach((r) => mergedRepReqMap.set(r.id, r));
       local.repairRequests.forEach((r) => {
         const existing = mergedRepReqMap.get(r.id);
         mergedRepReqMap.set(
@@ -1674,20 +1698,22 @@ async function fetchCombinedMutationsStore(
       });
 
       const mergedRepAppMap = new Map<string, StoredRepairApproval>();
-      (remote.repairApprovals ?? []).forEach((a) =>
-        mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
-      );
+      (remote.repairApprovals ?? [])
+        .filter((a) => !a.syncedToSheet && isRecentOptimisticMutation(a.updatedAt))
+        .forEach((a) => mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a));
       local.repairApprovals.forEach((a) =>
         mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
       );
 
       const mergedPhotoEditMap = new Map<string, StoredRepairPhotoEdit>();
-      (remote.repairPhotoEdits ?? []).forEach((p) =>
-        mergedPhotoEditMap.set(
-          p.sequenceNo || p.repairRequestNo || String(p.rowNumber),
-          p
-        )
-      );
+      (remote.repairPhotoEdits ?? [])
+        .filter((p) => isRecentOptimisticMutation(p.updatedAt))
+        .forEach((p) =>
+          mergedPhotoEditMap.set(
+            p.sequenceNo || p.repairRequestNo || String(p.rowNumber),
+            p
+          )
+        );
       local.repairPhotoEdits.forEach((p) =>
         mergedPhotoEditMap.set(
           p.sequenceNo || p.repairRequestNo || String(p.rowNumber),
@@ -1696,12 +1722,14 @@ async function fetchCombinedMutationsStore(
       );
 
       const mergedDetailEditMap = new Map<string, StoredRepairDetailEdit>();
-      (remote.repairDetailEdits ?? []).forEach((d) =>
-        mergedDetailEditMap.set(
-          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
-          d
-        )
-      );
+      (remote.repairDetailEdits ?? [])
+        .filter((d) => isRecentOptimisticMutation(d.updatedAt))
+        .forEach((d) =>
+          mergedDetailEditMap.set(
+            d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+            d
+          )
+        );
       (local.repairDetailEdits ?? []).forEach((d) =>
         mergedDetailEditMap.set(
           d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
@@ -1710,12 +1738,14 @@ async function fetchCombinedMutationsStore(
       );
 
       const mergedReplyEditMap = new Map<string, StoredRepairReplyEdit>();
-      (remote.repairReplyEdits ?? []).forEach((d) =>
-        mergedReplyEditMap.set(
-          d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
-          d
-        )
-      );
+      (remote.repairReplyEdits ?? [])
+        .filter((d) => isRecentOptimisticMutation(d.updatedAt))
+        .forEach((d) =>
+          mergedReplyEditMap.set(
+            d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
+            d
+          )
+        );
       (local.repairReplyEdits ?? []).forEach((d) =>
         mergedReplyEditMap.set(
           d.sequenceNo || d.repairRequestNo || String(d.rowNumber),
@@ -1724,12 +1754,14 @@ async function fetchCombinedMutationsStore(
       );
 
       const mergedFinancialEditMap = new Map<string, StoredRepairFinancialEdit>();
-      (remote.repairFinancialEdits ?? []).forEach((f) =>
-        mergedFinancialEditMap.set(
-          f.sequenceNo || f.repairRequestNo || String(f.rowNumber),
-          f
-        )
-      );
+      (remote.repairFinancialEdits ?? [])
+        .filter((f) => isRecentOptimisticMutation(f.updatedAt))
+        .forEach((f) =>
+          mergedFinancialEditMap.set(
+            f.sequenceNo || f.repairRequestNo || String(f.rowNumber),
+            f
+          )
+        );
       (local.repairFinancialEdits ?? []).forEach((f) =>
         mergedFinancialEditMap.set(
           f.sequenceNo || f.repairRequestNo || String(f.rowNumber),
@@ -1746,12 +1778,14 @@ async function fetchCombinedMutationsStore(
       );
 
       const mergedRepInspMap = new Map<string, StoredRepairInspection>();
-      (remote.repairInspections ?? []).forEach((i) =>
-        mergedRepInspMap.set(
-          i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
-          i
-        )
-      );
+      (remote.repairInspections ?? [])
+        .filter((i) => !i.syncedToSheet && isRecentOptimisticMutation(i.updatedAt))
+        .forEach((i) =>
+          mergedRepInspMap.set(
+            i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
+            i
+          )
+        );
       (local.repairInspections ?? []).forEach((i) =>
         mergedRepInspMap.set(
           i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
@@ -2611,8 +2645,23 @@ export async function fetchSheetTabData(
       }
     }
   } else if (tab.gid === '944294225') {
+    const matchesRepairRow = (
+      r: SheetRow,
+      item: { sequenceNo?: string; repairRequestNo?: string; rowNumber: number }
+    ): boolean => {
+      const seq = (item.sequenceNo ?? '').trim();
+      const reqNo = (item.repairRequestNo ?? '').trim();
+      if (seq) {
+        return (r.values['A'] ?? '').trim() === seq;
+      }
+      if (reqNo) {
+        return (r.values['G'] ?? '').trim() === reqNo;
+      }
+      return item.rowNumber > 0 && r.rowNumber === item.rowNumber;
+    };
+
     for (const req of mutationsStore.repairRequests) {
-      if (req.syncedToSheet) continue;
+      if (req.syncedToSheet || !isRecentOptimisticMutation(req.createdAt)) continue;
       const reqG = (req.values['G'] ?? '').trim();
       const exists = parsedRows.some(
         (r) =>
@@ -2632,19 +2681,9 @@ export async function fetchSheetTabData(
       }
     }
     for (const insp of mutationsStore.repairInspections ?? []) {
-      if (insp.syncedToSheet) continue;
-      const target = parsedRows.find(
-        (r) =>
-          (insp.sequenceNo && (r.values['A'] ?? '').trim() === insp.sequenceNo) ||
-          (insp.repairRequestNo && (r.values['G'] ?? '').trim() === insp.repairRequestNo) ||
-          (insp.rowNumber > 0 && r.rowNumber === insp.rowNumber)
-      );
+      if (insp.syncedToSheet || !isRecentOptimisticMutation(insp.updatedAt)) continue;
+      const target = parsedRows.find((r) => matchesRepairRow(r, insp));
       if (target) {
-        const sheetInspector = (target.values['AB'] ?? '').trim();
-        const sheetStatus = (target.values['AI'] ?? '').trim();
-        if (sheetInspector || (sheetStatus && sheetStatus !== 'รอตรวจสอบ')) {
-          continue;
-        }
         target.values['AB'] = insp.inspectorName;
         target.values['AC'] = insp.inspectionDate;
         target.values['AD'] = insp.inspectionTime;
@@ -2656,18 +2695,9 @@ export async function fetchSheetTabData(
       }
     }
     for (const app of mutationsStore.repairApprovals ?? []) {
-      if (app.syncedToSheet) continue;
-      const target = parsedRows.find(
-        (r) =>
-          (app.sequenceNo && (r.values['A'] ?? '').trim() === app.sequenceNo) ||
-          (app.rowNumber > 0 && r.rowNumber === app.rowNumber)
-      );
+      if (app.syncedToSheet || !isRecentOptimisticMutation(app.updatedAt)) continue;
+      const target = parsedRows.find((r) => matchesRepairRow(r, app));
       if (target) {
-        const sheetApprover = (target.values['AE'] ?? '').trim();
-        const sheetStatus = (target.values['AI'] ?? '').trim();
-        if (sheetApprover && sheetStatus && !sheetStatus.includes('รอ')) {
-          continue;
-        }
         target.values['AE'] = app.approverName;
         target.values['AF'] = app.approvalDate;
         target.values['AG'] = app.approvalTime;
@@ -2677,20 +2707,8 @@ export async function fetchSheetTabData(
       }
     }
     for (const pe of mutationsStore.repairPhotoEdits) {
-      // Once synced to Google Sheets, only overlay for 15 seconds while GViz cache refreshes
-      // so all devices always see the exact same Google Sheets source-of-truth photos
-      if (pe.syncedToSheet && pe.updatedAt) {
-        const ageMs = Date.now() - new Date(pe.updatedAt).getTime();
-        if (ageMs > 15000) {
-          continue;
-        }
-      }
-      const target = parsedRows.find(
-        (r) =>
-          (pe.sequenceNo && (r.values['A'] ?? '').trim() === pe.sequenceNo) ||
-          (pe.repairRequestNo && (r.values['G'] ?? '').trim() === pe.repairRequestNo) ||
-          (pe.rowNumber > 0 && r.rowNumber === pe.rowNumber)
-      );
+      if (!isRecentOptimisticMutation(pe.updatedAt)) continue;
+      const target = parsedRows.find((r) => matchesRepairRow(r, pe));
       if (target) {
         const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
         photoCols.forEach((col, idx) => {
@@ -2700,12 +2718,8 @@ export async function fetchSheetTabData(
     }
     if (Array.isArray(mutationsStore.repairDetailEdits)) {
       for (const de of mutationsStore.repairDetailEdits) {
-        const target = parsedRows.find(
-          (r) =>
-            (de.sequenceNo && (r.values['A'] ?? '').trim() === de.sequenceNo) ||
-            (de.repairRequestNo && (r.values['G'] ?? '').trim() === de.repairRequestNo) ||
-            (de.rowNumber > 0 && r.rowNumber === de.rowNumber)
-        );
+        if (!isRecentOptimisticMutation(de.updatedAt)) continue;
+        const target = parsedRows.find((r) => matchesRepairRow(r, de));
         if (target) {
           target.values['AK'] = de.additionalDetails;
         }
@@ -2713,12 +2727,8 @@ export async function fetchSheetTabData(
     }
     if (Array.isArray(mutationsStore.repairReplyEdits)) {
       for (const re of mutationsStore.repairReplyEdits) {
-        const target = parsedRows.find(
-          (r) =>
-            (re.sequenceNo && (r.values['A'] ?? '').trim() === re.sequenceNo) ||
-            (re.repairRequestNo && (r.values['G'] ?? '').trim() === re.repairRequestNo) ||
-            (re.rowNumber > 0 && r.rowNumber === re.rowNumber)
-        );
+        if (!isRecentOptimisticMutation(re.updatedAt)) continue;
+        const target = parsedRows.find((r) => matchesRepairRow(r, re));
         if (target) {
           target.values['AM'] = re.replyDetails;
           if (re.replyDetails && re.replyDetails.trim() !== '') {
@@ -2729,12 +2739,8 @@ export async function fetchSheetTabData(
     }
     if (Array.isArray(mutationsStore.repairFinancialEdits)) {
       for (const fe of mutationsStore.repairFinancialEdits) {
-        const target = parsedRows.find(
-          (r) =>
-            (fe.sequenceNo && (r.values['A'] ?? '').trim() === fe.sequenceNo) ||
-            (fe.repairRequestNo && (r.values['G'] ?? '').trim() === fe.repairRequestNo) ||
-            (fe.rowNumber > 0 && r.rowNumber === fe.rowNumber)
-        );
+        if (!isRecentOptimisticMutation(fe.updatedAt)) continue;
+        const target = parsedRows.find((r) => matchesRepairRow(r, fe));
         if (target) {
           target.values['N'] = fe.sparePartsCost;
           target.values['O'] = fe.laborCost;

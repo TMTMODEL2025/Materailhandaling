@@ -155,6 +155,13 @@ interface MutationsStore {
   googleScriptUrl?: string;
 }
 
+function isRecentMutation(tsStr?: string, maxAgeMs = 15000): boolean {
+  if (!tsStr) return false;
+  const ts = new Date(tsStr).getTime();
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts <= maxAgeMs;
+}
+
 function readStore(): MutationsStore {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -175,14 +182,26 @@ function readStore(): MutationsStore {
         jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
           ? parsed.jobTransferNoteEdits
           : [],
-        repairRequests: Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [],
-        repairApprovals: Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [],
-        repairInspections: Array.isArray(parsed.repairInspections) ? parsed.repairInspections : [],
-        repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits) ? parsed.repairPhotoEdits : [],
-        repairDetailEdits: Array.isArray(parsed.repairDetailEdits) ? parsed.repairDetailEdits : [],
-        repairReplyEdits: Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [],
+        repairRequests: Array.isArray(parsed.repairRequests)
+          ? parsed.repairRequests.filter((r) => !r.syncedToSheet && isRecentMutation(r.createdAt))
+          : [],
+        repairApprovals: Array.isArray(parsed.repairApprovals)
+          ? parsed.repairApprovals.filter((a) => isRecentMutation(a.updatedAt))
+          : [],
+        repairInspections: Array.isArray(parsed.repairInspections)
+          ? parsed.repairInspections.filter((i) => isRecentMutation(i.updatedAt))
+          : [],
+        repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
+          ? parsed.repairPhotoEdits.filter((p) => isRecentMutation(p.updatedAt))
+          : [],
+        repairDetailEdits: Array.isArray(parsed.repairDetailEdits)
+          ? parsed.repairDetailEdits.filter((d) => isRecentMutation(d.updatedAt))
+          : [],
+        repairReplyEdits: Array.isArray(parsed.repairReplyEdits)
+          ? parsed.repairReplyEdits.filter((r) => isRecentMutation(r.updatedAt))
+          : [],
         repairFinancialEdits: Array.isArray(parsed.repairFinancialEdits)
-          ? parsed.repairFinancialEdits
+          ? parsed.repairFinancialEdits.filter((f) => isRecentMutation(f.updatedAt))
           : [],
         fuelRecords: Array.isArray(parsed.fuelRecords) ? parsed.fuelRecords : [],
         googleAccessToken:
