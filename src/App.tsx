@@ -1620,7 +1620,7 @@ function playNotificationChime() {
         <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
           {/* Floating Toast Notification when a new repair request pops up */}
           {newRepairToast && (
-            <div className="fixed bottom-5 right-4 z-[100] max-w-xs sm:max-w-sm rounded-xl border border-amber-300 bg-slate-900/95 p-3.5 sm:p-4 font-sans text-white shadow-2xl backdrop-blur-md animate-bounce">
+            <div className="fixed bottom-5 right-4 z-[100] max-w-xs sm:max-w-sm rounded-xl border border-amber-300 bg-slate-900/95 p-3.5 sm:p-4 font-sans text-white shadow-2xl backdrop-blur-md">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Wrench className="h-5 w-5 text-amber-400 shrink-0" />
