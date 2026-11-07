@@ -5,6 +5,8 @@ import {
   Play,
   Square,
   Truck,
+  Plus,
+  MapPin,
 } from 'lucide-react';
 import { JobTransferPayload, SheetRow } from '../types';
 import {
@@ -16,6 +18,38 @@ import {
   normalizeDriverNameKey,
 } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
+
+const CUSTOM_LOCATIONS_KEY = 'job_transfer_custom_locations';
+
+function getStoredCustomLocations(): string[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_LOCATIONS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((x) => String(x).trim()).filter(Boolean);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveStoredCustomLocations(locations: string[]) {
+  try {
+    localStorage.setItem(CUSTOM_LOCATIONS_KEY, JSON.stringify(locations));
+  } catch {
+    // ignore
+  }
+}
+
+const DEFAULT_LOCATIONS = [
+  'FAC 01', 'FAC 02', 'FAC 03', 'FAC 04', 'FAC 05',
+  'FAC 06', 'FAC 07', 'FAC 08', 'FAC 09', 'FAC 10',
+  'FAC 11', 'FAC 12', 'FAC 13', 'FAC 14', 'FAC 15',
+  'WH', 'RM', 'FG', 'SCRAP', 'KUBOTA'
+];
 
 interface JobTransferModalProps {
   isOpen: boolean;
@@ -173,6 +207,16 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const [pendingStartTime, setPendingStartTime] = useState<string>('');
   const [pendingEndTime, setPendingEndTime] = useState<string>('');
   const [liveNowTime, setLiveNowTime] = useState<string>(getCurrentTimeString());
+
+  const [customLocations, setCustomLocations] = useState<string[]>(() =>
+    getStoredCustomLocations()
+  );
+  const [isAddLocationOpen, setIsAddLocationOpen] = useState<boolean>(false);
+  const [addLocationTarget, setAddLocationTarget] = useState<
+    'origin' | 'destination' | 'both'
+  >('origin');
+  const [newLocationInput, setNewLocationInput] = useState<string>('');
+  const [locationAddError, setLocationAddError] = useState<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -338,6 +382,24 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       });
     }
 
+    DEFAULT_LOCATIONS.forEach((loc) => {
+      origins.add(loc);
+      destinations.add(loc);
+    });
+
+    customLocations.forEach((loc) => {
+      if (loc) {
+        origins.add(loc);
+        destinations.add(loc);
+      }
+    });
+
+    const sortLocations = (list: string[]) => {
+      return list.sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+      );
+    };
+
     return {
       employeeMap,
       driverMap,
@@ -346,10 +408,53 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       vehicles: Array.from(vehicles),
       trailers: Array.from(trailers),
       products: Array.from(products),
-      origins: Array.from(origins),
-      destinations: Array.from(destinations),
+      origins: sortLocations(Array.from(origins)),
+      destinations: sortLocations(Array.from(destinations)),
     };
-  }, [sourceRows, vehicleDbRows, accountEmpMap]);
+  }, [sourceRows, vehicleDbRows, accountEmpMap, customLocations]);
+
+  const handleOpenAddLocationModal = (
+    target: 'origin' | 'destination' | 'both' = 'origin'
+  ) => {
+    setAddLocationTarget(target);
+    setNewLocationInput('');
+    setLocationAddError(null);
+    setIsAddLocationOpen(true);
+  };
+
+  const handleAddLocationSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newLocationInput.trim();
+    if (!trimmed) {
+      setLocationAddError('กรุณากรอกชื่อ Location');
+      return;
+    }
+
+    let updated = customLocations;
+    if (!customLocations.includes(trimmed)) {
+      updated = [...customLocations, trimmed];
+      setCustomLocations(updated);
+      saveStoredCustomLocations(updated);
+    }
+
+    if (addLocationTarget === 'origin' || addLocationTarget === 'both') {
+      setOrigin(trimmed);
+    }
+    if (addLocationTarget === 'destination' || addLocationTarget === 'both') {
+      setDestination(trimmed);
+    }
+
+    setIsAddLocationOpen(false);
+    setNewLocationInput('');
+  };
+
+  const handleDeleteCustomLocation = (locToDelete: string) => {
+    const updated = customLocations.filter((l) => l !== locToDelete);
+    setCustomLocations(updated);
+    saveStoredCustomLocations(updated);
+    if (origin === locToDelete) setOrigin('');
+    if (destination === locToDelete) setDestination('');
+  };
 
   // Keep driverName and vehicleNumber synced with ฐานข้อมูลรถ if employeeId is selected
   useEffect(() => {
@@ -1083,41 +1188,77 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
             {/* ต้นทาง */}
             <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                ต้นทาง <span className="text-red-600">*</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  ต้นทาง <span className="text-red-600">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddLocationModal('origin')}
+                  className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                >
+                  <Plus className="w-3 h-3" /> เพิ่ม Location
+                </button>
+              </div>
               <select
                 required
                 value={origin}
-                onChange={(e) => setOrigin(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === '__ADD_NEW__') {
+                    handleOpenAddLocationModal('origin');
+                  } else {
+                    setOrigin(e.target.value);
+                  }
+                }}
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
               >
                 <option value="">-- เลือกต้นทาง --</option>
-                {origin && !referenceOptions.origins.includes(origin) && (
-                  <option value={origin}>{origin}</option>
-                )}
+                {origin &&
+                  !referenceOptions.origins.includes(origin) &&
+                  origin !== '__ADD_NEW__' && (
+                    <option value={origin}>{origin}</option>
+                  )}
                 {referenceOptions.origins.map((o) => (
                   <option key={o} value={o}>
                     {o}
                   </option>
                 ))}
+                <option value="__ADD_NEW__" className="font-semibold text-indigo-600">
+                  + เพิ่ม Location ใหม่...
+                </option>
               </select>
             </div>
 
             {/* ปลายทาง */}
             <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                ปลายทาง <span className="text-red-600">*</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  ปลายทาง <span className="text-red-600">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddLocationModal('destination')}
+                  className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                >
+                  <Plus className="w-3 h-3" /> เพิ่ม Location
+                </button>
+              </div>
               <select
                 required
                 value={destination}
-                onChange={(e) => setDestination(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === '__ADD_NEW__') {
+                    handleOpenAddLocationModal('destination');
+                  } else {
+                    setDestination(e.target.value);
+                  }
+                }}
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
               >
                 <option value="">-- เลือกปลายทาง --</option>
                 {destination &&
-                  !referenceOptions.destinations.includes(destination) && (
+                  !referenceOptions.destinations.includes(destination) &&
+                  destination !== '__ADD_NEW__' && (
                     <option value={destination}>{destination}</option>
                   )}
                 {referenceOptions.destinations.map((d) => (
@@ -1125,6 +1266,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                     {d}
                   </option>
                 ))}
+                <option value="__ADD_NEW__" className="font-semibold text-indigo-600">
+                  + เพิ่ม Location ใหม่...
+                </option>
               </select>
             </div>
 
@@ -1168,18 +1312,160 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     </div>
   );
 
+  const addLocationModalElement = isAddLocationOpen ? (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-xs"
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+    >
+      <div
+        className="w-full max-w-md rounded-xl bg-white p-4 sm:p-5 shadow-xl transition-all"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-sm sm:text-base font-semibold text-slate-900 flex items-center gap-2">
+            <MapPin className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
+            เพิ่ม Location ใหม่ (ต้นทาง / ปลายทาง)
+          </h3>
+          <button
+            type="button"
+            onClick={() => setIsAddLocationOpen(false)}
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleAddLocationSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              ชื่อ Location / สถานที่ <span className="text-red-600">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              autoFocus
+              value={newLocationInput}
+              onChange={(e) => {
+                setNewLocationInput(e.target.value);
+                setLocationAddError(null);
+              }}
+              placeholder="เช่น FAC 16, คลัง B, สระบุรี..."
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs sm:text-sm text-slate-900 focus:border-indigo-600 focus:outline-none"
+            />
+            {locationAddError && (
+              <p className="mt-1 text-xs text-red-600">{locationAddError}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              ตั้งค่าให้ฟิลด์
+            </label>
+            <div className="mt-1.5 flex items-center gap-3">
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="targetField"
+                  value="origin"
+                  checked={addLocationTarget === 'origin'}
+                  onChange={() => setAddLocationTarget('origin')}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                ต้นทาง
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="targetField"
+                  value="destination"
+                  checked={addLocationTarget === 'destination'}
+                  onChange={() => setAddLocationTarget('destination')}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                ปลายทาง
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="targetField"
+                  value="both"
+                  checked={addLocationTarget === 'both'}
+                  onChange={() => setAddLocationTarget('both')}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                ทั้งสองฝั่ง
+              </label>
+            </div>
+          </div>
+
+          {customLocations.length > 0 && (
+            <div className="border-t border-slate-100 pt-3">
+              <span className="block text-[11px] font-medium text-slate-500 mb-1.5">
+                Location ที่เพิ่มเอง ({customLocations.length}):
+              </span>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                {customLocations.map((loc) => (
+                  <span
+                    key={loc}
+                    className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 border border-indigo-100"
+                  >
+                    {loc}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCustomLocation(loc)}
+                      title="ลบ Location นี้"
+                      className="text-indigo-400 hover:text-red-600 ml-0.5 font-bold"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setIsAddLocationOpen(false)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs"
+            >
+              บันทึก Location
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  ) : null;
+
   if (inlineMode) {
-    return cardContent;
+    return (
+      <>
+        {cardContent}
+        {addLocationModalElement}
+      </>
+    );
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-2 sm:p-4 backdrop-blur-xs"
-      onClick={() => {
-        if (!isSubmitting) onClose();
-      }}
-    >
-      {cardContent}
-    </div>
+    <>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-2 sm:p-4 backdrop-blur-xs"
+        onClick={() => {
+          if (!isSubmitting) onClose();
+        }}
+      >
+        {cardContent}
+      </div>
+      {addLocationModalElement}
+    </>
   );
 };
