@@ -245,7 +245,7 @@ async function startServer() {
     let url = raw.trim();
     if (url.includes(STALE_APPS_SCRIPT_ID)) return DEFAULT_APPS_SCRIPT_URL;
     if (url.includes('/dev')) {
-      url = url.replace(/\/dev(\?.*)?$/, '/exec$1').replace(/\/dev\/?$/, '/exec');
+      url = url.split('/dev').join('/exec');
     }
     return url;
   }

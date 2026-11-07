@@ -95,7 +95,7 @@ export function normalizeAppsScriptUrl(raw?: string): string {
     return DEFAULT_APPS_SCRIPT_URL;
   }
   if (url.includes('/dev')) {
-    url = url.replace(/\/dev(\?.*)?$/, '/exec$1').replace(/\/dev\/?$/, '/exec');
+    url = url.split('/dev').join('/exec');
   }
   return url;
 }
@@ -120,7 +120,8 @@ try {
 }
 
 export function getConfiguredAppsScriptUrl(): string {
-  return normalizeAppsScriptUrl(configuredAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL);
+  configuredAppsScriptUrl = normalizeAppsScriptUrl(configuredAppsScriptUrl);
+  return configuredAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL;
 }
 
 export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {
@@ -929,6 +930,7 @@ void (async () => {
         const norm = normalizeAppsScriptUrl(sData.scriptUrl);
         if (
           !configuredAppsScriptUrl ||
+          configuredAppsScriptUrl.includes('/dev') ||
           configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
           configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
         ) {
@@ -959,6 +961,7 @@ void (async () => {
       const norm = normalizeAppsScriptUrl(candidate);
       if (
         !configuredAppsScriptUrl ||
+        configuredAppsScriptUrl.includes('/dev') ||
         configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
         configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
       ) {
