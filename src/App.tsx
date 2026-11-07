@@ -32,6 +32,7 @@ import {
   Coins,
   Clock,
   Droplet,
+  Bell,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -243,6 +244,156 @@ export default function App() {
   );
   const [isUpdatingGate, setIsUpdatingGate] = useState<boolean>(false);
 
+function playNotificationChime() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(880, now);
+    osc1.frequency.exponentialRampToValueAtTime(1320, now + 0.15);
+    gain1.gain.setValueAtTime(0.3, now);
+    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.3);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1320, now + 0.15);
+    osc2.frequency.exponentialRampToValueAtTime(1760, now + 0.35);
+    gain2.gain.setValueAtTime(0.35, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.5);
+  } catch {
+    // ignore
+  }
+}
+
+  const [notificationPermission, setNotificationPermission] = useState<string>(() =>
+    typeof window !== 'undefined' && 'Notification' in window
+      ? Notification.permission
+      : 'default'
+  );
+  const [newRepairToast, setNewRepairToast] = useState<{
+    vehicle: string;
+    symptom: string;
+    reporter: string;
+  } | null>(null);
+
+  const seenRepairIdsRef = useRef<Set<string>>(new Set());
+  const isInitialRepairLoadRef = useRef<boolean>(true);
+
+  const handleUpdateRepairRows = useCallback((rows: SheetRow[]) => {
+    setRepairTabRows(rows);
+    setPendingApprovalCount(calculatePendingApprovalCount(rows));
+
+    if (rows.length === 0) return;
+
+    if (isInitialRepairLoadRef.current) {
+      rows.forEach((r) => {
+        const key = String(r.values['A'] || r.rowNumber);
+        seenRepairIdsRef.current.add(key);
+      });
+      isInitialRepairLoadRef.current = false;
+    } else {
+      const newItems: SheetRow[] = [];
+      rows.forEach((r) => {
+        const key = String(r.values['A'] || r.rowNumber);
+        if (!seenRepairIdsRef.current.has(key)) {
+          seenRepairIdsRef.current.add(key);
+          newItems.push(r);
+        }
+      });
+
+      if (newItems.length > 0) {
+        const latestNew = newItems[0];
+        const vehicle =
+          latestNew.values['D'] ||
+          latestNew.values['O'] ||
+          latestNew.values['vehicleNumber'] ||
+          'ไม่ระบุเบอร์รถ';
+        const symptom =
+          latestNew.values['G'] ||
+          latestNew.values['P'] ||
+          latestNew.values['symptoms'] ||
+          'แจ้งซ่อมใหม่';
+        const reporter =
+          latestNew.values['AA'] || latestNew.values['reporterName'] || '';
+
+        setNewRepairToast({ vehicle, symptom, reporter });
+        playNotificationChime();
+
+        if ('Notification' in window && Notification.permission === 'granted') {
+          const title = `🔔 มีรายการแจ้งซ่อมใหม่! (${vehicle})`;
+          const body = `อาการ: ${symptom}${reporter ? ` | ผู้แจ้ง: ${reporter}` : ''}`;
+          try {
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+              void navigator.serviceWorker.ready.then((reg) => {
+                void reg.showNotification(title, {
+                  body,
+                  icon: '/pwa-192x192.png',
+                  tag: `repair-${latestNew.rowNumber}`,
+                });
+              });
+            } else {
+              new Notification(title, {
+                body,
+                icon: '/pwa-192x192.png',
+              });
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  }, []);
+
+  const handleToggleMobileNotifications = async () => {
+    if (!('Notification' in window)) {
+      alert('เบราว์เซอร์นี้ไม่รองรับระบบการแจ้งเตือนบนหน้าจอ');
+      return;
+    }
+
+    try {
+      const res = await Notification.requestPermission();
+      setNotificationPermission(res);
+      if (res === 'granted') {
+        playNotificationChime();
+        const title = '🔔 เปิดการแจ้งเตือนงานซ่อมเรียบร้อย';
+        const body =
+          'ระบบจะส่งการแจ้งเตือนเด้งไปที่หน้าจอมือถือทันทีเมื่อมีรายการแจ้งซ่อมใหม่';
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          const reg = await navigator.serviceWorker.ready;
+          void reg.showNotification(title, { body, icon: '/pwa-192x192.png' });
+        } else {
+          new Notification(title, { body, icon: '/pwa-192x192.png' });
+        }
+      } else if (res === 'denied') {
+        alert(
+          'สิทธิ์การแจ้งเตือนถูกปฏิเสธ กรุณาอนุญาตการแจ้งเตือนในการตั้งค่าเบราว์เซอร์ของมือถือ'
+        );
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const isFetchingRef = useRef<boolean>(false);
 
@@ -275,8 +426,7 @@ export default function App() {
         setIsRefreshing(false);
 
         if (activeTab.gid === '944294225') {
-          setRepairTabRows(result.rows);
-          setPendingApprovalCount(calculatePendingApprovalCount(result.rows));
+          handleUpdateRepairRows(result.rows);
         } else {
           const repairTabConfig = SHEET_TABS.find((t) => t.gid === '944294225');
           if (repairTabConfig) {
@@ -285,8 +435,7 @@ export default function App() {
             })
               .then((repairRes) => {
                 if (!controller.signal.aborted) {
-                  setRepairTabRows(repairRes.rows);
-                  setPendingApprovalCount(calculatePendingApprovalCount(repairRes.rows));
+                  handleUpdateRepairRows(repairRes.rows);
                 }
               })
               .catch(() => {});
@@ -1435,6 +1584,28 @@ export default function App() {
 
             <button
               type="button"
+              onClick={handleToggleMobileNotifications}
+              title={
+                notificationPermission === 'granted'
+                  ? 'ระบบแจ้งเตือนบนมือถือเปิดใช้งานแล้ว'
+                  : 'คลิกเพื่อเปิดการแจ้งเตือนเด้งบนมือถือเมื่อมีแจ้งซ่อมใหม่'
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors shrink-0 ${
+                notificationPermission === 'granted'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 animate-pulse'
+              }`}
+            >
+              <Bell className="h-3.5 w-3.5 text-amber-600" />
+              <span className="hidden sm:inline">
+                {notificationPermission === 'granted'
+                  ? 'การแจ้งเตือนเปิดแล้ว'
+                  : 'เปิดแจ้งเตือนมือถือ'}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setIsWebhookModalOpen(true)}
               title="ตั้งค่าเชื่อมต่อชีต (ไม่ต้องล็อกอิน)"
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
@@ -1461,6 +1632,53 @@ export default function App() {
         </header>
 
         <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
+          {/* Floating Toast Notification when a new repair request pops up */}
+          {newRepairToast && (
+            <div className="fixed bottom-5 right-4 z-[100] max-w-xs sm:max-w-sm rounded-xl border border-amber-300 bg-slate-900/95 p-3.5 sm:p-4 font-sans text-white shadow-2xl backdrop-blur-md animate-bounce">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Wrench className="h-5 w-5 text-amber-400 shrink-0" />
+                  <span className="font-bold text-xs sm:text-sm text-amber-300">
+                    🔔 มีรายการแจ้งซ่อมใหม่!
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNewRepairToast(null)}
+                  className="rounded p-1 text-slate-400 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-slate-200 space-y-0.5">
+                <div>
+                  <span className="font-semibold text-amber-200">รถ/อุปกรณ์:</span>{' '}
+                  {newRepairToast.vehicle}
+                </div>
+                <div className="truncate">
+                  <span className="font-semibold text-amber-200">อาการ:</span>{' '}
+                  {newRepairToast.symptom}
+                </div>
+                {newRepairToast.reporter && (
+                  <div className="text-slate-400">
+                    ผู้แจ้ง: {newRepairToast.reporter}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewRepairToast(null);
+                  const repairTab = SHEET_TABS.find((t) => t.gid === '944294225');
+                  if (repairTab) handleSelectTab(repairTab);
+                }}
+                className="mt-3 w-full rounded-lg bg-amber-500 py-1.5 text-center text-xs font-bold text-slate-950 hover:bg-amber-400 shadow-xs"
+              >
+                ดูรายการแจ้งซ่อม
+              </button>
+            </div>
+          )}
+
           {/* Save Success Notification */}
           {saveSuccessMsg && (
             <div className="mb-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
