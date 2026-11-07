@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, AlertCircle, Fuel, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 import { FuelRecordPayload, SheetRow } from '../types';
-import { appendFuelRecord } from '../services/googleSheets';
+import { appendFuelRecord, fetchSheetTabData, SHEET_TABS } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
 
 interface FuelRecordModalProps {
@@ -177,6 +177,54 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
     };
   }, [existingRows]);
 
+  const [vehicleDbRows, setVehicleDbRows] = useState<SheetRow[]>([]);
+
+  // Load ฐานข้อมูลรถ (gid: 378250263) when modal is opened
+  useEffect(() => {
+    if (!isOpen) return;
+    const vehicleTab = SHEET_TABS.find((t) => t.gid === '378250263');
+    if (!vehicleTab) return;
+    let cancelled = false;
+    void fetchSheetTabData(vehicleTab, { limit: 300 })
+      .then((res) => {
+        if (!cancelled && res.rows.length > 0) {
+          setVehicleDbRows(res.rows);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  // Compute driver options from ฐานข้อมูลรถ (Column I: ชื่อพนักงานประจำรถ, Column L: กะทำงาน === 'กะเช้า')
+  const driverOptions = useMemo(() => {
+    const driverSet = new Set<string>();
+
+    if (vehicleDbRows.length > 0) {
+      vehicleDbRows.forEach((row) => {
+        const name = (row.values['I'] ?? row.values['ชื่อพนักงานประจำรถ'] ?? '').trim();
+        const shift = (row.values['L'] ?? row.values['กะทำงาน'] ?? '').trim();
+
+        // กรองเฉพาะคอลัมน์ "กะทำงาน" ที่เป็น "กะเช้า" เท่านั้น
+        const isDayShift = shift === 'กะเช้า' || shift.includes('กะเช้า');
+
+        if (name && name !== '-' && isDayShift) {
+          driverSet.add(name);
+        }
+      });
+    } else {
+      // Fallback while loading vehicleDbRows
+      sheetContext.drivers.forEach((drv) => {
+        if (drv && drv !== '-') {
+          driverSet.add(drv);
+        }
+      });
+    }
+
+    return Array.from(driverSet).sort((a, b) => a.localeCompare(b, 'th'));
+  }, [vehicleDbRows, sheetContext.drivers]);
+
   useEffect(() => {
     if (isOpen) {
       setDate(getCurrentThaiDateString());
@@ -205,7 +253,21 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
   const handleVehicleChange = (val: string) => {
     setVehicleNumber(val);
     const trimmed = val.trim();
-    const mappedDriver = sheetContext.vehicleToDriverMap.get(trimmed);
+    if (!trimmed) return;
+
+    let mappedDriver: string | undefined;
+    if (vehicleDbRows.length > 0) {
+      const match = vehicleDbRows.find(
+        (r) => (r.values['A'] ?? r.values['ทะเบียนรถ'] ?? '').trim() === trimmed
+      );
+      if (match) {
+        const dName = (match.values['I'] ?? match.values['ชื่อพนักงานประจำรถ'] ?? '').trim();
+        if (dName && dName !== '-') mappedDriver = dName;
+      }
+    }
+    if (!mappedDriver) {
+      mappedDriver = sheetContext.vehicleToDriverMap.get(trimmed);
+    }
     if (mappedDriver) {
       setDriverName(mappedDriver);
     }
@@ -745,7 +807,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                       className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                     />
                     <datalist id="datalist-fuel-drivers">
-                      {sheetContext.drivers.map((d) => (
+                      {driverOptions.map((d) => (
                         <option key={d} value={d} />
                       ))}
                     </datalist>
