@@ -207,7 +207,7 @@ function เชื่อมต่ออัตโนมัติ() {
   var ss = getTargetSpreadsheet_();
   var url = ScriptApp.getService().getUrl();
   if (url) {
-    url = url.replace(/\/dev\/?$/, '/exec');
+    url = url.replace('/dev', '/exec');
     var dpSheet = ss.getSheetByName('จุดส่งสินค้า');
     if (dpSheet) {
       dpSheet.getRange('D1').setValue(url);
