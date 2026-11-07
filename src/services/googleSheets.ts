@@ -3508,6 +3508,13 @@ export async function appendRepairRecord(
     // ignore
   }
 
+  if (!syncedToSheet) {
+    const errDetail = lastWebhookError
+      ? `: ${lastWebhookError}`
+      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
+    throw new Error(`ไม่สามารถบันทึกข้อมูลแจ้งซ่อมลง Google Sheets ได้${errDetail}`);
+  }
+
   return { id, rowNumber, sequenceNo };
 }
 
