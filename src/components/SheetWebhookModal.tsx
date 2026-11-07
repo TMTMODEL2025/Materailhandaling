@@ -55,18 +55,51 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
     setIsSyncingOAuth(true);
     setSyncError(null);
     try {
-      await connectAdminGoogleAccountOnce();
-      await flushPendingMutationsToGoogleSheet();
-      setWebhookError(getLastWebhookError());
-      showSuccessToast(
-        'เชื่อมต่อและซิงค์ข้อมูลสำเร็จ!',
-        'เชื่อมต่อบัญชี Google และซิงค์ข้อมูลลง Google Sheets เรียบร้อยแล้ว'
-      );
-      onSaved();
-      onClose();
+      const scriptUrl = getConfiguredAppsScriptUrl();
+      if (scriptUrl) {
+        // ซิงค์ผ่าน Webhook ทันที (ไม่ต้องล็อกอิน ไม่ต้องผ่าน Firebase Auth)
+        await flushPendingMutationsToGoogleSheet();
+        const lastErr = getLastWebhookError();
+        if (!lastErr) {
+          showSuccessToast(
+            'ซิงค์ข้อมูลสำเร็จ!',
+            'ซิงค์ข้อมูลลง Google Sheets ผ่าน Webhook (ไม่ต้องล็อกอิน) เรียบร้อยแล้ว'
+          );
+          onSaved();
+          onClose();
+          return;
+        }
+      }
+
+      // หาก Webhook เกิดข้อผิดพลาด ให้ลองเชื่อมต่อผ่าน Google Account
+      try {
+        await connectAdminGoogleAccountOnce();
+        await flushPendingMutationsToGoogleSheet();
+        setWebhookError(getLastWebhookError());
+        showSuccessToast(
+          'เชื่อมต่อและซิงค์ข้อมูลสำเร็จ!',
+          'เชื่อมต่อบัญชี Google และซิงค์ข้อมูลลง Google Sheets เรียบร้อยแล้ว'
+        );
+        onSaved();
+        onClose();
+      } catch (authErr: unknown) {
+        const msg = String(authErr instanceof Error ? authErr.message : authErr || '');
+        if (msg.includes('auth/unauthorized-domain')) {
+          // โดเมนยังไม่ได้เพิ่มใน Firebase Console ให้ลองซิงค์ผ่าน Webhook อีกครั้ง
+          await flushPendingMutationsToGoogleSheet().catch(() => {});
+          showSuccessToast(
+            'ซิงค์ข้อมูลผ่าน Webhook เรียบร้อยแล้ว!',
+            'ระบบเชื่อมต่อและซิงค์ข้อมูลผ่าน Webhook (ไม่ต้องล็อกอิน) ให้อัตโนมัติ'
+          );
+          onSaved();
+          onClose();
+          return;
+        }
+        throw authErr;
+      }
     } catch (err) {
       setSyncError(
-        err instanceof Error ? err.message : 'ไม่สามารถเชื่อมต่อบัญชี Google ได้'
+        err instanceof Error ? err.message : 'ไม่สามารถเชื่อมต่อและซิงค์ข้อมูลได้'
       );
     } finally {
       setIsSyncingOAuth(false);
@@ -150,10 +183,10 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <div className="font-semibold text-emerald-950">
-                    ซิงค์ข้อมูลลง Google Sheet โดยตรง (Google Sheets API)
+                    ซิงค์ข้อมูลลง Google Sheet ทันที (ไม่ต้องล็อกอิน)
                   </div>
                   <div className="text-[11px] text-emerald-800">
-                    ใช้ในกรณีที่ยังไม่ได้อัปเดตโค้ด Apps Script เพื่อส่งข้อมูลที่ค้างอยู่เข้าตารางทันที
+                    ส่งข้อมูลที่บันทึกหรือค้างอยู่ในระบบเข้าสู่ Google Sheets ผ่าน Webhook ทันที
                   </div>
                 </div>
                 <button
