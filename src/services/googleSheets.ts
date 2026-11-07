@@ -2695,7 +2695,7 @@ export async function fetchSheetTabData(
 
 export async function appendJobTransferRecord(
   payload: JobTransferPayload
-): Promise<{ recordId: string; rowNumber: number | null }> {
+): Promise<{ recordId: string; rowNumber: number | null; syncedToSheet?: boolean }> {
   const recordId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
@@ -2828,14 +2828,7 @@ export async function appendJobTransferRecord(
     // ignore on static hosting
   }
 
-  if (!syncedToSheet) {
-    const errDetail = lastWebhookError
-      ? `: ${lastWebhookError}`
-      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
-    throw new Error(`ไม่สามารถบันทึกข้อมูลเข้า Google Sheets ได้${errDetail}`);
-  }
-
-  return { recordId, rowNumber: rowNumber ?? fallbackRowNumber };
+  return { recordId, rowNumber: rowNumber ?? fallbackRowNumber, syncedToSheet };
 }
 
 export async function completeJobTransferRecord(params: {
@@ -2844,7 +2837,7 @@ export async function completeJobTransferRecord(params: {
   endTime: string;
   duration: string;
   status?: string;
-}): Promise<void> {
+}): Promise<{ syncedToSheet: boolean }> {
   const finalStatus = params.status || 'ส่งสินค้าเรียบร้อยแล้ว';
   let completedOnSheet = false;
 
@@ -2887,7 +2880,7 @@ export async function completeJobTransferRecord(params: {
         status: finalStatus,
       });
       completedOnSheet = true;
-      return;
+      return { syncedToSheet: true };
     } catch {
       // fall through
     }
@@ -2928,12 +2921,7 @@ export async function completeJobTransferRecord(params: {
     }
   }
 
-  if (!completedOnSheet) {
-    const errDetail = lastWebhookError
-      ? `: ${lastWebhookError}`
-      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
-    throw new Error(`ไม่สามารถอัปเดตเวลาจบงานลง Google Sheets ได้${errDetail}`);
-  }
+  return { syncedToSheet: completedOnSheet };
 }
 
 export async function appendDeliveryPointRecord(
@@ -3384,7 +3372,7 @@ async function fetchNextRepairSequenceAndRow(): Promise<{
 
 export async function appendRepairRecord(
   payload: import('../types').RepairRequestPayload
-): Promise<{ id: string; rowNumber: number; sequenceNo: string }> {
+): Promise<{ id: string; rowNumber: number; sequenceNo: string; syncedToSheet?: boolean }> {
   const id = Math.random().toString(16).slice(2, 10);
   const { sequenceNo, rowNumber: initialRowNumber } =
     await fetchNextRepairSequenceAndRow();
@@ -3505,14 +3493,7 @@ export async function appendRepairRecord(
     // ignore
   }
 
-  if (!syncedToSheet) {
-    const errDetail = lastWebhookError
-      ? `: ${lastWebhookError}`
-      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
-    throw new Error(`ไม่สามารถบันทึกข้อมูลแจ้งซ่อมลง Google Sheets ได้${errDetail}`);
-  }
-
-  return { id, rowNumber, sequenceNo };
+  return { id, rowNumber, sequenceNo, syncedToSheet };
 }
 
 export async function approveRepairRecord(

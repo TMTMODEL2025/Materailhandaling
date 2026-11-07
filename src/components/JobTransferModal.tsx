@@ -495,7 +495,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         rounds: cleanRounds,
       };
 
-      const { recordId, rowNumber } = await appendJobTransferRecord(payload);
+      const { recordId, rowNumber, syncedToSheet } = await appendJobTransferRecord(payload);
 
       const startedJob: ActiveDeliveryJob = {
         rowNumber,
@@ -519,7 +519,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       setFlowStep('IN_TRANSIT');
       showSuccessToast(
         'เริ่มส่งสินค้าสำเร็จ!',
-        'ระบบบันทึกสถานะอยู่ระหว่างการส่งเรียบร้อยแล้ว'
+        syncedToSheet
+          ? 'ระบบบันทึกสถานะอยู่ระหว่างการส่งลง Google Sheets เรียบร้อยแล้ว'
+          : 'บันทึกในระบบเรียบร้อยแล้ว (จะซิงค์เข้า Google Sheets อัตโนมัติเมื่อเชื่อมต่อ Webhook)'
       );
       onSavedSuccess();
     } catch (err: unknown) {
@@ -557,7 +559,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const endT = pendingEndTime || getCurrentTimeString();
       const totalDuration = calculateDurationString(activeJob.startTime, endT);
 
-      await completeJobTransferRecord({
+      const { syncedToSheet } = await completeJobTransferRecord({
         recordId: activeJob.recordId,
         rowNumber: activeJob.rowNumber,
         endTime: endT,
@@ -579,7 +581,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
       showSuccessToast(
         'จบงานส่งสินค้าสำเร็จ!',
-        'ระบบบันทึกสถานะส่งสินค้าเรียบร้อยแล้ว'
+        syncedToSheet
+          ? 'ระบบบันทึกสถานะส่งสินค้าเรียบร้อยแล้ว'
+          : 'บันทึกในระบบเรียบร้อยแล้ว (จะซิงค์เข้า Google Sheets อัตโนมัติเมื่อเชื่อมต่อ Webhook)'
       );
 
       onSavedSuccess();
