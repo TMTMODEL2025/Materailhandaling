@@ -42,6 +42,46 @@ onAuthStateChanged(auth, (user: User | null) => {
 const APPS_SCRIPT_URL_STORAGE_KEY = 'gsheets_apps_script_url_v1';
 const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v2';
 
+// Detect if running in a static deployment (e.g. Vercel, GitHub Pages) without Express backend API
+export let isBackendApiAvailable: boolean | null =
+  typeof window !== 'undefined' &&
+  (window.location.hostname.endsWith('.vercel.app') ||
+    window.location.hostname.endsWith('.github.io') ||
+    window.location.hostname.endsWith('.pages.dev'))
+    ? false
+    : null;
+
+export function safeBackendFetch(url: string, init?: RequestInit): Promise<Response> | null {
+  if (isBackendApiAvailable === false) return null;
+  return fetch(url, init)
+    .then((res) => {
+      if (res.status === 404) {
+        isBackendApiAvailable = false;
+      }
+      return res;
+    })
+    .catch((err) => {
+      isBackendApiAvailable = false;
+      throw err;
+    });
+}
+
+export function backendPost(url: string, bodyObj: unknown, method = 'POST'): void {
+  if (isBackendApiAvailable === false) return;
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyObj),
+  })
+    .then((res) => {
+      if (res.status === 404) isBackendApiAvailable = false;
+    })
+    .catch(() => {
+      isBackendApiAvailable = false;
+    });
+}
+
+
 export const DEFAULT_APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
 
@@ -77,13 +117,15 @@ export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {
     // ignore
   }
 
-  void fetch('/api/script-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scriptUrl: clean }),
-  }).catch(() => {
-    // ignore on static hosting
-  });
+  if (isBackendApiAvailable !== false) {
+    void safeBackendFetch('/api/script-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scriptUrl: clean }),
+    })?.catch(() => {
+      // ignore on static hosting
+    });
+  }
 
   if (clean && clean.startsWith('https://script.google.com/')) {
     try {
@@ -811,11 +853,18 @@ async function callAppsScriptWebhook(
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
 void (async () => {
+  if (isBackendApiAvailable === false) return;
   try {
-    const [tokenRes, scriptRes] = await Promise.allSettled([
-      fetch('/api/google-token'),
-      fetch('/api/script-url'),
-    ]);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1200);
+    const tokenPromise = safeBackendFetch('/api/google-token', { signal: ctrl.signal });
+    const scriptPromise = safeBackendFetch('/api/script-url', { signal: ctrl.signal });
+    if (!tokenPromise || !scriptPromise) {
+      clearTimeout(timer);
+      return;
+    }
+    const [tokenRes, scriptRes] = await Promise.allSettled([tokenPromise, scriptPromise]);
+    clearTimeout(timer);
 
     if (tokenRes.status === 'fulfilled' && tokenRes.value.ok) {
       const data = (await tokenRes.value.json()) as {
@@ -892,14 +941,16 @@ export async function connectAdminGoogleAccountOnce(): Promise<string> {
     }
     cachedAccessToken = credential.accessToken;
     cachedTokenExpiresAt = Date.now() + 3500 * 1000;
-    void fetch('/api/google-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        accessToken: credential.accessToken,
-        expiresInSec: 3500,
-      }),
-    }).catch(() => {});
+    if (isBackendApiAvailable !== false) {
+      void safeBackendFetch('/api/google-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessToken: credential.accessToken,
+          expiresInSec: 3500,
+        }),
+      })?.catch(() => {});
+    }
     void flushPendingMutationsToGoogleSheet();
     return credential.accessToken;
   } finally {
@@ -918,21 +969,26 @@ async function getOrConnectAccessToken(allowPopup = true): Promise<string | null
   const silent = getSilentAccessToken();
   if (silent) return silent;
 
-  try {
-    const res = await fetch('/api/google-token');
-    if (res.ok) {
-      const data = (await res.json()) as {
-        accessToken?: string | null;
-        expiresAt?: number;
-      };
-      if (data.accessToken && data.expiresAt && data.expiresAt > Date.now() + 30000) {
-        cachedAccessToken = data.accessToken;
-        cachedTokenExpiresAt = data.expiresAt;
-        return cachedAccessToken;
+  if (isBackendApiAvailable !== false) {
+    try {
+      const tokenPromise = safeBackendFetch('/api/google-token');
+      if (tokenPromise) {
+        const res = await tokenPromise;
+        if (res.ok) {
+          const data = (await res.json()) as {
+            accessToken?: string | null;
+            expiresAt?: number;
+          };
+          if (data.accessToken && data.expiresAt && data.expiresAt > Date.now() + 30000) {
+            cachedAccessToken = data.accessToken;
+            cachedTokenExpiresAt = data.expiresAt;
+            return cachedAccessToken;
+          }
+        }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
 
   if (allowPopup && !isSigningIn) {
@@ -1403,10 +1459,37 @@ async function fetchCombinedMutationsStore(
   signal?: AbortSignal
 ): Promise<MutationsStore> {
   const local = readLocalMutationsStore();
+  if (isBackendApiAvailable === false) {
+    return local;
+  }
   try {
-    const res = await fetch('/api/mutations', { signal });
-    if (res.ok) {
-      const remote = (await res.json()) as Partial<MutationsStore>;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1200);
+    const combinedSignal = signal
+      ? AbortSignal.any
+        ? AbortSignal.any([signal, ctrl.signal])
+        : ctrl.signal
+      : ctrl.signal;
+    const fetchPromise = safeBackendFetch('/api/mutations', {
+      signal: combinedSignal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!fetchPromise) {
+      clearTimeout(timer);
+      return local;
+    }
+    const res = await fetchPromise;
+    clearTimeout(timer);
+    if (!res.ok || res.status === 404) {
+      isBackendApiAvailable = false;
+      return local;
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      isBackendApiAvailable = false;
+      return local;
+    }
+    const remote = (await res.json()) as Partial<MutationsStore>;
       const mergedJobMap = new Map<string, StoredJobTransfer>();
       (remote.jobTransfers ?? []).forEach((jt) => mergedJobMap.set(jt.recordId, jt));
       local.jobTransfers.forEach((jt) => {
@@ -1592,7 +1675,6 @@ async function fetchCombinedMutationsStore(
         repairFinancialEdits: Array.from(mergedFinancialEditMap.values()),
         fuelRecords: Array.from(mergedFuelMap.values()),
       };
-    }
   } catch {
     // ignore fetch error on static hosting
   }
@@ -2028,24 +2110,55 @@ async function queryGviz(
 
 const rowCountCache = new Map<string, { count: number; timestamp: number }>();
 
+function getStoredRowCount(gid: string): number {
+  const cached = rowCountCache.get(gid);
+  if (cached && cached.count > 0 && Date.now() - cached.timestamp < 300_000) {
+    return cached.count;
+  }
+  try {
+    const raw = localStorage.getItem(`gsheets_row_count_${gid}`);
+    if (raw) {
+      const num = parseInt(raw, 10);
+      if (!isNaN(num) && num > 0) {
+        rowCountCache.set(gid, { count: num, timestamp: Date.now() });
+        return num;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return cached?.count ?? 0;
+}
+
+function setStoredRowCount(gid: string, count: number): void {
+  if (count <= 0) return;
+  rowCountCache.set(gid, { count, timestamp: Date.now() });
+  try {
+    localStorage.setItem(`gsheets_row_count_${gid}`, String(count));
+  } catch {
+    // ignore
+  }
+}
+
 export async function fetchSheetRowCount(
   gid: string,
   signal?: AbortSignal
 ): Promise<number> {
-  const cached = rowCountCache.get(gid);
-  if (cached && Date.now() - cached.timestamp < 120_000) {
-    return cached.count;
+  const cachedCount = getStoredRowCount(gid);
+  const mem = rowCountCache.get(gid);
+  if (cachedCount > 0 && mem && Date.now() - mem.timestamp < 180_000) {
+    return cachedCount;
   }
   try {
-    const res = await queryGviz(gid, 'select count(A)', signal, 8000);
+    const res = await queryGviz(gid, 'select count(A)', signal, 6000);
     const val = res.table?.rows?.[0]?.c?.[0]?.v;
     const count = typeof val === 'number' ? val : 0;
     if (count > 0) {
-      rowCountCache.set(gid, { count, timestamp: Date.now() });
+      setStoredRowCount(gid, count);
     }
-    return count;
+    return count > 0 ? count : cachedCount;
   } catch {
-    return cached?.count ?? 0;
+    return cachedCount;
   }
 }
 
@@ -2060,16 +2173,26 @@ export async function fetchSheetTabData(
   const limit = options?.limit ?? tab.defaultLimit ?? 250;
   const search = options?.remoteSearchQuery?.trim() ?? '';
 
-  const [totalRowsInSheet, mutationsStore] = await Promise.all([
-    fetchSheetRowCount(tab.gid, options?.signal),
-    fetchCombinedMutationsStore(options?.signal),
-  ]);
+  // Get mutations store without blocking UI
+  const mutationsPromise = fetchCombinedMutationsStore(options?.signal);
+
+  let totalRowsInSheet = getStoredRowCount(tab.gid);
+
+  // If reverseOrder is needed and we have no cached count, fetch it with fast timeout
+  if (tab.reverseOrder && totalRowsInSheet === 0) {
+    totalRowsInSheet = await fetchSheetRowCount(tab.gid, options?.signal);
+  } else if (tab.reverseOrder) {
+    // Refresh row count in background without blocking current query
+    void fetchSheetRowCount(tab.gid).catch(() => {});
+  }
+
+  const mutationsStore = await mutationsPromise;
 
   let dataResponse: GvizResponse;
   let rowOffset = 0;
 
   if (search.length > 0 && totalRowsInSheet > limit) {
-    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 8000);
+    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 6000);
     const stringCols = (metaRes.table?.cols ?? []).filter(
       (c) => c.type === 'string' && (c.label || FALLBACK_COLUMN_LABELS[tab.gid]?.[c.id])
     );
@@ -2080,34 +2203,52 @@ export async function fetchSheetTabData(
         .map((c) => `lower(${c.id}) contains '${escaped}'`)
         .join(' or ');
       const searchTq = `select * where ${whereClause} limit ${limit}`;
-      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 15000);
+      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 10000);
     } else {
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        15000
+        10000
       );
     }
   } else if (tab.reverseOrder && totalRowsInSheet > limit) {
     rowOffset = Math.max(0, totalRowsInSheet - limit);
-    dataResponse = await queryGviz(
-      tab.gid,
-      `select * offset ${rowOffset}`,
-      options?.signal,
-      15000
-    );
+    try {
+      dataResponse = await queryGviz(
+        tab.gid,
+        `select * offset ${rowOffset}`,
+        options?.signal,
+        10000
+      );
+    } catch {
+      // Fallback to limit query if offset query times out
+      dataResponse = await queryGviz(
+        tab.gid,
+        `select * limit ${limit}`,
+        options?.signal,
+        8000
+      );
+      rowOffset = 0;
+    }
   } else {
     dataResponse = await queryGviz(
       tab.gid,
       `select * limit ${limit}`,
       options?.signal,
-      15000
+      10000
     );
   }
 
   const rawCols = dataResponse.table?.cols ?? [];
   let rawRows = dataResponse.table?.rows ?? [];
+
+  if (tab.reverseOrder && rowOffset > 0 && rawRows.length > 0) {
+    const estimatedTotal = rowOffset + rawRows.length;
+    if (estimatedTotal > totalRowsInSheet) {
+      setStoredRowCount(tab.gid, estimatedTotal);
+    }
+  }
 
   // Auto-discover Apps Script URL if present in column D of จุดส่งสินค้า
   if (tab.gid === '1156877149' && !configuredAppsScriptUrl) {
