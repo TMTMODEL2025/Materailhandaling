@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_FILE = path.join(__dirname, 'sheet-mutations.json');
+const DATA_FILE = process.env.VERCEL
+  ? path.join('/tmp', 'sheet-mutations.json')
+  : path.join(__dirname, 'sheet-mutations.json');
 
 interface StoredJobTransfer {
   recordId: string;
@@ -230,9 +232,41 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
 
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      res.status(200).end();
+      return;
+    }
+    next();
+  });
+
   app.get('/api/mutations', (_req, res) => {
     const store = readStore();
     res.json(store);
+  });
+
+  app.post('/api/webhook-proxy', async (req, res) => {
+    try {
+      const { scriptUrl, payload } = req.body ?? {};
+      const targetUrl = normalizeUrl(typeof scriptUrl === 'string' ? scriptUrl : undefined);
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload ?? {}),
+      });
+      const text = await response.text();
+      try {
+        const json = JSON.parse(text);
+        res.json(json);
+      } catch {
+        res.json({ ok: response.ok, rawText: text });
+      }
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
+    }
   });
 
   const DEFAULT_APPS_SCRIPT_URL =
