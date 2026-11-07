@@ -83,17 +83,36 @@ export function backendPost(url: string, bodyObj: unknown, method = 'POST'): voi
 
 
 export const DEFAULT_APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
+  'https://script.google.com/macros/s/AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg/exec';
+
+export const STALE_APPS_SCRIPT_ID =
+  'AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi';
+
+export function normalizeAppsScriptUrl(raw?: string): string {
+  if (!raw) return DEFAULT_APPS_SCRIPT_URL;
+  let url = raw.trim();
+  if (url.includes(STALE_APPS_SCRIPT_ID)) {
+    return DEFAULT_APPS_SCRIPT_URL;
+  }
+  if (url.includes('/dev')) {
+    url = url.replace(/\/dev(\?.*)?$/, '/exec$1').replace(/\/dev\/?$/, '/exec');
+  }
+  return url;
+}
 
 let configuredAppsScriptUrl: string =
-  (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined)?.trim() ||
-  DEFAULT_APPS_SCRIPT_URL;
+  normalizeAppsScriptUrl((import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined)?.trim());
 
 try {
   const savedUrl = localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY)?.trim();
   if (savedUrl && savedUrl.startsWith('https://script.google.com/')) {
-    configuredAppsScriptUrl = savedUrl;
-  } else if (!savedUrl) {
+    const normalized = normalizeAppsScriptUrl(savedUrl);
+    configuredAppsScriptUrl = normalized;
+    if (normalized !== savedUrl) {
+      localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, normalized);
+    }
+  } else {
+    configuredAppsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
     localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, DEFAULT_APPS_SCRIPT_URL);
   }
 } catch {
@@ -101,11 +120,11 @@ try {
 }
 
 export function getConfiguredAppsScriptUrl(): string {
-  return configuredAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL;
+  return normalizeAppsScriptUrl(configuredAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL);
 }
 
 export async function saveConfiguredAppsScriptUrl(url: string): Promise<void> {
-  const clean = url.trim();
+  const clean = normalizeAppsScriptUrl(url);
   configuredAppsScriptUrl = clean;
   try {
     if (clean) {
@@ -151,6 +170,10 @@ export const GOOGLE_APPS_SCRIPT_CODE = `// โค้ดสำหรับเช�
 // 5. กด "การทำให้ใช้งานได้ (Deploy)" แล้วคัดลอก URL ของเว็บแอปมาวางในแอป 1 ครั้ง (หรือกดเรียกใช้ฟังก์ชัน เชื่อมต่ออัตโนมัติ ด้านล่าง)
 
 function getTargetSpreadsheet_() {
+  try {
+    var active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active) return active;
+  } catch (err) {}
   return SpreadsheetApp.openById('${GOOGLE_SHEET_ID}');
 }
 
@@ -182,8 +205,9 @@ function saveBase64ImageToDrive(base64Data, prefix) {
 
 function เชื่อมต่ออัตโนมัติ() {
   const ss = getTargetSpreadsheet_();
-  const url = ScriptApp.getService().getUrl();
+  let url = ScriptApp.getService().getUrl();
   if (url) {
+    url = url.replace(/\/dev\/?$/, '/exec');
     const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
     if (dpSheet) {
       dpSheet.getRange('D1').setValue(url);
@@ -800,7 +824,8 @@ async function callAppsScriptWebhook(
   error?: string;
   photoUrls?: string[];
 }> {
-  const response = await fetch(scriptUrl, {
+  const targetUrl = normalizeAppsScriptUrl(scriptUrl);
+  const response = await fetch(targetUrl, {
     method: 'POST',
     headers: {
       // Use text/plain to avoid CORS preflight (OPTIONS) rejection on Google Apps Script
@@ -810,7 +835,13 @@ async function callAppsScriptWebhook(
   });
 
   if (!response.ok) {
-    lastWebhookError = `Apps Script HTTP ${response.status}`;
+    if (response.status === 404) {
+      lastWebhookError = 'ไม่พบ Webhook URL นี้ใน Google Apps Script (HTTP 404 - กรุณาตรวจสอบ URL ในเมนูเชื่อมต่อ Google Sheet)';
+    } else if (response.status === 401 || response.status === 403) {
+      lastWebhookError = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง (HTTP 403 - กรุณาตั้งค่า Who has access เป็น Anyone ใน Apps Script)';
+    } else {
+      lastWebhookError = `Apps Script HTTP ${response.status}`;
+    }
     throw new Error(lastWebhookError);
   }
 
@@ -831,13 +862,22 @@ async function callAppsScriptWebhook(
     };
   } catch {
     const htmlErrMatch = rawText.match(/font-family:monospace[^>]*>([^<]+)</i);
-    const extractedErr = htmlErrMatch?.[1]
+    let extractedErr = htmlErrMatch?.[1]
       ? htmlErrMatch[1]
           .replace(/&#39;/g, "'")
           .replace(/&quot;/g, '"')
           .replace(/&amp;/g, '&')
           .trim()
-      : 'Apps Script ไม่ได้ส่งค่ากลับเป็น JSON (กรุณาตรวจสอบโค้ดและ Deploy เวอร์ชันใหม่)';
+      : '';
+
+    if (rawText.includes('You do not have permission') || extractedErr.includes('permission')) {
+      extractedErr = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง: กรุณาเข้าไปที่ Apps Script -> การทำให้ใช้งานได้ (Deploy) -> จัดการการทำให้ใช้งานได้ -> แก้ไข และเลือก "ผู้มีสิทธิ์เข้าถึง (Who has access)" เป็น "ทุกคน (Anyone)"';
+    } else if (rawText.includes('Sorry, unable to open the file') || rawText.includes('Page not found')) {
+      extractedErr = 'Webhook URL เดิมไม่ถูกต้องหรือถูกลบไปแล้ว กรุณาอัปเดต Webhook URL ใหม่ในเมนูเชื่อมต่อ Google Sheet';
+    } else if (!extractedErr) {
+      extractedErr = 'Apps Script ไม่ได้ส่งค่ากลับเป็น JSON (กรุณาตรวจสอบโค้ดและ Deploy เวอร์ชันใหม่)';
+    }
+
     lastWebhookError = extractedErr;
     throw new Error(extractedErr);
   }
@@ -887,14 +927,20 @@ void (async () => {
       };
       if (
         sData.scriptUrl &&
-        sData.scriptUrl.startsWith('https://script.google.com/') &&
-        !configuredAppsScriptUrl
+        sData.scriptUrl.startsWith('https://script.google.com/')
       ) {
-        configuredAppsScriptUrl = sData.scriptUrl.trim();
-        try {
-          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, configuredAppsScriptUrl);
-        } catch {
-          // ignore
+        const norm = normalizeAppsScriptUrl(sData.scriptUrl);
+        if (
+          !configuredAppsScriptUrl ||
+          configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
+          configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
+        ) {
+          configuredAppsScriptUrl = norm;
+          try {
+            localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, norm);
+          } catch {
+            // ignore
+          }
         }
       }
     }
@@ -903,27 +949,32 @@ void (async () => {
   }
 
   // Also check cell D1 of จุดส่งสินค้า (gid: 1156877149) for auto-discovered Apps Script URL
-  if (!configuredAppsScriptUrl) {
-    try {
-      const gviz = await queryGviz('1156877149', 'select D limit 1');
-      const colLabel = gviz.table?.cols?.[0]?.label?.trim() ?? '';
-      const firstCell = String(gviz.table?.rows?.[0]?.c?.[0]?.v ?? '').trim();
-      const candidate = colLabel.startsWith('https://script.google.com/')
-        ? colLabel
-        : firstCell.startsWith('https://script.google.com/')
-          ? firstCell
-          : '';
-      if (candidate) {
-        configuredAppsScriptUrl = candidate;
+  try {
+    const gviz = await queryGviz('1156877149', 'select D limit 1');
+    const colLabel = gviz.table?.cols?.[0]?.label?.trim() ?? '';
+    const firstCell = String(gviz.table?.rows?.[0]?.c?.[0]?.v ?? '').trim();
+    const candidate = colLabel.startsWith('https://script.google.com/')
+      ? colLabel
+      : firstCell.startsWith('https://script.google.com/')
+        ? firstCell
+        : '';
+    if (candidate) {
+      const norm = normalizeAppsScriptUrl(candidate);
+      if (
+        !configuredAppsScriptUrl ||
+        configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
+        configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
+      ) {
+        configuredAppsScriptUrl = norm;
         try {
-          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, candidate);
+          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, norm);
         } catch {
           // ignore
         }
       }
-    } catch {
-      // ignore
     }
+  } catch {
+    // ignore
   }
 
   if (configuredAppsScriptUrl || cachedAccessToken) {
@@ -2276,14 +2327,21 @@ export async function fetchSheetTabData(
   }
 
   // Auto-discover Apps Script URL if present in column D of จุดส่งสินค้า
-  if (tab.gid === '1156877149' && !configuredAppsScriptUrl) {
+  if (tab.gid === '1156877149') {
     const colD = rawCols.find((c) => c.id === 'D');
     if (colD?.label?.trim().startsWith('https://script.google.com/')) {
-      configuredAppsScriptUrl = colD.label.trim();
-      try {
-        localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, configuredAppsScriptUrl);
-      } catch {
-        // ignore
+      const normD = normalizeAppsScriptUrl(colD.label.trim());
+      if (
+        !configuredAppsScriptUrl ||
+        configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
+        configuredAppsScriptUrl !== normD
+      ) {
+        configuredAppsScriptUrl = normD;
+        try {
+          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, normD);
+        } catch {
+          // ignore
+        }
       }
     }
   }
@@ -2773,6 +2831,13 @@ export async function appendJobTransferRecord(
     // ignore on static hosting
   }
 
+  if (!syncedToSheet) {
+    const errDetail = lastWebhookError
+      ? `: ${lastWebhookError}`
+      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
+    throw new Error(`ไม่สามารถบันทึกข้อมูลเข้า Google Sheets ได้${errDetail}`);
+  }
+
   return { recordId, rowNumber: rowNumber ?? fallbackRowNumber };
 }
 
@@ -2784,6 +2849,7 @@ export async function completeJobTransferRecord(params: {
   status?: string;
 }): Promise<void> {
   const finalStatus = params.status || 'ส่งสินค้าเรียบร้อยแล้ว';
+  let completedOnSheet = false;
 
   // 1. Update local store immediately
   const localStore = readLocalMutationsStore();
@@ -2823,6 +2889,7 @@ export async function completeJobTransferRecord(params: {
         duration: params.duration,
         status: finalStatus,
       });
+      completedOnSheet = true;
       return;
     } catch {
       // fall through
@@ -2853,13 +2920,22 @@ export async function completeJobTransferRecord(params: {
             values: [[params.endTime, params.duration, finalStatus]],
           }),
         });
-        if (!response.ok && (response.status === 401 || response.status === 403)) {
+        if (response.ok) {
+          completedOnSheet = true;
+        } else if (response.status === 401 || response.status === 403) {
           invalidateCachedToken();
         }
       }
     } catch {
       // ignore
     }
+  }
+
+  if (!completedOnSheet) {
+    const errDetail = lastWebhookError
+      ? `: ${lastWebhookError}`
+      : ' (กรุณาตรวจสอบ URL Webhook และสิทธิ์การเข้าถึงในเมนูเชื่อมต่อ Google Sheet)';
+    throw new Error(`ไม่สามารถอัปเดตเวลาจบงานลง Google Sheets ได้${errDetail}`);
   }
 }
 

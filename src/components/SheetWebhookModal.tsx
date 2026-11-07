@@ -87,13 +87,17 @@ export const SheetWebhookModal: React.FC<SheetWebhookModalProps> = ({
         if (msg.includes('auth/unauthorized-domain')) {
           // โดเมนยังไม่ได้เพิ่มใน Firebase Console ให้ลองซิงค์ผ่าน Webhook อีกครั้ง
           await flushPendingMutationsToGoogleSheet().catch(() => {});
-          showSuccessToast(
-            'ซิงค์ข้อมูลผ่าน Webhook เรียบร้อยแล้ว!',
-            'ระบบเชื่อมต่อและซิงค์ข้อมูลผ่าน Webhook (ไม่ต้องล็อกอิน) ให้อัตโนมัติ'
-          );
-          onSaved();
-          onClose();
-          return;
+          const webhookErr = getLastWebhookError();
+          if (!webhookErr) {
+            showSuccessToast(
+              'ซิงค์ข้อมูลผ่าน Webhook เรียบร้อยแล้ว!',
+              'ระบบเชื่อมต่อและซิงค์ข้อมูลผ่าน Webhook (ไม่ต้องล็อกอิน) ให้อัตโนมัติ'
+            );
+            onSaved();
+            onClose();
+            return;
+          }
+          throw new Error(webhookErr);
         }
         throw authErr;
       }

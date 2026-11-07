@@ -236,15 +236,28 @@ async function startServer() {
   });
 
   const DEFAULT_APPS_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
+    'https://script.google.com/macros/s/AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg/exec';
+  const STALE_APPS_SCRIPT_ID =
+    'AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi';
+
+  function normalizeUrl(raw?: string): string {
+    if (!raw) return DEFAULT_APPS_SCRIPT_URL;
+    let url = raw.trim();
+    if (url.includes(STALE_APPS_SCRIPT_ID)) return DEFAULT_APPS_SCRIPT_URL;
+    if (url.includes('/dev')) {
+      url = url.replace(/\/dev(\?.*)?$/, '/exec$1').replace(/\/dev\/?$/, '/exec');
+    }
+    return url;
+  }
 
   app.get('/api/script-url', (_req, res) => {
     const store = readStore();
+    const candidate =
+      store.googleScriptUrl ??
+      process.env.VITE_GOOGLE_SCRIPT_URL ??
+      DEFAULT_APPS_SCRIPT_URL;
     res.json({
-      scriptUrl:
-        store.googleScriptUrl ??
-        process.env.VITE_GOOGLE_SCRIPT_URL ??
-        DEFAULT_APPS_SCRIPT_URL,
+      scriptUrl: normalizeUrl(candidate),
     });
   });
 
@@ -252,7 +265,7 @@ async function startServer() {
     const store = readStore();
     const { scriptUrl } = req.body ?? {};
     if (typeof scriptUrl === 'string') {
-      store.googleScriptUrl = scriptUrl.trim();
+      store.googleScriptUrl = normalizeUrl(scriptUrl);
       writeStore(store);
     }
     res.json({ ok: true, scriptUrl: store.googleScriptUrl });
