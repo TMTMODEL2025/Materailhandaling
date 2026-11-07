@@ -616,11 +616,12 @@ export default function App() {
     endDateFilter,
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
+  const effectivePageSize = activeTab.gid === '378250263' ? 50 : PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / effectivePageSize));
   const paginatedRows = useMemo<SheetRow[]>(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return sortedRows.slice(start, start + PAGE_SIZE);
-  }, [sortedRows, currentPage]);
+    const start = (currentPage - 1) * effectivePageSize;
+    return sortedRows.slice(start, start + effectivePageSize);
+  }, [sortedRows, currentPage, effectivePageSize]);
 
   const repairGroupedRows = useMemo(() => {
     if (
@@ -1537,7 +1538,7 @@ export default function App() {
                     const colSpan =
                       (sheetData?.columns.length ?? 5) +
                       (activeTab.gid === '378250263' ? 2 : 1);
-                    const groupPageSize = 15;
+                    const groupPageSize = activeTab.gid === '378250263' ? 50 : 15;
                     const currentGroupPage = groupPages[status] ?? 1;
                     const groupTotalPages = Math.max(1, Math.ceil(rows.length / groupPageSize));
                     const paginatedGroupRows = rows.slice(
@@ -2183,11 +2184,11 @@ export default function App() {
             <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50/50 px-3 py-2 sm:px-5 sm:py-2.5">
               <div className="text-[11px] sm:text-xs text-slate-600">
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                  {((currentPage - 1) * PAGE_SIZE + 1).toLocaleString('th-TH')}
+                  {((currentPage - 1) * effectivePageSize + 1).toLocaleString('th-TH')}
                 </span>
                 –
                 <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                  {Math.min(currentPage * PAGE_SIZE, sortedRows.length).toLocaleString(
+                  {Math.min(currentPage * effectivePageSize, sortedRows.length).toLocaleString(
                     'th-TH'
                   )}
                 </span>{' '}
