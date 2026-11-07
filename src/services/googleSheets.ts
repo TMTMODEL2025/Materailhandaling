@@ -1393,6 +1393,7 @@ interface StoredRepairApproval {
   repairStatus?: string;
   note?: string;
   updatedAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredRepairPhotoEdit {
@@ -1440,6 +1441,7 @@ interface StoredRepairInspection {
   laborCost?: string;
   note?: string;
   updatedAt: string;
+  syncedToSheet?: boolean;
 }
 
 interface StoredFuelRecord {
@@ -1494,10 +1496,14 @@ function readLocalMutationsStore(): MutationsStore {
     const parsed = JSON.parse(raw) as Partial<MutationsStore>;
     const rawJobTransfers = Array.isArray(parsed.jobTransfers) ? parsed.jobTransfers : [];
     const rawRepairRequests = Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [];
+    const rawRepairApprovals = Array.isArray(parsed.repairApprovals) ? parsed.repairApprovals : [];
+    const rawRepairInspections = Array.isArray(parsed.repairInspections) ? parsed.repairInspections : [];
 
     // Only retain pending unsynced items in local store. Once synced to Google Sheets, Google Sheets is the source of truth.
     const jobTransfers = rawJobTransfers.filter((jt) => !jt.syncedToSheet);
     const repairRequests = rawRepairRequests.filter((rr) => !rr.syncedToSheet);
+    const repairApprovals = rawRepairApprovals.filter((ra) => !ra.syncedToSheet);
+    const repairInspections = rawRepairInspections.filter((ri) => !ri.syncedToSheet);
 
     return {
       jobTransfers,
@@ -1517,12 +1523,8 @@ function readLocalMutationsStore(): MutationsStore {
         ? parsed.jobTransferNoteEdits
         : [],
       repairRequests,
-      repairApprovals: Array.isArray(parsed.repairApprovals)
-        ? parsed.repairApprovals
-        : [],
-      repairInspections: Array.isArray(parsed.repairInspections)
-        ? parsed.repairInspections
-        : [],
+      repairApprovals,
+      repairInspections,
       repairPhotoEdits: Array.isArray(parsed.repairPhotoEdits)
         ? parsed.repairPhotoEdits
         : [],
@@ -2630,6 +2632,7 @@ export async function fetchSheetTabData(
       }
     }
     for (const insp of mutationsStore.repairInspections ?? []) {
+      if (insp.syncedToSheet) continue;
       const target = parsedRows.find(
         (r) =>
           (insp.sequenceNo && (r.values['A'] ?? '').trim() === insp.sequenceNo) ||
@@ -2637,6 +2640,11 @@ export async function fetchSheetTabData(
           (insp.rowNumber > 0 && r.rowNumber === insp.rowNumber)
       );
       if (target) {
+        const sheetInspector = (target.values['AB'] ?? '').trim();
+        const sheetStatus = (target.values['AI'] ?? '').trim();
+        if (sheetInspector || (sheetStatus && sheetStatus !== 'รอตรวจสอบ')) {
+          continue;
+        }
         target.values['AB'] = insp.inspectorName;
         target.values['AC'] = insp.inspectionDate;
         target.values['AD'] = insp.inspectionTime;
@@ -2647,13 +2655,19 @@ export async function fetchSheetTabData(
         if (insp.note !== undefined && insp.note !== '') target.values['AH'] = insp.note;
       }
     }
-    for (const app of mutationsStore.repairApprovals) {
+    for (const app of mutationsStore.repairApprovals ?? []) {
+      if (app.syncedToSheet) continue;
       const target = parsedRows.find(
         (r) =>
           (app.sequenceNo && (r.values['A'] ?? '').trim() === app.sequenceNo) ||
           (app.rowNumber > 0 && r.rowNumber === app.rowNumber)
       );
       if (target) {
+        const sheetApprover = (target.values['AE'] ?? '').trim();
+        const sheetStatus = (target.values['AI'] ?? '').trim();
+        if (sheetApprover && sheetStatus && !sheetStatus.includes('รอ')) {
+          continue;
+        }
         target.values['AE'] = app.approverName;
         target.values['AF'] = app.approvalDate;
         target.values['AG'] = app.approvalTime;

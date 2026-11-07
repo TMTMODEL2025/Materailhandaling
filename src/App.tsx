@@ -104,29 +104,12 @@ function parseIsoInputDateToTimestamp(isoDate: string): number | null {
 
 function calculatePendingApprovalCount(rows: SheetRow[]): number {
   return rows.filter((r) => {
-    const status = (r.values['AI'] ?? '').trim();
-    const repairStatus = (r.values['P'] ?? '').trim();
-    const inspector = (r.values['AB'] ?? '').trim();
-    const replyText = (r.values['AM'] ?? '').trim();
-    if (
-      status === 'รอตรวจสอบ' ||
-      repairStatus === 'รอตรวจสอบ' ||
-      (!status && !inspector)
-    ) {
-      return false;
-    }
+    const st = getRowApprovalStatus(r);
     return (
-      status === '2.⚠️รออนุมัติ' ||
-      status === 'รออนุมัติ' ||
-      status === '2.⚠️รอพิจารณา' ||
-      status === 'รอพิจารณา' ||
-      status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
-      status === '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
-      status.includes('ขอข้อมูล') ||
-      status.includes('ตอบกลับ') ||
-      status.includes('รอ') ||
-      Boolean(replyText) ||
-      !status
+      st === 'รออนุมัติ' ||
+      st === 'ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
+      st === 'ขอข้อมูลเพิ่มเติม' ||
+      st === 'รอพิจารณา'
     );
   }).length;
 }
