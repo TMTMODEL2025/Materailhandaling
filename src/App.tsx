@@ -29,6 +29,9 @@ import {
   Scale,
   Truck,
   Repeat,
+  Coins,
+  Clock,
+  Droplet,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -887,6 +890,238 @@ export default function App() {
     };
   }, [sheetData, filteredRows]);
 
+  // Real-time KPI summary cards specifically for บันทึกงานซ่อม (gid: 944294225)
+  const repairKpiMetrics = useMemo(() => {
+    let totalRequests = filteredRows.length;
+    let pendingApprovalCount = 0;
+    let pendingOnlyCount = 0;
+    let repliedCount = 0;
+    let approvedCount = 0;
+    let rejectedCount = 0;
+    let totalPartsCost = 0;
+    let totalLaborCost = 0;
+
+    const sparePartsColId =
+      sheetData?.columns.find((c) => c.label.includes('ค่าอะไหล่'))?.id ?? 'N';
+    const laborColId =
+      sheetData?.columns.find((c) => c.label.includes('ค่าแรง'))?.id ?? 'O';
+
+    filteredRows.forEach((r) => {
+      const status = getRowApprovalStatus(r);
+
+      if (
+        status === 'รออนุมัติ' ||
+        status === 'ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
+        status === 'ขอข้อมูลเพิ่มเติม' ||
+        status === 'รอพิจารณา'
+      ) {
+        pendingApprovalCount += 1;
+        if (status === 'ตอบกลับข้อมูลเพิ่มเติมแล้ว') {
+          repliedCount += 1;
+        } else {
+          pendingOnlyCount += 1;
+        }
+      } else if (status === 'อนุมัติ') {
+        approvedCount += 1;
+      } else if (status === 'ไม่อนุมัติ') {
+        rejectedCount += 1;
+      }
+
+      // Calculate spare parts cost
+      const partsRaw = r.rawValues[sparePartsColId] ?? r.rawValues['N'];
+      if (typeof partsRaw === 'number' && !Number.isNaN(partsRaw)) {
+        totalPartsCost += partsRaw;
+      } else {
+        const parsed = parseFloat(
+          String(r.values[sparePartsColId] ?? r.values['N'] ?? '').replace(/,/g, '')
+        );
+        if (!Number.isNaN(parsed)) totalPartsCost += parsed;
+      }
+
+      // Calculate labor cost
+      const laborRaw = r.rawValues[laborColId] ?? r.rawValues['O'];
+      if (typeof laborRaw === 'number' && !Number.isNaN(laborRaw)) {
+        totalLaborCost += laborRaw;
+      } else {
+        const parsed = parseFloat(
+          String(r.values[laborColId] ?? r.values['O'] ?? '').replace(/,/g, '')
+        );
+        if (!Number.isNaN(parsed)) totalLaborCost += parsed;
+      }
+    });
+
+    const totalRepairCost = totalPartsCost + totalLaborCost;
+    const approvedRate =
+      totalRequests > 0 ? Math.round((approvedCount / totalRequests) * 100) : 0;
+
+    return {
+      totalRequests,
+      pendingApprovalCount,
+      pendingOnlyCount,
+      repliedCount,
+      approvedCount,
+      rejectedCount,
+      totalPartsCost,
+      totalLaborCost,
+      totalRepairCost,
+      approvedRate,
+    };
+  }, [sheetData, filteredRows]);
+
+  // Real-time KPI summary cards specifically for บันทึกน้ำมัน (gid: 1733355146)
+  const fuelKpiMetrics = useMemo(() => {
+    let latestDieselBalance = 0;
+    let latestBenzeneBalance = 0;
+
+    let totalInLiters = 0;
+    let totalInDiesel = 0;
+    let totalInBenzene = 0;
+
+    let totalOutLiters = 0;
+    let dispenseCount = 0;
+
+    let totalOutValue = 0;
+    let latestPrice = 0;
+    let priceSumForAvg = 0;
+    let priceCountForAvg = 0;
+
+    const fuelTypeColId =
+      sheetData?.columns.find((c) => c.label.includes('ชนิดน้ำมัน'))?.id ?? 'D';
+    const inColId =
+      sheetData?.columns.find((c) => c.label.includes('รับเข้า'))?.id ?? 'E';
+    const priceColId =
+      sheetData?.columns.find((c) => c.label.includes('ราคา'))?.id ?? 'F';
+    const outColId =
+      sheetData?.columns.find((c) => c.label.includes('จ่ายออก'))?.id ?? 'G';
+    const amountColId =
+      sheetData?.columns.find((c) => c.label.includes('มูลค่า'))?.id ?? 'H';
+    const balDieselColId =
+      sheetData?.columns.find(
+        (c) => c.label.includes('คงเหลือ') && c.label.includes('ดีเซล')
+      )?.id ?? 'M';
+    const balBenzeneColId =
+      sheetData?.columns.find(
+        (c) =>
+          c.label.includes('คงเหลือ') &&
+          (c.label.includes('เบนซิน') || c.label.includes('เบนซิล'))
+      )?.id ?? 'N';
+
+    // 1. Find latest balance from top rows
+    const rowsForBalance =
+      filteredRows.length > 0 ? filteredRows : sheetData?.rows ?? [];
+    for (const r of rowsForBalance) {
+      const dBalRaw = r.rawValues[balDieselColId] ?? r.rawValues['M'];
+      const bBalRaw = r.rawValues[balBenzeneColId] ?? r.rawValues['N'];
+
+      let dParsed =
+        typeof dBalRaw === 'number'
+          ? dBalRaw
+          : parseFloat(
+              String(r.values[balDieselColId] ?? r.values['M'] ?? '').replace(
+                /,/g,
+                ''
+              )
+            );
+      let bParsed =
+        typeof bBalRaw === 'number'
+          ? bBalRaw
+          : parseFloat(
+              String(r.values[balBenzeneColId] ?? r.values['N'] ?? '').replace(
+                /,/g,
+                ''
+              )
+            );
+
+      if (!latestDieselBalance && !Number.isNaN(dParsed) && dParsed > 0) {
+        latestDieselBalance = dParsed;
+      }
+      if (!latestBenzeneBalance && !Number.isNaN(bParsed) && bParsed > 0) {
+        latestBenzeneBalance = bParsed;
+      }
+      if (latestDieselBalance > 0 && latestBenzeneBalance > 0) break;
+    }
+
+    filteredRows.forEach((r) => {
+      const fType = (r.values[fuelTypeColId] ?? r.values['D'] ?? '').trim();
+
+      // Liters In
+      const inRaw = r.rawValues[inColId] ?? r.rawValues['E'];
+      let inVal =
+        typeof inRaw === 'number'
+          ? inRaw
+          : parseFloat(
+              String(r.values[inColId] ?? r.values['E'] ?? '').replace(/,/g, '')
+            );
+      if (!Number.isNaN(inVal) && inVal > 0) {
+        totalInLiters += inVal;
+        if (fType.includes('ดีเซล')) {
+          totalInDiesel += inVal;
+        } else if (fType.includes('เบนซิน') || fType.includes('เบนซิล')) {
+          totalInBenzene += inVal;
+        }
+      }
+
+      // Liters Out
+      const outRaw = r.rawValues[outColId] ?? r.rawValues['G'];
+      let outVal =
+        typeof outRaw === 'number'
+          ? outRaw
+          : parseFloat(
+              String(r.values[outColId] ?? r.values['G'] ?? '').replace(/,/g, '')
+            );
+      if (!Number.isNaN(outVal) && outVal > 0) {
+        totalOutLiters += outVal;
+        dispenseCount += 1;
+      }
+
+      // Value / Amount
+      const amountRaw = r.rawValues[amountColId] ?? r.rawValues['H'];
+      let amountVal =
+        typeof amountRaw === 'number'
+          ? amountRaw
+          : parseFloat(
+              String(r.values[amountColId] ?? r.values['H'] ?? '').replace(/,/g, '')
+            );
+      if (!Number.isNaN(amountVal) && amountVal > 0) {
+        totalOutValue += amountVal;
+      }
+
+      // Price
+      const priceRaw = r.rawValues[priceColId] ?? r.rawValues['F'];
+      let priceVal =
+        typeof priceRaw === 'number'
+          ? priceRaw
+          : parseFloat(
+              String(r.values[priceColId] ?? r.values['F'] ?? '').replace(/,/g, '')
+            );
+      if (!Number.isNaN(priceVal) && priceVal > 0) {
+        if (!latestPrice) latestPrice = priceVal;
+        priceSumForAvg += priceVal;
+        priceCountForAvg += 1;
+      }
+    });
+
+    const avgPrice =
+      priceCountForAvg > 0
+        ? priceSumForAvg / priceCountForAvg
+        : totalOutLiters > 0
+        ? totalOutValue / totalOutLiters
+        : 0;
+
+    return {
+      latestDieselBalance,
+      latestBenzeneBalance,
+      totalInLiters,
+      totalInDiesel,
+      totalInBenzene,
+      totalOutLiters,
+      dispenseCount,
+      totalOutValue,
+      latestPrice,
+      avgPrice,
+    };
+  }, [sheetData, filteredRows]);
+
   const handleSort = (colId: string) => {
     setSortConfig((prev) => {
       if (!prev || prev.colId !== colId) {
@@ -1414,6 +1649,306 @@ export default function App() {
                 </div>
               </div>
             </div>
+          ) : activeTab.gid === '944294225' ? (
+            <div className="relative rounded-2xl bg-gradient-to-br from-indigo-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: แจ้งซ่อมทั้งหมด */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-indigo-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(99,102,241,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        แจ้งซ่อมทั้งหมด
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : repairKpiMetrics.totalRequests.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-indigo-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/80 bg-indigo-50 text-indigo-600 shadow-2xs">
+                      <Wrench className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    กำลังแสดงผล{' '}
+                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                      {repairKpiMetrics.totalRequests.toLocaleString('th-TH')}
+                    </span>{' '}
+                    จากทั้งหมด{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {(sheetData?.totalRowsInSheet ?? repairKpiMetrics.totalRequests).toLocaleString('th-TH')}
+                    </span>{' '}
+                    รายการ
+                  </div>
+                </div>
+
+                {/* Card 2: รออนุมัติ */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-amber-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(245,158,11,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        รออนุมัติ
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : repairKpiMetrics.pendingApprovalCount.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-amber-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/80 bg-amber-50 text-amber-600 shadow-2xs">
+                      <Clock className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    รออนุมัติ{' '}
+                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                      {repairKpiMetrics.pendingOnlyCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    · ตอบกลับแล้ว{' '}
+                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                      {repairKpiMetrics.repliedCount.toLocaleString('th-TH')}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Card 3: อนุมัติแล้ว / ไม่อนุมัติ */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-emerald-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(16,185,129,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        อนุมัติแล้ว / ไม่อนุมัติ
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                        <div className="flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                          <span>
+                            {isLoading && !sheetData
+                              ? '...'
+                              : repairKpiMetrics.approvedCount.toLocaleString('th-TH')}
+                          </span>
+                          <span className="font-sans text-xs font-semibold text-emerald-700">
+                            อนุมัติ
+                          </span>
+                        </div>
+                        <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700 border border-rose-200/80">
+                          ไม่อนุมัติ {repairKpiMetrics.rejectedCount.toLocaleString('th-TH')}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/80 bg-emerald-50 text-emerald-600 shadow-2xs">
+                      <CheckCircle2 className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    อนุมัติแล้วคิดเป็น{' '}
+                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                      {repairKpiMetrics.approvedRate}%
+                    </span>{' '}
+                    ของรายการที่แสดง
+                  </div>
+                </div>
+
+                {/* Card 4: ยอดรวมค่าซ่อมสุทธิ (บาท) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-violet-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(139,92,246,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ยอดรวมค่าซ่อมสุทธิ (บาท)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : `${repairKpiMetrics.totalRepairCost.toLocaleString('th-TH', {
+                                maximumFractionDigits: 0,
+                              })} ฿`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 text-violet-600 shadow-2xs">
+                      <Coins className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    อะไหล่{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {repairKpiMetrics.totalPartsCost.toLocaleString('th-TH', {
+                        maximumFractionDigits: 0,
+                      })} ฿
+                    </span>{' '}
+                    · ค่าแรง{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {repairKpiMetrics.totalLaborCost.toLocaleString('th-TH', {
+                        maximumFractionDigits: 0,
+                      })} ฿
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : activeTab.gid === '1733355146' ? (
+            <div className="relative rounded-2xl bg-gradient-to-br from-blue-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: คงเหลือน้ำมันปัจจุบัน (ลิตร) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-blue-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(59,130,246,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        คงเหลือน้ำมันปัจจุบัน (ลิตร)
+                      </div>
+                      <div className="mt-2 flex flex-col gap-1 sm:gap-1.5">
+                        <div className="flex items-baseline justify-between gap-2 font-mono text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                          <span className="text-slate-500 text-[11px] font-sans">ดีเซล:</span>
+                          <span className="text-sm sm:text-base font-bold text-blue-700">
+                            {isLoading && !sheetData
+                              ? '...'
+                              : `${fuelKpiMetrics.latestDieselBalance.toLocaleString('th-TH')} ลิตร`}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2 font-mono text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                          <span className="text-slate-500 text-[11px] font-sans">เบนซิน:</span>
+                          <span className="text-sm sm:text-base font-bold text-indigo-700">
+                            {isLoading && !sheetData
+                              ? '...'
+                              : `${fuelKpiMetrics.latestBenzeneBalance.toLocaleString('th-TH')} ลิตร`}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/80 bg-blue-50 text-blue-600 shadow-2xs">
+                      <Fuel className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    ยอดคงเหลือล่าสุดจากฐานข้อมูล
+                  </div>
+                </div>
+
+                {/* Card 2: ยอดรับเข้าสะสม (ลิตร) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-emerald-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(16,185,129,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ยอดรับเข้าสะสม (ลิตร)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-emerald-700">
+                          ลิตร
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/80 bg-emerald-50 text-emerald-600 shadow-2xs">
+                      <Droplet className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    ดีเซล{' '}
+                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                      {fuelKpiMetrics.totalInDiesel.toLocaleString('th-TH')}
+                    </span>{' '}
+                    ลิตร · เบนซิน{' '}
+                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                      {fuelKpiMetrics.totalInBenzene.toLocaleString('th-TH')}
+                    </span>{' '}
+                    ลิตร
+                  </div>
+                </div>
+
+                {/* Card 3: ยอดจ่ายออกสะสม (ลิตร) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-amber-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(245,158,11,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ยอดจ่ายออกสะสม (ลิตร)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold text-amber-700">
+                          ลิตร
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/80 bg-amber-50 text-amber-600 shadow-2xs">
+                      <Repeat className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    เบิกจ่ายทั้งหมด{' '}
+                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                      {fuelKpiMetrics.dispenseCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    ครั้ง
+                  </div>
+                </div>
+
+                {/* Card 4: มูลค่าจ่ายออกรวม (บาท) */}
+                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-violet-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(139,92,246,0.12)]">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        มูลค่าจ่ายออกรวม (บาท)
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : `${fuelKpiMetrics.totalOutValue.toLocaleString('th-TH', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })} ฿`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 text-violet-600 shadow-2xs">
+                      <Coins className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                    ราคาล่าสุด{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {fuelKpiMetrics.latestPrice.toLocaleString('th-TH', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>{' '}
+                    ฿/ลิตร · เฉลี่ย{' '}
+                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      {fuelKpiMetrics.avgPrice.toLocaleString('th-TH', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>{' '}
+                    ฿/ลิตร
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
               <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
@@ -1485,7 +2020,11 @@ export default function App() {
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
                     {activeTab.gid !== '944294225' && (
-                      <th className="w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap">
+                      <th
+                        className={`w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap ${
+                          activeTab.gid === '1733355146' ? 'hidden sm:table-cell' : ''
+                        }`}
+                      >
                         <button
                           type="button"
                           onClick={() => handleSort('__ROW__')}
@@ -1507,12 +2046,27 @@ export default function App() {
                     {sheetData?.columns.map((col) => {
                       const isSorted = sortConfig?.colId === col.id;
                       const isNumeric = col.type === 'number';
+                      const isFuelTab = activeTab.gid === '1733355146';
+                      const isFuelMainCol =
+                        isFuelTab &&
+                        (col.id === 'D' ||
+                          col.id === 'E' ||
+                          col.id === 'F' ||
+                          col.id === 'G' ||
+                          col.id === 'H' ||
+                          col.label.includes('ชนิดน้ำมัน') ||
+                          col.label.includes('รับเข้า') ||
+                          col.label.includes('ราคา') ||
+                          col.label.includes('จ่ายออก') ||
+                          col.label.includes('มูลค่า'));
+                      const isHiddenOnMobile = isFuelTab && !isFuelMainCol;
+
                       return (
                         <th
                           key={col.id}
                           className={`px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap ${
-                            isNumeric ? 'text-right' : 'text-left'
-                          }`}
+                            isHiddenOnMobile ? 'hidden sm:table-cell' : ''
+                          } ${isNumeric ? 'text-right' : 'text-left'}`}
                         >
                           <button
                             type="button"
@@ -2008,7 +2562,11 @@ export default function App() {
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >
                       {activeTab.gid !== '944294225' && (
-                        <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                        <td
+                          className={`px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap ${
+                            activeTab.gid === '1733355146' ? 'hidden sm:table-cell' : ''
+                          }`}
+                        >
                           <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
                         </td>
                       )}
@@ -2020,6 +2578,21 @@ export default function App() {
                           col.type === 'date' ||
                           col.type === 'datetime' ||
                           col.type === 'timeofday';
+
+                        const isFuelTab = activeTab.gid === '1733355146';
+                        const isFuelMainCol =
+                          isFuelTab &&
+                          (col.id === 'D' ||
+                            col.id === 'E' ||
+                            col.id === 'F' ||
+                            col.id === 'G' ||
+                            col.id === 'H' ||
+                            col.label.includes('ชนิดน้ำมัน') ||
+                            col.label.includes('รับเข้า') ||
+                            col.label.includes('ราคา') ||
+                            col.label.includes('จ่ายออก') ||
+                            col.label.includes('มูลค่า'));
+                        const isHiddenOnMobile = isFuelTab && !isFuelMainCol;
 
                         const isEditableGateCell =
                           activeTab.gid === '1156877149' && col.id === 'C';
@@ -2060,6 +2633,8 @@ export default function App() {
                                 : undefined
                             }
                             className={`px-2.5 py-2 sm:px-4 sm:py-2.5 ${
+                              isHiddenOnMobile ? 'hidden sm:table-cell' : ''
+                            } ${
                               isOver20MinDuration
                                 ? 'bg-red-50 font-bold text-red-600'
                                 : 'text-slate-800'
