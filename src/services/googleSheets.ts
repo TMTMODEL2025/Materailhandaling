@@ -204,11 +204,11 @@ function saveBase64ImageToDrive(base64Data, prefix) {
 }
 
 function เชื่อมต่ออัตโนมัติ() {
-  const ss = getTargetSpreadsheet_();
-  let url = ScriptApp.getService().getUrl();
+  var ss = getTargetSpreadsheet_();
+  var url = ScriptApp.getService().getUrl();
   if (url) {
     url = url.replace(/\/dev\/?$/, '/exec');
-    const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
+    var dpSheet = ss.getSheetByName('จุดส่งสินค้า');
     if (dpSheet) {
       dpSheet.getRange('D1').setValue(url);
     }
@@ -216,15 +216,15 @@ function เชื่อมต่ออัตโนมัติ() {
 }
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
+  var lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
-    const body = JSON.parse(e.postData.contents || '{}');
-    const action = body.action;
-    const ss = getTargetSpreadsheet_();
+    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    var action = body.action;
+    var ss = getTargetSpreadsheet_();
 
     if (action === 'registerWebhookUrl') {
-      const dpSheet = ss.getSheetByName('จุดส่งสินค้า');
+      var dpSheet = ss.getSheetByName('จุดส่งสินค้า');
       if (dpSheet && body.url) {
         dpSheet.getRange('D1').setValue(String(body.url).trim());
       }
@@ -232,24 +232,24 @@ function doPost(e) {
     }
 
     if (action === 'appendJobTransfer') {
-      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
-      const rowValues = body.rowValues || [];
+      var sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      var rowValues = body.rowValues || [];
       sheet.appendRow(rowValues);
-      const rowNumber = sheet.getLastRow();
+      var rowNumber = sheet.getLastRow();
       return jsonResponse({ ok: true, rowNumber: rowNumber });
     }
 
     if (action === 'completeJobTransfer') {
-      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const recordId = String(body.recordId || '').trim();
+      var sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var recordId = String(body.recordId || '').trim();
 
       if (recordId && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const ids = sheet.getRange(startRow, 17, numRows, 1).getValues();
-        for (let i = ids.length - 1; i >= 0; i--) {
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var ids = sheet.getRange(startRow, 17, numRows, 1).getValues();
+        for (var i = ids.length - 1; i >= 0; i--) {
           if (String(ids[i][0] || '').trim() === recordId) {
             targetRow = startRow + i;
             break;
@@ -268,16 +268,16 @@ function doPost(e) {
     }
 
     if (action === 'appendDeliveryPoint') {
-      const sheet = ss.getSheetByName('จุดส่งสินค้า');
+      var sheet = ss.getSheetByName('จุดส่งสินค้า');
       sheet.appendRow([body.date || '', body.deliveryPoint || '', body.gate || '']);
       return jsonResponse({ ok: true, rowNumber: sheet.getLastRow() });
     }
 
     if (action === 'updateDeliveryPointGate') {
-      const sheet = ss.getSheetByName('จุดส่งสินค้า');
-      const rows = sheet.getDataRange().getValues();
-      const pt = String(body.deliveryPoint || '').trim();
-      for (let i = 1; i < rows.length; i++) {
+      var sheet = ss.getSheetByName('จุดส่งสินค้า');
+      var rows = sheet.getDataRange().getValues();
+      var pt = String(body.deliveryPoint || '').trim();
+      for (var i = 1; i < rows.length; i++) {
         if (String(rows[i][1] || '').trim() === pt) {
           sheet.getRange(i + 1, 1, 1, 3).setValues([[
             body.updatedDate || rows[i][0],
@@ -291,12 +291,12 @@ function doPost(e) {
     }
 
     if (action === 'updateVehicleRegistration') {
-      const sheet = ss.getSheetByName('ฐานข้อมูลรถ');
-      const rows = sheet.getDataRange().getValues();
-      const oldReg = String(body.oldRegistration || '').trim();
-      const newReg = String(body.newRegistration || '').trim();
-      const drv = String(body.driverName || '').trim();
-      for (let i = 1; i < rows.length; i++) {
+      var sheet = ss.getSheetByName('ฐานข้อมูลรถ');
+      var rows = sheet.getDataRange().getValues();
+      var oldReg = String(body.oldRegistration || '').trim();
+      var newReg = String(body.newRegistration || '').trim();
+      var drv = String(body.driverName || '').trim();
+      for (var i = 1; i < rows.length; i++) {
         if (String(rows[i][0] || '').trim() === oldReg && (!drv || String(rows[i][8] || '').trim() === drv)) {
           sheet.getRange(i + 1, 1).setValue(newReg);
           break;
@@ -306,13 +306,13 @@ function doPost(e) {
     }
 
     if (action === 'updateVehicleField') {
-      const sheet = ss.getSheetByName('ฐานข้อมูลรถ');
-      const targetRow = (Number(body.rowNumber) || 0) + 1;
-      const colId = String(body.colId || '').trim().toUpperCase();
-      const colIndex = colId.charCodeAt(0) - 64;
-      let valToSave = String(body.newValue || '').trim();
+      var sheet = ss.getSheetByName('ฐานข้อมูลรถ');
+      var targetRow = (Number(body.rowNumber) || 0) + 1;
+      var colId = String(body.colId || '').trim().toUpperCase();
+      var colIndex = colId.charCodeAt(0) - 64;
+      var valToSave = String(body.newValue || '').trim();
       if (valToSave.indexOf('data:image') === 0) {
-        const driveUrl = saveBase64ImageToDrive(valToSave, 'vehicle_' + colId + '_row' + targetRow);
+        var driveUrl = saveBase64ImageToDrive(valToSave, 'vehicle_' + colId + '_row' + targetRow);
         valToSave = driveUrl || (valToSave.length <= 48000 ? valToSave : '');
       }
       if (targetRow >= 2 && colIndex >= 1 && colIndex <= 26) {
@@ -322,14 +322,14 @@ function doPost(e) {
     }
 
     if (action === 'updateJobTransferNote') {
-      const sheet = ss.getSheetByName('บันทึกการย้ายงาน');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const startRow = Math.max(2, (targetRow || lastRow) - 150);
-      const endRow = Math.min(lastRow, (targetRow || lastRow) + 150);
+      var sheet = ss.getSheetByName('บันทึกการย้ายงาน');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var startRow = Math.max(2, (targetRow || lastRow) - 150);
+      var endRow = Math.min(lastRow, (targetRow || lastRow) + 150);
       if (endRow >= startRow) {
-        const data = sheet.getRange(startRow, 1, endRow - startRow + 1, 9).getValues();
-        for (let i = 0; i < data.length; i++) {
+        var data = sheet.getRange(startRow, 1, endRow - startRow + 1, 9).getValues();
+        for (var i = 0; i < data.length; i++) {
           if (
             String(data[i][2] || '').trim() === String(body.driverName || '').trim() &&
             String(data[i][3] || '').trim() === String(body.vehicleNumber || '').trim() &&
@@ -348,14 +348,14 @@ function doPost(e) {
     }
 
     if (action === 'appendRepairRequest') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const rowValues = body.rowValues || [];
-      const photoUrls = [];
-      for (let j = 0; j < 9; j++) {
-        const val = rowValues[16 + j];
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var rowValues = body.rowValues || [];
+      var photoUrls = [];
+      for (var j = 0; j < 9; j++) {
+        var val = rowValues[16 + j];
         if (val && typeof val === 'string' && val.indexOf('data:image') === 0) {
-          const driveUrl = saveBase64ImageToDrive(val, 'repair_' + (rowValues[6] || rowValues[0] || 'photo') + '_' + (j + 1));
-          const safeVal = driveUrl || (val.length <= 48000 ? val : '');
+          var driveUrl = saveBase64ImageToDrive(val, 'repair_' + (rowValues[6] || rowValues[0] || 'photo') + '_' + (j + 1));
+          var safeVal = driveUrl || (val.length <= 48000 ? val : '');
           rowValues[16 + j] = safeVal;
           photoUrls.push(safeVal);
         } else {
@@ -363,21 +363,21 @@ function doPost(e) {
         }
       }
       sheet.appendRow(rowValues);
-      const rowNumber = sheet.getLastRow();
+      var rowNumber = sheet.getLastRow();
       return jsonResponse({ ok: true, rowNumber: rowNumber, photoUrls: photoUrls });
     }
 
     if (action === 'approveRepairRequest') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
 
       if (sequenceNo && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const seqData = sheet.getRange(startRow, 1, numRows, 1).getValues();
-        for (let i = seqData.length - 1; i >= 0; i--) {
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var seqData = sheet.getRange(startRow, 1, numRows, 1).getValues();
+        for (var i = seqData.length - 1; i >= 0; i--) {
           if (String(seqData[i][0] || '').trim() === sequenceNo) {
             targetRow = startRow + i;
             break;
@@ -400,19 +400,19 @@ function doPost(e) {
     }
 
     if (action === 'inspectRepairRequest') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
-      const repairRequestNo = String(body.repairRequestNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
+      var repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
-        for (let i = checkData.length - 1; i >= 0; i--) {
-          const rowSeq = String(checkData[i][0] || '').trim();
-          const rowReqNo = String(checkData[i][6] || '').trim();
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (var i = checkData.length - 1; i >= 0; i--) {
+          var rowSeq = String(checkData[i][0] || '').trim();
+          var rowReqNo = String(checkData[i][6] || '').trim();
           if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
             targetRow = startRow + i;
             break;
@@ -438,19 +438,19 @@ function doPost(e) {
     }
 
     if (action === 'updateRepairPhotos') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
-      const repairRequestNo = String(body.repairRequestNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
+      var repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = 2;
-        const numRows = lastRow - startRow + 1;
-        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
-        for (let i = checkData.length - 1; i >= 0; i--) {
-          const rowSeq = String(checkData[i][0] || '').trim();
-          const rowReqNo = String(checkData[i][6] || '').trim();
+        var startRow = 2;
+        var numRows = lastRow - startRow + 1;
+        var checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (var i = checkData.length - 1; i >= 0; i--) {
+          var rowSeq = String(checkData[i][0] || '').trim();
+          var rowReqNo = String(checkData[i][6] || '').trim();
           if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
             targetRow = startRow + i;
             break;
@@ -458,15 +458,15 @@ function doPost(e) {
         }
       }
 
-      const photoUrls = [];
+      var photoUrls = [];
       if (targetRow >= 2 && Array.isArray(body.photos)) {
-        const rowPhotos = [];
-        for (let j = 0; j < 9; j++) {
-          let p = body.photos[j];
+        var rowPhotos = [];
+        for (var j = 0; j < 9; j++) {
+          var p = body.photos[j];
           if (p !== undefined && p !== null && String(p).trim() !== '') {
             p = String(p).trim();
             if (p.indexOf('data:image') === 0) {
-              const driveUrl = saveBase64ImageToDrive(p, 'repair_' + (repairRequestNo || sequenceNo || targetRow) + '_' + (j + 1));
+              var driveUrl = saveBase64ImageToDrive(p, 'repair_' + (repairRequestNo || sequenceNo || targetRow) + '_' + (j + 1));
               p = driveUrl || p;
             }
             rowPhotos.push(p);
@@ -482,19 +482,19 @@ function doPost(e) {
     }
 
     if (action === 'updateRepairAdditionalDetails') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
-      const repairRequestNo = String(body.repairRequestNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
+      var repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
-        for (let i = checkData.length - 1; i >= 0; i--) {
-          const rowSeq = String(checkData[i][0] || '').trim();
-          const rowReqNo = String(checkData[i][6] || '').trim();
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (var i = checkData.length - 1; i >= 0; i--) {
+          var rowSeq = String(checkData[i][0] || '').trim();
+          var rowReqNo = String(checkData[i][6] || '').trim();
           if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
             targetRow = startRow + i;
             break;
@@ -503,26 +503,25 @@ function doPost(e) {
       }
 
       if (targetRow >= 2) {
-        // AK is column 37 (1-based)
         sheet.getRange(targetRow, 37).setValue(String(body.additionalDetails || '').trim());
       }
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
 
     if (action === 'updateRepairFinancialDetails') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
-      const repairRequestNo = String(body.repairRequestNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
+      var repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
-        for (let i = checkData.length - 1; i >= 0; i--) {
-          const rowSeq = String(checkData[i][0] || '').trim();
-          const rowReqNo = String(checkData[i][6] || '').trim();
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (var i = checkData.length - 1; i >= 0; i--) {
+          var rowSeq = String(checkData[i][0] || '').trim();
+          var rowReqNo = String(checkData[i][6] || '').trim();
           if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
             targetRow = startRow + i;
             break;
@@ -540,19 +539,19 @@ function doPost(e) {
     }
 
     if (action === 'updateRepairReplyDetails') {
-      const sheet = ss.getSheetByName('บันทึกงานซ่อม');
-      const lastRow = sheet.getLastRow();
-      let targetRow = Number(body.rowNumber) || 0;
-      const sequenceNo = String(body.sequenceNo || '').trim();
-      const repairRequestNo = String(body.repairRequestNo || '').trim();
+      var sheet = ss.getSheetByName('บันทึกงานซ่อม');
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var sequenceNo = String(body.sequenceNo || '').trim();
+      var repairRequestNo = String(body.repairRequestNo || '').trim();
 
       if ((repairRequestNo || sequenceNo) && lastRow >= 2) {
-        const startRow = Math.max(2, lastRow - 300);
-        const numRows = lastRow - startRow + 1;
-        const checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
-        for (let i = checkData.length - 1; i >= 0; i--) {
-          const rowSeq = String(checkData[i][0] || '').trim();
-          const rowReqNo = String(checkData[i][6] || '').trim();
+        var startRow = Math.max(2, lastRow - 300);
+        var numRows = lastRow - startRow + 1;
+        var checkData = sheet.getRange(startRow, 1, numRows, 7).getValues();
+        for (var i = checkData.length - 1; i >= 0; i--) {
+          var rowSeq = String(checkData[i][0] || '').trim();
+          var rowReqNo = String(checkData[i][6] || '').trim();
           if ((repairRequestNo && rowReqNo === repairRequestNo) || (sequenceNo && rowSeq === sequenceNo)) {
             targetRow = startRow + i;
             break;
@@ -561,10 +560,8 @@ function doPost(e) {
       }
 
       if (targetRow >= 2) {
-        // AM is column 39 (1-based)
         sheet.getRange(targetRow, 39).setValue(String(body.replyDetails || '').trim());
         if (body.replyDetails && String(body.replyDetails).trim() !== '') {
-          // AI is column 35 (1-based)
           sheet.getRange(targetRow, 35).setValue('4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว');
         }
       }
@@ -572,11 +569,11 @@ function doPost(e) {
     }
 
     if (action === 'appendFuelRecord') {
-      const sheet = ss.getSheetByName('บันทึกน้ำมัน');
+      var sheet = ss.getSheetByName('บันทึกน้ำมัน');
       if (sheet) {
-        const rowValues = body.rowValues || [];
+        var rowValues = body.rowValues || [];
         sheet.appendRow(rowValues);
-        const rowNumber = sheet.getLastRow();
+        var rowNumber = sheet.getLastRow();
         return jsonResponse({ ok: true, rowNumber: rowNumber });
       }
       return jsonResponse({ ok: false, error: 'Sheet บันทึกน้ำมัน not found' });
