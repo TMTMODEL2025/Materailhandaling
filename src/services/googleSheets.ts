@@ -214,7 +214,13 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
-    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    var rawContents = (e && e.postData && e.postData.contents) ? String(e.postData.contents) : '{}';
+    var body = {};
+    try {
+      body = JSON.parse(rawContents);
+    } catch (parseErr) {
+      body = {};
+    }
     var action = body.action;
     var ss = getTargetSpreadsheet_();
 
@@ -818,123 +824,103 @@ async function callAppsScriptWebhook(
 }> {
   const targetUrl = normalizeAppsScriptUrl(scriptUrl);
 
-  try {
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      headers: {
-        // Use text/plain to avoid CORS preflight (OPTIONS) rejection on Google Apps Script
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: JSON.stringify(payload),
-    });
+  // 1. Primary Attempt: Call Serverless Proxy (/api/webhook-proxy) first to avoid browser CORS limits
+  if (isBackendApiAvailable !== false) {
+    try {
+      const proxyRes = await fetch('/api/webhook-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scriptUrl: targetUrl, payload }),
+      });
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        lastWebhookError = 'ไม่พบ Webhook URL นี้ใน Google Apps Script (HTTP 404 - กรุณาตรวจสอบ URL ในเมนูเชื่อมต่อ Google Sheet)';
-      } else if (response.status === 401 || response.status === 403) {
-        lastWebhookError = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง (HTTP 403 - กรุณาตั้งค่า Who has access เป็น Anyone ใน Apps Script)';
-      } else {
-        lastWebhookError = `Apps Script HTTP ${response.status}`;
+      if (proxyRes.ok) {
+        const pData = (await proxyRes.json()) as {
+          ok?: boolean;
+          rowNumber?: number | null;
+          error?: string;
+          photoUrls?: string[];
+        };
+        if (pData && pData.ok !== false) {
+          lastWebhookError = null;
+          return pData;
+        }
+        if (pData && pData.error) {
+          lastWebhookError = pData.error;
+        }
+      } else if (proxyRes.status === 404) {
+        isBackendApiAvailable = false;
       }
-      throw new Error(lastWebhookError);
+    } catch {
+      // proxy unavailable or network error, fall through to direct fetch
     }
+  }
 
-    const rawText = await response.text();
-    let data: {
+  // 2. Secondary Attempt: Direct fetch from browser using simple request (text/plain) & redirect: 'follow'
+  // CRITICAL: NEVER use 'application/json' to prevent CORS preflight OPTIONS rejection.
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify(payload),
+    redirect: 'follow',
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      lastWebhookError = 'ไม่พบ Webhook URL นี้ใน Google Apps Script (HTTP 404 - กรุณาตรวจสอบ URL ในเมนูเชื่อมต่อ Google Sheet)';
+    } else if (response.status === 401 || response.status === 403) {
+      lastWebhookError = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง (HTTP 403 - กรุณาตั้งค่า Who has access เป็น Anyone ใน Apps Script)';
+    } else {
+      lastWebhookError = `Apps Script HTTP ${response.status}`;
+    }
+    throw new Error(lastWebhookError);
+  }
+
+  const rawText = await response.text();
+  let data: {
+    ok?: boolean;
+    rowNumber?: number | null;
+    error?: string;
+    photoUrls?: string[];
+  };
+
+  try {
+    data = JSON.parse(rawText) as {
       ok?: boolean;
       rowNumber?: number | null;
       error?: string;
       photoUrls?: string[];
     };
+  } catch {
+    const htmlErrMatch = rawText.match(/font-family:monospace[^>]*>([^<]+)</i);
+    let extractedErr = htmlErrMatch?.[1]
+      ? htmlErrMatch[1]
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&')
+          .trim()
+      : '';
 
-    try {
-      data = JSON.parse(rawText) as {
-        ok?: boolean;
-        rowNumber?: number | null;
-        error?: string;
-        photoUrls?: string[];
-      };
-    } catch {
-      const htmlErrMatch = rawText.match(/font-family:monospace[^>]*>([^<]+)</i);
-      let extractedErr = htmlErrMatch?.[1]
-        ? htmlErrMatch[1]
-            .replace(/&#39;/g, "'")
-            .replace(/&quot;/g, '"')
-            .replace(/&amp;/g, '&')
-            .trim()
-        : '';
-
-      if (rawText.includes('You do not have permission') || extractedErr.includes('permission')) {
-        extractedErr = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง: กรุณาเข้าไปที่ Apps Script -> การทำให้ใช้งานได้ (Deploy) -> จัดการการทำให้ใช้งานได้ -> แก้ไข และเลือก "ผู้มีสิทธิ์เข้าถึง (Who has access)" เป็น "ทุกคน (Anyone)"';
-      } else if (rawText.includes('Sorry, unable to open the file') || rawText.includes('Page not found')) {
-        extractedErr = 'Webhook URL เดิมไม่ถูกต้องหรือถูกลบไปแล้ว กรุณาอัปเดต Webhook URL ใหม่ในเมนูเชื่อมต่อ Google Sheet';
-      } else if (!extractedErr) {
-        extractedErr = 'Apps Script ไม่ได้ส่งค่ากลับเป็น JSON (กรุณาตรวจสอบโค้ดและ Deploy เวอร์ชันใหม่)';
-      }
-
-      lastWebhookError = extractedErr;
-      throw new Error(extractedErr);
+    if (rawText.includes('You do not have permission') || extractedErr.includes('permission')) {
+      extractedErr = 'สิทธิ์เข้าถึง Apps Script ไม่ถูกต้อง: กรุณาเข้าไปที่ Apps Script -> การทำให้ใช้งานได้ (Deploy) -> จัดการการทำให้ใช้งานได้ -> แก้ไข และเลือก "ผู้มีสิทธิ์เข้าถึง (Who has access)" เป็น "ทุกคน (Anyone)"';
+    } else if (rawText.includes('Sorry, unable to open the file') || rawText.includes('Page not found')) {
+      extractedErr = 'Webhook URL เดิมไม่ถูกต้องหรือถูกลบไปแล้ว กรุณาอัปเดต Webhook URL ใหม่ในเมนูเชื่อมต่อ Google Sheet';
+    } else if (!extractedErr) {
+      extractedErr = 'Apps Script ไม่ได้ส่งค่ากลับเป็น JSON (กรุณาตรวจสอบโค้ดและ Deploy เวอร์ชันใหม่)';
     }
 
-    if (data.ok === false) {
-      lastWebhookError = data.error || 'Apps Script เกิดข้อผิดพลาดในการทำงาน';
-      throw new Error(lastWebhookError);
-    }
-
-    lastWebhookError = null;
-    return data;
-  } catch (err: unknown) {
-    const errMsg = String(err);
-
-    // If direct fetch fails due to CORS policy block / NetworkError / TypeError:
-    if (
-      errMsg.includes('Failed to fetch') ||
-      errMsg.includes('NetworkError') ||
-      errMsg.includes('CORS') ||
-      errMsg.includes('TypeError')
-    ) {
-      // 1. Attempt backend/Vercel serverless proxy first
-      try {
-        const proxyRes = await fetch('/api/webhook-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scriptUrl: targetUrl, payload }),
-        });
-        if (proxyRes.ok) {
-          const pData = (await proxyRes.json()) as {
-            ok?: boolean;
-            rowNumber?: number | null;
-            error?: string;
-            photoUrls?: string[];
-          };
-          if (pData && pData.ok !== false) {
-            lastWebhookError = null;
-            return pData;
-          }
-        }
-      } catch {
-        // continue to no-cors fallback
-      }
-
-      // 2. Fallback to no-cors mode (Bypasses browser CORS policy completely to execute Google Apps Script doPost)
-      try {
-        await fetch(targetUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-          },
-          body: JSON.stringify(payload),
-        });
-        lastWebhookError = null;
-        return { ok: true };
-      } catch {
-        // ignore
-      }
-    }
-
-    throw err;
+    lastWebhookError = extractedErr;
+    throw new Error(extractedErr);
   }
+
+  if (data.ok === false) {
+    lastWebhookError = data.error || 'Apps Script เกิดข้อผิดพลาดในการทำงาน';
+    throw new Error(lastWebhookError);
+  }
+
+  lastWebhookError = null;
+  return data;
 }
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)

@@ -256,6 +256,7 @@ async function startServer() {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload ?? {}),
+        redirect: 'follow',
       });
       const text = await response.text();
       try {
