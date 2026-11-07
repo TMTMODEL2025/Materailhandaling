@@ -1357,65 +1357,126 @@ function playNotificationChime() {
 
       {/* Left Sidebar Navigation */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-68 shrink-0 flex-col border-r border-slate-200/90 bg-slate-50/70 backdrop-blur-xs transition-transform duration-200 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 ${
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-slate-200/90 bg-white px-4 py-3.5">
           <a
             href="#top"
             onClick={(e) => {
               e.preventDefault();
               handleSelectTab(SHEET_TABS[0]);
             }}
-            className="text-sm font-bold tracking-tight text-slate-900 truncate"
+            className="flex items-center gap-2.5 min-w-0"
           >
-            ระบบขนส่งและงานซ่อมบำรุง
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-amber-400 shadow-xs">
+              <Truck className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-bold tracking-tight text-slate-900 truncate">
+                ระบบขนส่งและงานซ่อมบำรุง
+              </div>
+              <div className="text-[11px] font-medium text-slate-500 truncate">
+                เมนูหลักจัดการฐานข้อมูล
+              </div>
+            </div>
           </a>
           <button
             type="button"
             onClick={() => setIsSidebarOpen(false)}
             aria-label="ปิดเมนู"
-            className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 py-4">
-          <div className="px-2.5 pb-2 text-xs font-semibold text-slate-400">
-            เมนูตารางข้อมูลทั้งหมด
+        <div className="flex-1 overflow-y-auto px-3 py-3.5">
+          <div className="px-2 pb-2 text-[11px] font-semibold tracking-wide text-slate-400">
+            เมนูหลัก (ตารางข้อมูล)
           </div>
-          <nav className="space-y-1.5">
+          <nav className="space-y-2">
             {SHEET_TABS.map((tab) => {
               const isSelected = activeTab.gid === tab.gid;
               const isRepairTab = tab.gid === '944294225';
               const isFuelTab = tab.gid === '1733355146';
 
+              const renderTabIcon = () => {
+                const iconClass = 'h-4 w-4 shrink-0';
+                switch (tab.gid) {
+                  case '606634465':
+                    return <Repeat className={iconClass} />;
+                  case '944294225':
+                    return <Wrench className={iconClass} />;
+                  case '378250263':
+                    return <Truck className={iconClass} />;
+                  case '1733355146':
+                    return <Fuel className={iconClass} />;
+                  case '1031154414':
+                    return <SlidersHorizontal className={iconClass} />;
+                  case '1032541508':
+                    return <Calendar className={iconClass} />;
+                  case '1156877149':
+                    return <Home className={iconClass} />;
+                  case '1295975917':
+                    return <Scale className={iconClass} />;
+                  default:
+                    return <Truck className={iconClass} />;
+                }
+              };
+
               return (
                 <div key={tab.gid} className="space-y-1">
+                  {/* เมนูหลัก: เด่นชัด มีกรอบไอคอนและตัวอักษรหนา */}
                   <button
                     type="button"
                     onClick={() => handleSelectTab(tab)}
-                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                    className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
                       isSelected
-                        ? 'bg-slate-900 text-white shadow-2xs'
-                        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                        ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
+                        : 'bg-white text-slate-800 border border-slate-200/80 shadow-2xs hover:border-slate-300 hover:bg-slate-100/70 hover:text-slate-950'
                     }`}
                   >
-                    <span className="truncate">{tab.name}</span>
-                    <span
-                      className={`ml-2 text-xs whitespace-nowrap shrink-0 ${
-                        isSelected ? 'text-slate-300' : 'text-slate-400'
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                          isSelected
+                            ? 'bg-white/15 text-amber-300'
+                            : 'bg-slate-100 text-slate-700 group-hover:bg-slate-200/80 group-hover:text-slate-900'
+                        }`}
+                      >
+                        {renderTabIcon()}
+                      </span>
+                      <div className="min-w-0">
+                        <div
+                          className={`truncate text-sm font-bold leading-snug ${
+                            isSelected ? 'text-white' : 'text-slate-900'
+                          }`}
+                        >
+                          {tab.name}
+                        </div>
+                        <div
+                          className={`truncate text-[11px] leading-tight ${
+                            isSelected ? 'text-slate-300' : 'text-slate-500'
+                          }`}
+                        >
+                          {tab.category}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight
+                      className={`ml-1.5 h-4 w-4 shrink-0 transition-transform ${
+                        isSelected
+                          ? 'text-amber-300 translate-x-0.5'
+                          : 'text-slate-300 group-hover:text-slate-500'
                       }`}
-                    >
-                      {tab.category}
-                    </span>
+                    />
                   </button>
 
-                  {/* เมนูย่อยของ บันทึกงานซ่อม */}
+                  {/* เมนูย่อยของ บันทึกงานซ่อม (ขนาดกะทัดรัด เยื้องเข้าด้านใน ไม่แย่งความเด่นเมนูหลัก) */}
                   {isRepairTab && (
-                    <div className="ml-3 pl-3 border-l-2 border-amber-300/80 space-y-1 py-1">
+                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
                       <button
                         type="button"
                         onClick={() => {
@@ -1425,10 +1486,10 @@ function playNotificationChime() {
                           }
                           setIsRepairModalOpen(true);
                         }}
-                        className="flex w-full items-center gap-2 rounded-lg bg-amber-50/80 hover:bg-amber-100/90 px-2.5 py-1.5 text-left text-xs font-semibold text-amber-900 transition-colors border border-amber-200/70 shadow-2xs"
+                        className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
                       >
-                        <Wrench className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-                        <span className="truncate">+ บันทึกแจ้งซ่อม</span>
+                        <Plus className="h-3.5 w-3.5 text-amber-600 shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="truncate">บันทึกแจ้งซ่อม</span>
                       </button>
 
                       <button
@@ -1437,14 +1498,14 @@ function playNotificationChime() {
                           setIsSidebarOpen(false);
                           setIsApprovalModalOpen(true);
                         }}
-                        className="flex w-full items-center justify-between rounded-lg bg-emerald-50/90 hover:bg-emerald-100 px-2.5 py-1.5 text-left text-xs font-semibold text-emerald-800 transition-colors border border-emerald-200/70 shadow-2xs"
+                        className="group flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                           <span className="truncate">ผู้จัดการอนุมัติงานซ่อม</span>
                         </div>
                         {pendingApprovalCount > 0 && (
-                          <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-red-600 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white shadow-2xs shrink-0 animate-pulse">
+                          <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-red-600 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white shadow-2xs shrink-0 tabular-nums">
                             {pendingApprovalCount.toLocaleString('th-TH')}
                           </span>
                         )}
@@ -1452,9 +1513,9 @@ function playNotificationChime() {
                     </div>
                   )}
 
-                  {/* เมนูย่อยของ บันทึกน้ำมัน */}
+                  {/* เมนูย่อยของ บันทึกน้ำมัน (ขนาดกะทัดรัด เยื้องเข้าด้านใน) */}
                   {isFuelTab && (
-                    <div className="ml-3 pl-3 border-l-2 border-sky-300/80 space-y-1 py-1">
+                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
                       <button
                         type="button"
                         onClick={() => {
@@ -1464,10 +1525,10 @@ function playNotificationChime() {
                           }
                           setIsFuelModalOpen(true);
                         }}
-                        className="flex w-full items-center gap-2 rounded-lg bg-sky-50/90 hover:bg-sky-100 px-2.5 py-1.5 text-left text-xs font-semibold text-sky-900 transition-colors border border-sky-200/70 shadow-2xs"
+                        className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
                       >
-                        <Fuel className="h-3.5 w-3.5 text-sky-700 shrink-0" />
-                        <span className="truncate">+ บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
+                        <Plus className="h-3.5 w-3.5 text-sky-600 shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="truncate">บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
                       </button>
                     </div>
                   )}
@@ -1477,9 +1538,9 @@ function playNotificationChime() {
           </nav>
         </div>
 
-        <div className="border-t border-slate-200 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs">
+        <div className="border-t border-slate-200/90 bg-white px-4 py-2.5 flex items-center justify-between text-xs">
           <span className="text-[11px] font-medium text-slate-500">เวอร์ชันระบบ</span>
-          <span className="font-mono font-semibold px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 text-[11px]">
+          <span className="font-mono font-semibold text-slate-700 text-[11px] tabular-nums">
             v{APP_VERSION}
           </span>
         </div>
@@ -1703,19 +1764,19 @@ function playNotificationChime() {
 
           {/* Dashboard KPI, Search & Table (Hidden on mobile when on บันทึกการย้ายงาน so mobile shows ONLY the form) */}
           <div className={activeTab.gid === '606634465' ? 'hidden md:block' : 'block'}>
-          {/* Glassmorphism 4-Card KPI Summary Strip */}
+          {/* Glassmorphism 4-Card KPI Summary Strip (Unified across all tabs) */}
           {activeTab.gid === '606634465' ? (
             <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
               <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
                 {/* Card 1: น้ำหนักที่ย้าย (ตัน) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(14,116,144,0.10)]">
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-sky-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         1. น้ำหนักที่ย้าย (ตัน)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -1727,18 +1788,18 @@ function playNotificationChime() {
                                 }
                               )}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-sky-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-sky-700">
                           ตัน
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200/70 bg-sky-500/10 text-sky-700 backdrop-blur-md">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200/70 bg-sky-500/10 text-sky-700 backdrop-blur-sm">
                       <Scale className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     รวม{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {jobTransferKpiMetrics.totalWeightKg.toLocaleString('th-TH', {
                         maximumFractionDigits: 0,
                       })}
@@ -1748,14 +1809,14 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 2: จำนวนรถที่ย้าย (คัน) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(79,70,229,0.10)]">
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         2. จำนวนรถที่ย้าย (คัน)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -1763,18 +1824,18 @@ function playNotificationChime() {
                                 'th-TH'
                               )}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-indigo-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-indigo-700">
                           คัน
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-md">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-sm">
                       <Truck className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     พนักงานขับรถปฏิบัติงาน{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {jobTransferKpiMetrics.driverCount.toLocaleString('th-TH')}
                     </span>{' '}
                     คน
@@ -1782,14 +1843,14 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 3: รอบการย้ายรวม (เที่ยว) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(217,119,6,0.10)]">
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         3. รอบการย้ายรวม (เที่ยว)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -1797,18 +1858,18 @@ function playNotificationChime() {
                                 'th-TH'
                               )}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-amber-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
                           เที่ยว
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-md">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
                       <Repeat className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     จากรายการบันทึก{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {jobTransferKpiMetrics.totalRecords.toLocaleString('th-TH')}
                     </span>{' '}
                     รายการ
@@ -1816,14 +1877,14 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 4: ส่งสินค้าสำเร็จ (รายการ) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/80 bg-white/70 px-3.5 py-3 sm:p-4 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white/85 hover:shadow-[0_12px_36px_rgb(5,150,105,0.10)]">
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         4. ส่งสินค้าสำเร็จ (รายการ)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -1831,22 +1892,22 @@ function playNotificationChime() {
                                 'th-TH'
                               )}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-emerald-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
                           รายการ
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-md">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     กำลังส่ง{' '}
-                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-amber-700 tabular-nums">
                       {jobTransferKpiMetrics.inTransitCount.toLocaleString('th-TH')}
                     </span>{' '}
                     รายการ · สำเร็จ{' '}
-                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-emerald-700 tabular-nums">
                       {jobTransferKpiMetrics.completionRate}%
                     </span>
                   </div>
@@ -1857,35 +1918,35 @@ function playNotificationChime() {
             <div className="relative rounded-2xl bg-gradient-to-br from-indigo-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
               <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
                 {/* Card 1: แจ้งซ่อมทั้งหมด */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-indigo-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(99,102,241,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         แจ้งซ่อมทั้งหมด
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
                             : repairKpiMetrics.totalRequests.toLocaleString('th-TH')}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-indigo-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-indigo-700">
                           รายการ
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/80 bg-indigo-50 text-indigo-600 shadow-2xs">
-                      <Wrench className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-sm">
+                      <Wrench className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     กำลังแสดงผล{' '}
-                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-indigo-700 tabular-nums">
                       {repairKpiMetrics.totalRequests.toLocaleString('th-TH')}
                     </span>{' '}
                     จากทั้งหมด{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {(sheetData?.totalRowsInSheet ?? repairKpiMetrics.totalRequests).toLocaleString('th-TH')}
                     </span>{' '}
                     รายการ
@@ -1893,71 +1954,71 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 2: รออนุมัติ */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-amber-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(245,158,11,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         รออนุมัติ
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
                             : repairKpiMetrics.pendingApprovalCount.toLocaleString('th-TH')}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-amber-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
                           รายการ
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/80 bg-amber-50 text-amber-600 shadow-2xs">
-                      <Clock className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
+                      <Clock className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     รออนุมัติ{' '}
-                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-amber-700 tabular-nums">
                       {repairKpiMetrics.pendingOnlyCount.toLocaleString('th-TH')}
                     </span>{' '}
                     · ตอบกลับแล้ว{' '}
-                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-indigo-700 tabular-nums">
                       {repairKpiMetrics.repliedCount.toLocaleString('th-TH')}
                     </span>
                   </div>
                 </div>
 
                 {/* Card 3: อนุมัติแล้ว / ไม่อนุมัติ */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-emerald-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(16,185,129,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         อนุมัติแล้ว / ไม่อนุมัติ
                       </div>
                       <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                        <div className="flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                        <div className="flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                           <span>
                             {isLoading && !sheetData
                               ? '...'
                               : repairKpiMetrics.approvedCount.toLocaleString('th-TH')}
                           </span>
-                          <span className="font-sans text-xs font-semibold text-emerald-700">
+                          <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
                             อนุมัติ
                           </span>
                         </div>
-                        <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700 border border-rose-200/80">
+                        <span className="inline-flex items-center rounded-md bg-rose-500/10 px-2 py-0.5 font-sans text-xs font-bold tracking-tight text-rose-700 border border-rose-200/70 backdrop-blur-sm tabular-nums">
                           ไม่อนุมัติ {repairKpiMetrics.rejectedCount.toLocaleString('th-TH')}
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/80 bg-emerald-50 text-emerald-600 shadow-2xs">
-                      <CheckCircle2 className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                      <CheckCircle2 className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     อนุมัติแล้วคิดเป็น{' '}
-                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-emerald-700 tabular-nums">
                       {repairKpiMetrics.approvedRate}%
                     </span>{' '}
                     ของรายการที่แสดง
@@ -1965,14 +2026,14 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 4: ยอดรวมค่าซ่อมสุทธิ (บาท) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-violet-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(139,92,246,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         ยอดรวมค่าซ่อมสุทธิ (บาท)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -1982,19 +2043,19 @@ function playNotificationChime() {
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 text-violet-600 shadow-2xs">
-                      <Coins className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/70 bg-violet-500/10 text-violet-700 backdrop-blur-sm">
+                      <Coins className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     อะไหล่{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {repairKpiMetrics.totalPartsCost.toLocaleString('th-TH', {
                         maximumFractionDigits: 0,
                       })} ฿
                     </span>{' '}
                     · ค่าแรง{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {repairKpiMetrics.totalLaborCost.toLocaleString('th-TH', {
                         maximumFractionDigits: 0,
                       })} ฿
@@ -2004,28 +2065,28 @@ function playNotificationChime() {
               </div>
             </div>
           ) : activeTab.gid === '1733355146' ? (
-            <div className="relative rounded-2xl bg-gradient-to-br from-blue-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+            <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
               <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
                 {/* Card 1: คงเหลือน้ำมันปัจจุบัน (ลิตร) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-blue-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(59,130,246,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         คงเหลือน้ำมันปัจจุบัน (ลิตร)
                       </div>
                       <div className="mt-2 flex flex-col gap-1 sm:gap-1.5">
-                        <div className="flex items-baseline justify-between gap-2 font-mono text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                        <div className="flex items-baseline justify-between gap-2 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
                           <span className="text-slate-500 text-[11px] font-sans">ดีเซล:</span>
-                          <span className="text-sm sm:text-base font-bold text-blue-700">
+                          <span className="font-sans text-sm sm:text-base font-extrabold tracking-tight text-blue-700 tabular-nums">
                             {isLoading && !sheetData
                               ? '...'
                               : `${fuelKpiMetrics.latestDieselBalance.toLocaleString('th-TH')} ลิตร`}
                           </span>
                         </div>
-                        <div className="flex items-baseline justify-between gap-2 font-mono text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                        <div className="flex items-baseline justify-between gap-2 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
                           <span className="text-slate-500 text-[11px] font-sans">เบนซิน:</span>
-                          <span className="text-sm sm:text-base font-bold text-indigo-700">
+                          <span className="font-sans text-sm sm:text-base font-extrabold tracking-tight text-indigo-700 tabular-nums">
                             {isLoading && !sheetData
                               ? '...'
                               : `${fuelKpiMetrics.latestBenzeneBalance.toLocaleString('th-TH')} ลิตร`}
@@ -2033,45 +2094,45 @@ function playNotificationChime() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/80 bg-blue-50 text-blue-600 shadow-2xs">
-                      <Fuel className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/70 bg-blue-500/10 text-blue-700 backdrop-blur-sm">
+                      <Fuel className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     ยอดคงเหลือล่าสุดจากฐานข้อมูล
                   </div>
                 </div>
 
                 {/* Card 2: ยอดรับเข้าสะสม (ลิตร) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-emerald-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(16,185,129,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         ยอดรับเข้าสะสม (ลิตร)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
                             : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-emerald-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
                           ลิตร
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/80 bg-emerald-50 text-emerald-600 shadow-2xs">
-                      <Droplet className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                      <Droplet className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     ดีเซล{' '}
-                    <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-emerald-700 tabular-nums">
                       {fuelKpiMetrics.totalInDiesel.toLocaleString('th-TH')}
                     </span>{' '}
                     ลิตร · เบนซิน{' '}
-                    <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-indigo-700 tabular-nums">
                       {fuelKpiMetrics.totalInBenzene.toLocaleString('th-TH')}
                     </span>{' '}
                     ลิตร
@@ -2079,31 +2140,31 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 3: ยอดจ่ายออกสะสม (ลิตร) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-amber-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(245,158,11,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         ยอดจ่ายออกสะสม (ลิตร)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
                             : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
                         </span>
-                        <span className="font-sans text-xs font-semibold text-amber-700">
+                        <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
                           ลิตร
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/80 bg-amber-50 text-amber-600 shadow-2xs">
-                      <Repeat className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
+                      <Repeat className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     เบิกจ่ายทั้งหมด{' '}
-                    <span className="font-mono font-semibold text-amber-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-amber-700 tabular-nums">
                       {fuelKpiMetrics.dispenseCount.toLocaleString('th-TH')}
                     </span>{' '}
                     ครั้ง
@@ -2111,14 +2172,14 @@ function playNotificationChime() {
                 </div>
 
                 {/* Card 4: มูลค่าจ่ายออกรวม (บาท) */}
-                <div className="group relative overflow-hidden rounded-xl border border-white/90 bg-white/90 p-3.5 sm:p-4 border-l-4 border-l-violet-500 shadow-[0_8px_30px_rgb(15,23,42,0.06)] ring-1 ring-slate-900/[0.04] transition-all duration-200 hover:bg-white hover:shadow-[0_12px_36px_rgb(139,92,246,0.12)]">
-                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-500/10 blur-xl transition-opacity group-hover:opacity-100" />
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-semibold text-slate-600">
                         มูลค่าจ่ายออกรวม (บาท)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1 font-mono text-xl font-bold text-slate-900 sm:text-2xl tabular-nums">
+                      <div className="mt-1.5 flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
                         <span>
                           {isLoading && !sheetData
                             ? '...'
@@ -2129,20 +2190,20 @@ function playNotificationChime() {
                         </span>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/80 bg-violet-50 text-violet-600 shadow-2xs">
-                      <Coins className="h-4.5 w-4.5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/70 bg-violet-500/10 text-violet-700 backdrop-blur-sm">
+                      <Coins className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2.5 truncate text-[11px] font-medium text-slate-500">
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
                     ราคาล่าสุด{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {fuelKpiMetrics.latestPrice.toLocaleString('th-TH', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
                     </span>{' '}
                     ฿/ลิตร · เฉลี่ย{' '}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
                       {fuelKpiMetrics.avgPrice.toLocaleString('th-TH', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
@@ -2154,44 +2215,104 @@ function playNotificationChime() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
-              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
-                <div className="truncate text-[11px] font-medium text-slate-500">
-                  ทั้งหมดในชีต
+            <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: ทั้งหมดในชีต */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-sky-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ทั้งหมดในชีต
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-sky-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200/70 bg-sky-500/10 text-sky-700 backdrop-blur-sm">
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    ฐานข้อมูล {activeTab.name}
+                  </div>
                 </div>
-                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                  {isLoading && !sheetData
-                    ? '...'
-                    : (sheetData?.totalRowsInSheet ?? 0).toLocaleString('th-TH')}
-                </div>
-              </div>
 
-              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
-                <div className="truncate text-[11px] font-medium text-slate-500">
-                  แสดงผล
+                {/* Card 2: แสดงผล */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        แสดงผล
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : sortedRows.length.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-indigo-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-sm">
+                      <Eye className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    รายการที่กรองแสดงผลปัจจุบัน
+                  </div>
                 </div>
-                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                  {isLoading && !sheetData
-                    ? '...'
-                    : sortedRows.length.toLocaleString('th-TH')}
-                </div>
-              </div>
 
-              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
-                <div className="truncate text-[11px] font-medium text-slate-500">
-                  {contextualMetric.label}
+                {/* Card 3: Contextual Metric */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        {contextualMetric.label}
+                      </div>
+                      <div className="mt-1.5 truncate font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        {isLoading && !sheetData ? '...' : contextualMetric.value}
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    {contextualMetric.subtext}
+                  </div>
                 </div>
-                <div className="mt-0.5 truncate font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                  {isLoading && !sheetData ? '...' : contextualMetric.value}
-                </div>
-              </div>
 
-              <div className="rounded-xl border border-white/80 bg-white/75 px-3.5 py-2.5 sm:p-3.5 backdrop-blur-xl shadow-[0_8px_30px_rgb(15,23,42,0.05)] ring-1 ring-slate-900/[0.04]">
-                <div className="truncate text-[11px] font-medium text-slate-500">
-                  อัปเดตล่าสุด
-                </div>
-                <div className="mt-0.5 font-mono text-lg font-bold text-slate-900 sm:text-xl tabular-nums">
-                  {formattedFetchTime}
+                {/* Card 4: อัปเดตล่าสุด */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        อัปเดตล่าสุด
+                      </div>
+                      <div className="mt-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        {formattedFetchTime}
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
+                      <Clock className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    ซิงค์ข้อมูลจาก Google Sheets
+                  </div>
                 </div>
               </div>
             </div>
