@@ -58,6 +58,7 @@ import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
 import { showSuccessToast } from './utils/swal';
 
@@ -1603,6 +1604,8 @@ function playNotificationChime() {
                   : 'เปิดแจ้งเตือนมือถือ'}
               </span>
             </button>
+
+            <PWAInstallButton />
 
             <button
               type="button"
