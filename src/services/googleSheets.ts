@@ -1488,7 +1488,7 @@ function createEmptyMutationsStore(): MutationsStore {
   };
 }
 
-function isRecentOptimisticMutation(updatedAt?: string, maxAgeMs = 15000): boolean {
+function isRecentOptimisticMutation(updatedAt?: string, maxAgeMs = 20000): boolean {
   if (!updatedAt) return false;
   const ts = new Date(updatedAt).getTime();
   if (!Number.isFinite(ts)) return false;
@@ -1499,6 +1499,7 @@ function readLocalMutationsStore(): MutationsStore {
   try {
     localStorage.removeItem('gsheets_local_mutations_v1');
     localStorage.removeItem('gsheets_local_mutations_v2');
+    localStorage.removeItem('gsheets_row_count_944294225');
     const raw = localStorage.getItem(LOCAL_MUTATIONS_STORAGE_KEY);
     if (!raw) return createEmptyMutationsStore();
     const parsed = JSON.parse(raw) as Partial<MutationsStore>;
@@ -1511,16 +1512,16 @@ function readLocalMutationsStore(): MutationsStore {
     const rawRepairReplyEdits = Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [];
     const rawRepairFinancialEdits = Array.isArray(parsed.repairFinancialEdits) ? parsed.repairFinancialEdits : [];
 
-    // Only retain pending unsynced items in local store. Once synced to Google Sheets, Google Sheets is the source of truth.
+    // Only retain recent optimistic items in local store while Google Sheets GViz cache refreshes.
     const jobTransfers = rawJobTransfers.filter((jt) => !jt.syncedToSheet);
-    const repairRequests = rawRepairRequests.filter(
-      (rr) => !rr.syncedToSheet && isRecentOptimisticMutation(rr.createdAt)
+    const repairRequests = rawRepairRequests.filter((rr) =>
+      isRecentOptimisticMutation(rr.createdAt)
     );
-    const repairApprovals = rawRepairApprovals.filter(
-      (ra) => !ra.syncedToSheet && isRecentOptimisticMutation(ra.updatedAt)
+    const repairApprovals = rawRepairApprovals.filter((ra) =>
+      isRecentOptimisticMutation(ra.updatedAt)
     );
-    const repairInspections = rawRepairInspections.filter(
-      (ri) => !ri.syncedToSheet && isRecentOptimisticMutation(ri.updatedAt)
+    const repairInspections = rawRepairInspections.filter((ri) =>
+      isRecentOptimisticMutation(ri.updatedAt)
     );
     const repairPhotoEdits = rawRepairPhotoEdits.filter((pe) =>
       isRecentOptimisticMutation(pe.updatedAt)
@@ -1680,7 +1681,7 @@ async function fetchCombinedMutationsStore(
 
       const mergedRepReqMap = new Map<string, StoredRepairRequest>();
       (remote.repairRequests ?? [])
-        .filter((r) => !r.syncedToSheet && isRecentOptimisticMutation(r.createdAt))
+        .filter((r) => isRecentOptimisticMutation(r.createdAt))
         .forEach((r) => mergedRepReqMap.set(r.id, r));
       local.repairRequests.forEach((r) => {
         const existing = mergedRepReqMap.get(r.id);
@@ -1699,7 +1700,7 @@ async function fetchCombinedMutationsStore(
 
       const mergedRepAppMap = new Map<string, StoredRepairApproval>();
       (remote.repairApprovals ?? [])
-        .filter((a) => !a.syncedToSheet && isRecentOptimisticMutation(a.updatedAt))
+        .filter((a) => isRecentOptimisticMutation(a.updatedAt))
         .forEach((a) => mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a));
       local.repairApprovals.forEach((a) =>
         mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
@@ -1779,7 +1780,7 @@ async function fetchCombinedMutationsStore(
 
       const mergedRepInspMap = new Map<string, StoredRepairInspection>();
       (remote.repairInspections ?? [])
-        .filter((i) => !i.syncedToSheet && isRecentOptimisticMutation(i.updatedAt))
+        .filter((i) => isRecentOptimisticMutation(i.updatedAt))
         .forEach((i) =>
           mergedRepInspMap.set(
             i.sequenceNo || i.repairRequestNo || String(i.rowNumber),
@@ -2298,7 +2299,7 @@ const rowCountCache = new Map<string, { count: number; timestamp: number }>();
 
 function getStoredRowCount(gid: string): number {
   const cached = rowCountCache.get(gid);
-  if (cached && cached.count > 0 && Date.now() - cached.timestamp < 300_000) {
+  if (cached && cached.count > 0 && Date.now() - cached.timestamp < 30_000) {
     return cached.count;
   }
   try {
@@ -2306,7 +2307,6 @@ function getStoredRowCount(gid: string): number {
     if (raw) {
       const num = parseInt(raw, 10);
       if (!isNaN(num) && num > 0) {
-        rowCountCache.set(gid, { count: num, timestamp: Date.now() });
         return num;
       }
     }
@@ -2332,7 +2332,7 @@ export async function fetchSheetRowCount(
 ): Promise<number> {
   const cachedCount = getStoredRowCount(gid);
   const mem = rowCountCache.get(gid);
-  if (cachedCount > 0 && mem && Date.now() - mem.timestamp < 180_000) {
+  if (cachedCount > 0 && mem && Date.now() - mem.timestamp < 15_000) {
     return cachedCount;
   }
   try {
@@ -2661,7 +2661,7 @@ export async function fetchSheetTabData(
     };
 
     for (const req of mutationsStore.repairRequests) {
-      if (req.syncedToSheet || !isRecentOptimisticMutation(req.createdAt)) continue;
+      if (!isRecentOptimisticMutation(req.createdAt)) continue;
       const reqG = (req.values['G'] ?? '').trim();
       const exists = parsedRows.some(
         (r) =>
@@ -2681,7 +2681,7 @@ export async function fetchSheetTabData(
       }
     }
     for (const insp of mutationsStore.repairInspections ?? []) {
-      if (insp.syncedToSheet || !isRecentOptimisticMutation(insp.updatedAt)) continue;
+      if (!isRecentOptimisticMutation(insp.updatedAt)) continue;
       const target = parsedRows.find((r) => matchesRepairRow(r, insp));
       if (target) {
         target.values['AB'] = insp.inspectorName;
@@ -2695,7 +2695,7 @@ export async function fetchSheetTabData(
       }
     }
     for (const app of mutationsStore.repairApprovals ?? []) {
-      if (app.syncedToSheet || !isRecentOptimisticMutation(app.updatedAt)) continue;
+      if (!isRecentOptimisticMutation(app.updatedAt)) continue;
       const target = parsedRows.find((r) => matchesRepairRow(r, app));
       if (target) {
         target.values['AE'] = app.approverName;

@@ -3425,6 +3425,7 @@ function playNotificationChime() {
           row.values['AI'] = '2.⚠️รออนุมัติ';
           setSaveSuccessMsg('ผู้ตรวจสอบยืนยันข้อมูลแล้ว ส่งต่อไปยังสถานะ รออนุมัติ เรียบร้อย');
           loadData({ silent: true });
+          setTimeout(() => loadData({ silent: true }), 6000);
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}
       />
@@ -3521,6 +3522,7 @@ function playNotificationChime() {
         onSavedSuccess={() => {
           setSaveSuccessMsg('บันทึกข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
           loadData({ silent: true });
+          setTimeout(() => loadData({ silent: true }), 6000);
           setTimeout(() => {
             setSaveSuccessMsg(null);
           }, 5000);
@@ -3535,6 +3537,7 @@ function playNotificationChime() {
         onApprovedSuccess={() => {
           setSaveSuccessMsg('บันทึกผลการพิจารณาอนุมัติงานซ่อมเรียบร้อยแล้ว');
           loadData({ silent: true });
+          setTimeout(() => loadData({ silent: true }), 6000);
           setTimeout(() => {
             setSaveSuccessMsg(null);
           }, 5000);

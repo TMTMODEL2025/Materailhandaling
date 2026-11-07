@@ -155,7 +155,7 @@ interface MutationsStore {
   googleScriptUrl?: string;
 }
 
-function isRecentMutation(tsStr?: string, maxAgeMs = 15000): boolean {
+function isRecentMutation(tsStr?: string, maxAgeMs = 20000): boolean {
   if (!tsStr) return false;
   const ts = new Date(tsStr).getTime();
   if (!Number.isFinite(ts)) return false;
@@ -183,7 +183,7 @@ function readStore(): MutationsStore {
           ? parsed.jobTransferNoteEdits
           : [],
         repairRequests: Array.isArray(parsed.repairRequests)
-          ? parsed.repairRequests.filter((r) => !r.syncedToSheet && isRecentMutation(r.createdAt))
+          ? parsed.repairRequests.filter((r) => isRecentMutation(r.createdAt))
           : [],
         repairApprovals: Array.isArray(parsed.repairApprovals)
           ? parsed.repairApprovals.filter((a) => isRecentMutation(a.updatedAt))
