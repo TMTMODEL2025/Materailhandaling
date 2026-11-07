@@ -248,6 +248,26 @@ async function startServer() {
     res.json(store);
   });
 
+  const DEFAULT_APPS_SCRIPT_URL =
+    'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
+  const STALE_APPS_SCRIPT_ID =
+    'AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg';
+
+  function normalizeUrl(raw?: string): string {
+    if (!raw) return DEFAULT_APPS_SCRIPT_URL;
+    let url = raw.trim();
+    if (!url.startsWith('https://script.google.com/')) return DEFAULT_APPS_SCRIPT_URL;
+    if (url.includes(STALE_APPS_SCRIPT_ID)) return DEFAULT_APPS_SCRIPT_URL;
+    const match = url.match(/\/macros\/s\/([^/?#]+)/);
+    if (match && match[1] && match[1].length < 60) {
+      return DEFAULT_APPS_SCRIPT_URL;
+    }
+    if (url.includes('/dev')) {
+      url = url.split('/dev').join('/exec');
+    }
+    return url;
+  }
+
   app.post('/api/webhook-proxy', async (req, res) => {
     try {
       const { scriptUrl, payload } = req.body ?? {};
@@ -263,27 +283,16 @@ async function startServer() {
         const json = JSON.parse(text);
         res.json(json);
       } catch {
-        res.json({ ok: response.ok, rawText: text });
+        res.status(502).json({
+          ok: false,
+          error: 'Apps Script did not return valid JSON',
+          rawText: text,
+        });
       }
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }
   });
-
-  const DEFAULT_APPS_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg/exec';
-  const STALE_APPS_SCRIPT_ID =
-    'AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi';
-
-  function normalizeUrl(raw?: string): string {
-    if (!raw) return DEFAULT_APPS_SCRIPT_URL;
-    let url = raw.trim();
-    if (url.includes(STALE_APPS_SCRIPT_ID)) return DEFAULT_APPS_SCRIPT_URL;
-    if (url.includes('/dev')) {
-      url = url.split('/dev').join('/exec');
-    }
-    return url;
-  }
 
   app.get('/api/script-url', (_req, res) => {
     const store = readStore();

@@ -77,15 +77,22 @@ export function backendPost(url: string, bodyObj: unknown, method = 'POST'): voi
 
 
 export const DEFAULT_APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg/exec';
+  'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
 
 export const STALE_APPS_SCRIPT_ID =
-  'AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi';
+  'AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg';
 
 export function normalizeAppsScriptUrl(raw?: string): string {
   if (!raw) return DEFAULT_APPS_SCRIPT_URL;
   let url = raw.trim();
+  if (!url.startsWith('https://script.google.com/')) {
+    return DEFAULT_APPS_SCRIPT_URL;
+  }
   if (url.includes(STALE_APPS_SCRIPT_ID)) {
+    return DEFAULT_APPS_SCRIPT_URL;
+  }
+  const match = url.match(/\/macros\/s\/([^/?#]+)/);
+  if (match && match[1] && match[1].length < 60) {
     return DEFAULT_APPS_SCRIPT_URL;
   }
   if (url.includes('/dev')) {
@@ -201,12 +208,12 @@ function saveBase64ImageToDrive(base64Data, prefix) {
 function เชื่อมต่ออัตโนมัติ() {
   var ss = getTargetSpreadsheet_();
   var url = ScriptApp.getService().getUrl();
-  if (url) {
-    url = url.replace('/dev', '/exec');
-    var dpSheet = ss.getSheetByName('จุดส่งสินค้า');
-    if (dpSheet) {
-      dpSheet.getRange('D1').setValue(url);
-    }
+  if (!url || url.indexOf('/dev') >= 0 || url.indexOf('AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg') >= 0) {
+    url = '${DEFAULT_APPS_SCRIPT_URL}';
+  }
+  var dpSheet = ss.getSheetByName('จุดส่งสินค้า');
+  if (dpSheet) {
+    dpSheet.getRange('D1').setValue(url);
   }
 }
 
@@ -813,8 +820,8 @@ export function getLastWebhookError(): string | null {
   return lastWebhookError;
 }
 
-async function callAppsScriptWebhook(
-  scriptUrl: string,
+async function executeAppsScriptWebhookForUrl(
+  targetUrl: string,
   payload: Record<string, unknown>
 ): Promise<{
   ok?: boolean;
@@ -822,8 +829,6 @@ async function callAppsScriptWebhook(
   error?: string;
   photoUrls?: string[];
 }> {
-  const targetUrl = normalizeAppsScriptUrl(scriptUrl);
-
   // 1. Primary Attempt: Call Serverless Proxy (/api/webhook-proxy) first to avoid browser CORS limits
   if (isBackendApiAvailable !== false) {
     try {
@@ -839,8 +844,9 @@ async function callAppsScriptWebhook(
           rowNumber?: number | null;
           error?: string;
           photoUrls?: string[];
+          rawText?: string;
         };
-        if (pData && pData.ok !== false) {
+        if (pData && pData.ok === true && !pData.rawText) {
           lastWebhookError = null;
           return pData;
         }
@@ -921,6 +927,33 @@ async function callAppsScriptWebhook(
 
   lastWebhookError = null;
   return data;
+}
+
+async function callAppsScriptWebhook(
+  scriptUrl: string,
+  payload: Record<string, unknown>
+): Promise<{
+  ok?: boolean;
+  rowNumber?: number | null;
+  error?: string;
+  photoUrls?: string[];
+}> {
+  const targetUrl = normalizeAppsScriptUrl(scriptUrl);
+  try {
+    return await executeAppsScriptWebhookForUrl(targetUrl, payload);
+  } catch (err) {
+    if (targetUrl !== DEFAULT_APPS_SCRIPT_URL) {
+      const res = await executeAppsScriptWebhookForUrl(DEFAULT_APPS_SCRIPT_URL, payload);
+      configuredAppsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
+      try {
+        localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, DEFAULT_APPS_SCRIPT_URL);
+      } catch {
+        // ignore
+      }
+      return res;
+    }
+    throw err;
+  }
 }
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
@@ -1050,7 +1083,7 @@ function getSilentAccessToken(): string | null {
   return null;
 }
 
-async function getOrConnectAccessToken(allowPopup = true): Promise<string | null> {
+async function getOrConnectAccessToken(_allowPopup = false): Promise<string | null> {
   const silent = getSilentAccessToken();
   if (silent) return silent;
 
@@ -1073,14 +1106,6 @@ async function getOrConnectAccessToken(allowPopup = true): Promise<string | null
       }
     } catch {
       // ignore
-    }
-  }
-
-  if (allowPopup && !isSigningIn) {
-    try {
-      return await connectAdminGoogleAccountOnce();
-    } catch {
-      return null;
     }
   }
 
@@ -2495,19 +2520,42 @@ export async function fetchSheetTabData(
 
   // Overlay local/backend mutations so records are immediately visible without login
   if (tab.gid === '606634465') {
+    let needsFlush = false;
+    const localStore = readLocalMutationsStore();
+    let localUpdated = false;
+
     for (const jt of mutationsStore.jobTransfers) {
       const existingRow = parsedRows.find(
         (r) =>
-          (r.values['A'] ?? '').trim() === (jt.values['A'] ?? '').trim() &&
-          (r.values['C'] ?? '').trim() === (jt.values['C'] ?? '').trim() &&
-          (r.values['D'] ?? '').trim() === (jt.values['D'] ?? '').trim() &&
-          (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim()
+          (jt.recordId && (r.values['Q'] ?? '').trim() === jt.recordId) ||
+          ((r.values['A'] ?? '').trim() === (jt.values['A'] ?? '').trim() &&
+            (r.values['C'] ?? '').trim() === (jt.values['C'] ?? '').trim() &&
+            (r.values['D'] ?? '').trim() === (jt.values['D'] ?? '').trim() &&
+            (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim())
       );
       if (existingRow) {
+        const sheetStatus = (existingRow.values['M'] ?? '').trim();
+        const localStatus = (jt.values['M'] ?? '').trim();
         if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
         if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
         if (jt.values['M']) existingRow.values['M'] = jt.values['M'];
         if (jt.values['N']) existingRow.values['N'] = jt.values['N'];
+        if (
+          localStatus === 'ส่งสินค้าเรียบร้อยแล้ว' &&
+          sheetStatus !== 'ส่งสินค้าเรียบร้อยแล้ว'
+        ) {
+          const scriptUrl = getConfiguredAppsScriptUrl();
+          if (scriptUrl) {
+            void callAppsScriptWebhook(scriptUrl, {
+              action: 'completeJobTransfer',
+              recordId: jt.recordId,
+              rowNumber: existingRow.rowNumber,
+              endTime: jt.values['K'] || '',
+              duration: jt.values['L'] || '',
+              status: localStatus,
+            }).catch(() => {});
+          }
+        }
       } else if (!existingRecordIds.has(jt.recordId) && !search) {
         const rowNumber =
           jt.rowNumber && jt.rowNumber > totalRowsInSheet
@@ -2521,7 +2569,26 @@ export async function fetchSheetTabData(
             G: Number(jt.values['G'] ?? 0) || 0,
           },
         });
+
+        const ageMs = jt.createdAt ? Date.now() - new Date(jt.createdAt).getTime() : 99999;
+        if (ageMs > 15000) {
+          const localItem = localStore.jobTransfers.find(
+            (item) => item.recordId === jt.recordId
+          );
+          if (localItem && localItem.syncedToSheet) {
+            localItem.syncedToSheet = false;
+            localUpdated = true;
+          }
+          needsFlush = true;
+        }
       }
+    }
+
+    if (localUpdated) {
+      writeLocalMutationsStore(localStore);
+    }
+    if (needsFlush) {
+      void flushPendingMutationsToGoogleSheet();
     }
 
     for (const noteEdit of mutationsStore.jobTransferNoteEdits) {
@@ -2577,6 +2644,10 @@ export async function fetchSheetTabData(
       }
     }
   } else if (tab.gid === '944294225') {
+    let needsRepairFlush = false;
+    const localStore = readLocalMutationsStore();
+    let localRepairUpdated = false;
+
     for (const req of mutationsStore.repairRequests) {
       const reqG = (req.values['G'] ?? '').trim();
       const exists = parsedRows.some(
@@ -2594,7 +2665,24 @@ export async function fetchSheetTabData(
           values: { ...req.values },
           rawValues: { ...req.values, A: Number(req.sequenceNo) || req.rowNumber },
         });
+
+        const ageMs = req.createdAt ? Date.now() - new Date(req.createdAt).getTime() : 99999;
+        if (ageMs > 15000) {
+          const localReq = localStore.repairRequests.find((item) => item.id === req.id);
+          if (localReq && localReq.syncedToSheet) {
+            localReq.syncedToSheet = false;
+            localRepairUpdated = true;
+          }
+          needsRepairFlush = true;
+        }
       }
+    }
+
+    if (localRepairUpdated) {
+      writeLocalMutationsStore(localStore);
+    }
+    if (needsRepairFlush) {
+      void flushPendingMutationsToGoogleSheet();
     }
     for (const insp of mutationsStore.repairInspections ?? []) {
       const target = parsedRows.find(
