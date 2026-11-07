@@ -2065,47 +2065,82 @@ function formatGvizCellValue(cell: GvizCell | null | undefined): string {
   return raw;
 }
 
+const inFlightGvizMap = new Map<string, Promise<GvizResponse>>();
+
 async function queryGviz(
   gid: string,
   tq: string,
   signal?: AbortSignal,
-  timeoutMs = 12000
+  timeoutMs = 20000
 ): Promise<GvizResponse> {
-  const params = new URLSearchParams({
-    tqx: 'out:json',
-    gid,
-    tq,
-    _t: String(Date.now()),
-  });
-  const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
+  if (signal?.aborted) {
+    const abortErr = new Error('การร้องขอถูกยกเลิก');
+    abortErr.name = 'AbortError';
+    throw abortErr;
+  }
 
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const cacheKey = `${gid}::${tq}`;
+  let sharedPromise = inFlightGvizMap.get(cacheKey);
 
-  const abortListener = () => {
-    timeoutController.abort();
-  };
-  if (signal) {
+  if (!sharedPromise) {
+    const params = new URLSearchParams({
+      tqx: 'out:json',
+      gid,
+      tq,
+      _t: String(Date.now()),
+    });
+    const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
+
+    sharedPromise = (async () => {
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { signal: timeoutController.signal });
+        if (!response.ok) {
+          throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${response.status})`);
+        }
+        const text = await response.text();
+        return parseGvizJson(text);
+      } catch (err: unknown) {
+        if (timeoutController.signal.aborted) {
+          throw new Error('การดึงข้อมูลจาก Google Sheets ใช้เวลานานเกินกำหนด กรุณากดซิงค์ข้อมูลอีกครั้ง');
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    })().finally(() => {
+      inFlightGvizMap.delete(cacheKey);
+    });
+
+    inFlightGvizMap.set(cacheKey, sharedPromise);
+  }
+
+  if (!signal) {
+    return sharedPromise;
+  }
+
+  return new Promise<GvizResponse>((resolve, reject) => {
+    const onAbort = () => {
+      const abortErr = new Error('การร้องขอถูกยกเลิก');
+      abortErr.name = 'AbortError';
+      reject(abortErr);
+    };
     if (signal.aborted) {
-      clearTimeout(timeoutId);
-      throw new Error('การร้องขอถูกยกเลิก');
+      onAbort();
+      return;
     }
-    signal.addEventListener('abort', abortListener, { once: true });
-  }
-
-  try {
-    const response = await fetch(url, { signal: timeoutController.signal });
-    if (!response.ok) {
-      throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${response.status})`);
-    }
-    const text = await response.text();
-    return parseGvizJson(text);
-  } finally {
-    clearTimeout(timeoutId);
-    if (signal) {
-      signal.removeEventListener('abort', abortListener);
-    }
-  }
+    signal.addEventListener('abort', onAbort, { once: true });
+    sharedPromise!
+      .then((res) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(res);
+      })
+      .catch((err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      });
+  });
 }
 
 const rowCountCache = new Map<string, { count: number; timestamp: number }>();
@@ -2150,7 +2185,7 @@ export async function fetchSheetRowCount(
     return cachedCount;
   }
   try {
-    const res = await queryGviz(gid, 'select count(A)', signal, 6000);
+    const res = await queryGviz(gid, 'select count(A)', signal, 15000);
     const val = res.table?.rows?.[0]?.c?.[0]?.v;
     const count = typeof val === 'number' ? val : 0;
     if (count > 0) {
@@ -2173,26 +2208,16 @@ export async function fetchSheetTabData(
   const limit = options?.limit ?? tab.defaultLimit ?? 250;
   const search = options?.remoteSearchQuery?.trim() ?? '';
 
-  // Get mutations store without blocking UI
-  const mutationsPromise = fetchCombinedMutationsStore(options?.signal);
-
-  let totalRowsInSheet = getStoredRowCount(tab.gid);
-
-  // If reverseOrder is needed and we have no cached count, fetch it with fast timeout
-  if (tab.reverseOrder && totalRowsInSheet === 0) {
-    totalRowsInSheet = await fetchSheetRowCount(tab.gid, options?.signal);
-  } else if (tab.reverseOrder) {
-    // Refresh row count in background without blocking current query
-    void fetchSheetRowCount(tab.gid).catch(() => {});
-  }
-
-  const mutationsStore = await mutationsPromise;
+  const [totalRowsInSheet, mutationsStore] = await Promise.all([
+    fetchSheetRowCount(tab.gid, options?.signal),
+    fetchCombinedMutationsStore(options?.signal),
+  ]);
 
   let dataResponse: GvizResponse;
   let rowOffset = 0;
 
   if (search.length > 0 && totalRowsInSheet > limit) {
-    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 6000);
+    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 12000);
     const stringCols = (metaRes.table?.cols ?? []).filter(
       (c) => c.type === 'string' && (c.label || FALLBACK_COLUMN_LABELS[tab.gid]?.[c.id])
     );
@@ -2203,13 +2228,13 @@ export async function fetchSheetTabData(
         .map((c) => `lower(${c.id}) contains '${escaped}'`)
         .join(' or ');
       const searchTq = `select * where ${whereClause} limit ${limit}`;
-      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 10000);
+      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 20000);
     } else {
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        10000
+        20000
       );
     }
   } else if (tab.reverseOrder && totalRowsInSheet > limit) {
@@ -2219,15 +2244,15 @@ export async function fetchSheetTabData(
         tab.gid,
         `select * offset ${rowOffset}`,
         options?.signal,
-        10000
+        20000
       );
     } catch {
-      // Fallback to limit query if offset query times out
+      // Fallback to limit query if offset query fails
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        8000
+        15000
       );
       rowOffset = 0;
     }
@@ -2236,7 +2261,7 @@ export async function fetchSheetTabData(
       tab.gid,
       `select * limit ${limit}`,
       options?.signal,
-      10000
+      20000
     );
   }
 

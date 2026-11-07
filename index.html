@@ -6,13 +6,15 @@
     <script>
       (function() {
         try {
-          var fetchHolder = window.fetch;
-          Object.defineProperty(window, 'fetch', {
-            get: function() { return fetchHolder; },
-            set: function(fn) { fetchHolder = fn; },
-            configurable: true,
-            enumerable: true
-          });
+          var origFetch = window.fetch;
+          if (typeof origFetch === 'function') {
+            Object.defineProperty(window, 'fetch', {
+              value: origFetch.bind(window),
+              writable: true,
+              configurable: true,
+              enumerable: true
+            });
+          }
         } catch (e) {
           // ignore
         }

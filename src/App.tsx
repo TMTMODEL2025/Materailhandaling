@@ -241,6 +241,7 @@ export default function App() {
   const [isUpdatingGate, setIsUpdatingGate] = useState<boolean>(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isFetchingRef = useRef<boolean>(false);
 
   const loadData = useCallback(
     async (options?: { silent?: boolean; remoteSearch?: string }) => {
@@ -249,6 +250,7 @@ export default function App() {
       }
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      isFetchingRef.current = true;
 
       if (options?.silent) {
         setIsRefreshing(true);
@@ -263,7 +265,11 @@ export default function App() {
           remoteSearchQuery: options?.remoteSearch ?? deepSearchTerm,
           signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
+
         setSheetData(result);
+        setIsLoading(false);
+        setIsRefreshing(false);
 
         if (activeTab.gid === '944294225') {
           setRepairTabRows(result.rows);
@@ -273,17 +279,18 @@ export default function App() {
           if (repairTabConfig) {
             void fetchSheetTabData(repairTabConfig, {
               limit: 250,
-              signal: controller.signal,
-            }).then((repairRes) => {
-              if (!controller.signal.aborted) {
-                setRepairTabRows(repairRes.rows);
-                setPendingApprovalCount(calculatePendingApprovalCount(repairRes.rows));
-              }
-            }).catch(() => {});
+            })
+              .then((repairRes) => {
+                if (!controller.signal.aborted) {
+                  setRepairTabRows(repairRes.rows);
+                  setPendingApprovalCount(calculatePendingApprovalCount(repairRes.rows));
+                }
+              })
+              .catch(() => {});
           }
         }
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') {
+        if (controller.signal.aborted) {
           return;
         }
         setError(
@@ -293,6 +300,7 @@ export default function App() {
         );
       } finally {
         if (abortControllerRef.current === controller) {
+          isFetchingRef.current = false;
           setIsLoading(false);
           setIsRefreshing(false);
         }
@@ -313,6 +321,7 @@ export default function App() {
   useEffect(() => {
     if (refreshIntervalSec <= 0) return;
     const timer = setInterval(() => {
+      if (isFetchingRef.current) return;
       loadData({ silent: true });
     }, refreshIntervalSec * 1000);
     return () => clearInterval(timer);
