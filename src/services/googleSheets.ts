@@ -1492,8 +1492,15 @@ function readLocalMutationsStore(): MutationsStore {
     const raw = localStorage.getItem(LOCAL_MUTATIONS_STORAGE_KEY);
     if (!raw) return createEmptyMutationsStore();
     const parsed = JSON.parse(raw) as Partial<MutationsStore>;
+    const rawJobTransfers = Array.isArray(parsed.jobTransfers) ? parsed.jobTransfers : [];
+    const rawRepairRequests = Array.isArray(parsed.repairRequests) ? parsed.repairRequests : [];
+
+    // Only retain pending unsynced items in local store. Once synced to Google Sheets, Google Sheets is the source of truth.
+    const jobTransfers = rawJobTransfers.filter((jt) => !jt.syncedToSheet);
+    const repairRequests = rawRepairRequests.filter((rr) => !rr.syncedToSheet);
+
     return {
-      jobTransfers: Array.isArray(parsed.jobTransfers) ? parsed.jobTransfers : [],
+      jobTransfers,
       deliveryPoints: Array.isArray(parsed.deliveryPoints)
         ? parsed.deliveryPoints
         : [],
@@ -1509,9 +1516,7 @@ function readLocalMutationsStore(): MutationsStore {
       jobTransferNoteEdits: Array.isArray(parsed.jobTransferNoteEdits)
         ? parsed.jobTransferNoteEdits
         : [],
-      repairRequests: Array.isArray(parsed.repairRequests)
-        ? parsed.repairRequests
-        : [],
+      repairRequests,
       repairApprovals: Array.isArray(parsed.repairApprovals)
         ? parsed.repairApprovals
         : [],
@@ -2518,13 +2523,10 @@ export async function fetchSheetTabData(
     }
   });
 
-  // Overlay local/backend mutations so records are immediately visible without login
+  // Overlay local/backend mutations so unsynced pending records are immediately visible
   if (tab.gid === '606634465') {
-    let needsFlush = false;
-    const localStore = readLocalMutationsStore();
-    let localUpdated = false;
-
     for (const jt of mutationsStore.jobTransfers) {
+      if (jt.syncedToSheet) continue;
       const existingRow = parsedRows.find(
         (r) =>
           (jt.recordId && (r.values['Q'] ?? '').trim() === jt.recordId) ||
@@ -2534,28 +2536,10 @@ export async function fetchSheetTabData(
             (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim())
       );
       if (existingRow) {
-        const sheetStatus = (existingRow.values['M'] ?? '').trim();
-        const localStatus = (jt.values['M'] ?? '').trim();
         if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
         if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
         if (jt.values['M']) existingRow.values['M'] = jt.values['M'];
         if (jt.values['N']) existingRow.values['N'] = jt.values['N'];
-        if (
-          localStatus === 'ส่งสินค้าเรียบร้อยแล้ว' &&
-          sheetStatus !== 'ส่งสินค้าเรียบร้อยแล้ว'
-        ) {
-          const scriptUrl = getConfiguredAppsScriptUrl();
-          if (scriptUrl) {
-            void callAppsScriptWebhook(scriptUrl, {
-              action: 'completeJobTransfer',
-              recordId: jt.recordId,
-              rowNumber: existingRow.rowNumber,
-              endTime: jt.values['K'] || '',
-              duration: jt.values['L'] || '',
-              status: localStatus,
-            }).catch(() => {});
-          }
-        }
       } else if (!existingRecordIds.has(jt.recordId) && !search) {
         const rowNumber =
           jt.rowNumber && jt.rowNumber > totalRowsInSheet
@@ -2569,26 +2553,7 @@ export async function fetchSheetTabData(
             G: Number(jt.values['G'] ?? 0) || 0,
           },
         });
-
-        const ageMs = jt.createdAt ? Date.now() - new Date(jt.createdAt).getTime() : 99999;
-        if (ageMs > 15000) {
-          const localItem = localStore.jobTransfers.find(
-            (item) => item.recordId === jt.recordId
-          );
-          if (localItem && localItem.syncedToSheet) {
-            localItem.syncedToSheet = false;
-            localUpdated = true;
-          }
-          needsFlush = true;
-        }
       }
-    }
-
-    if (localUpdated) {
-      writeLocalMutationsStore(localStore);
-    }
-    if (needsFlush) {
-      void flushPendingMutationsToGoogleSheet();
     }
 
     for (const noteEdit of mutationsStore.jobTransferNoteEdits) {
@@ -2644,11 +2609,8 @@ export async function fetchSheetTabData(
       }
     }
   } else if (tab.gid === '944294225') {
-    let needsRepairFlush = false;
-    const localStore = readLocalMutationsStore();
-    let localRepairUpdated = false;
-
     for (const req of mutationsStore.repairRequests) {
+      if (req.syncedToSheet) continue;
       const reqG = (req.values['G'] ?? '').trim();
       const exists = parsedRows.some(
         (r) =>
@@ -2665,24 +2627,7 @@ export async function fetchSheetTabData(
           values: { ...req.values },
           rawValues: { ...req.values, A: Number(req.sequenceNo) || req.rowNumber },
         });
-
-        const ageMs = req.createdAt ? Date.now() - new Date(req.createdAt).getTime() : 99999;
-        if (ageMs > 15000) {
-          const localReq = localStore.repairRequests.find((item) => item.id === req.id);
-          if (localReq && localReq.syncedToSheet) {
-            localReq.syncedToSheet = false;
-            localRepairUpdated = true;
-          }
-          needsRepairFlush = true;
-        }
       }
-    }
-
-    if (localRepairUpdated) {
-      writeLocalMutationsStore(localStore);
-    }
-    if (needsRepairFlush) {
-      void flushPendingMutationsToGoogleSheet();
     }
     for (const insp of mutationsStore.repairInspections ?? []) {
       const target = parsedRows.find(
