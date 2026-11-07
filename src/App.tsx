@@ -329,9 +329,9 @@ function playNotificationChime() {
           latestNew.values['vehicleNumber'] ||
           'ไม่ระบุเบอร์รถ';
         const symptom =
-          latestNew.values['G'] ||
-          latestNew.values['P'] ||
+          latestNew.values['F'] ||
           latestNew.values['symptoms'] ||
+          latestNew.values['E'] ||
           'แจ้งซ่อมใหม่';
         const reporter =
           latestNew.values['AA'] || latestNew.values['reporterName'] || '';
