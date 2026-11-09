@@ -1,8 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, CheckCircle2, XCircle, Clock, AlertCircle, HelpCircle, Lock } from 'lucide-react';
 import { SheetRow, RepairApprovalPayload } from '../types';
-import { approveRepairRecord, updateRepairAdditionalDetails } from '../services/googleSheets';
+import { approveRepairRecord, updateRepairAdditionalDetails, isPhotoValue } from '../services/googleSheets';
+import { DrivePhotoImg } from './DrivePhotoImg';
 import { showSuccessToast } from '../utils/swal';
+
+const PHOTO_COLS = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
 
 const MANAGER_ACCESS_PIN = '685400';
 
@@ -51,6 +54,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   const [additionalInfo, setAdditionalInfo] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -59,6 +63,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
       setPinError(null);
       setSelectedRow(null);
       setError(null);
+      setPreviewPhoto(null);
     }
   }, [isOpen]);
 
@@ -419,6 +424,32 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                     {selectedRow.values['F'] || '-'}
                   </div>
                 </div>
+                {(() => {
+                  const rowPhotos = PHOTO_COLS.map((c) => (selectedRow.values[c] ?? '').trim())
+                    .filter((v) => isPhotoValue(v))
+                    .sort((a, b) => {
+                      const aDirect = a.startsWith('data:image/') || a.startsWith('http') ? 0 : 1;
+                      const bDirect = b.startsWith('data:image/') || b.startsWith('http') ? 0 : 1;
+                      return aDirect - bDirect;
+                    });
+                  if (rowPhotos.length === 0) return null;
+                  return (
+                    <div className="col-span-2">
+                      <span className="text-slate-500">รูปถ่ายประกอบการซ่อม ({rowPhotos.length} รูป):</span>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        {rowPhotos.map((pSrc, idx) => (
+                          <DrivePhotoImg
+                            key={idx}
+                            src={pSrc}
+                            alt={`รูปถ่ายที่ ${idx + 1}`}
+                            onClick={() => setPreviewPhoto(pSrc)}
+                            className="h-20 w-28 cursor-pointer rounded-lg border border-slate-200 object-cover shadow-2xs transition-opacity hover:opacity-90"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {selectedRow.values['AK'] && (
                   <div className="col-span-2">
                     <span className="text-slate-500 font-medium">คำขอข้อมูลเพิ่มเติมจากผู้อนุมัติ:</span>
@@ -651,6 +682,30 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                       <div className="mt-1 text-[11px] text-slate-400">
                         ผู้แจ้ง: {rep || '-'} {inspector ? `· ผู้ตรวจสอบ: ${inspector}` : ''} {approver ? `· ผู้อนุมัติ: ${approver}` : ''}
                       </div>
+
+                      {(() => {
+                        const itemPhotos = PHOTO_COLS.map((c) => (r.values[c] ?? '').trim())
+                          .filter((v) => isPhotoValue(v))
+                          .sort((a, b) => {
+                            const aDirect = a.startsWith('data:image/') || a.startsWith('http') ? 0 : 1;
+                            const bDirect = b.startsWith('data:image/') || b.startsWith('http') ? 0 : 1;
+                            return aDirect - bDirect;
+                          });
+                        if (itemPhotos.length === 0) return null;
+                        return (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {itemPhotos.map((pSrc, pIdx) => (
+                              <DrivePhotoImg
+                                key={pIdx}
+                                src={pSrc}
+                                alt={`รูปงานซ่อม ${pIdx + 1}`}
+                                onClick={() => setPreviewPhoto(pSrc)}
+                                className="h-12 w-16 cursor-pointer rounded-md border border-slate-200 object-cover shadow-2xs transition-opacity hover:opacity-90"
+                              />
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
@@ -686,6 +741,31 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
           )}
         </div>
       </div>
+
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPreviewPhoto(null);
+          }}
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw]">
+            <DrivePhotoImg
+              src={previewPhoto}
+              alt="ดูรูปภาพขนาดเต็ม"
+              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 shadow-lg hover:bg-slate-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

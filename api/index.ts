@@ -5,14 +5,19 @@ import path from 'node:path';
 const DATA_FILE = path.join('/tmp', 'sheet-mutations.json');
 
 const DEFAULT_APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg/exec';
+  'https://script.google.com/macros/s/AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi/exec';
 const STALE_APPS_SCRIPT_ID =
-  'AKfycbz8e9-5I7UphS_hZvyh5YhC_v6yWSe7e7VFRK3BIKqEihMGab4RsOlQwll5sk_WlQZi';
+  'AKfycbx1OQXBULrG89F0pde3wXPPcmgYUQyO09r1Y5gDQQg';
 
 function normalizeUrl(raw?: string): string {
   if (!raw) return DEFAULT_APPS_SCRIPT_URL;
   let url = raw.trim();
+  if (!url.startsWith('https://script.google.com/')) return DEFAULT_APPS_SCRIPT_URL;
   if (url.includes(STALE_APPS_SCRIPT_ID)) return DEFAULT_APPS_SCRIPT_URL;
+  const match = url.match(/\/macros\/s\/([^/?#]+)/);
+  if (match && match[1] && match[1].length < 60) {
+    return DEFAULT_APPS_SCRIPT_URL;
+  }
   if (url.includes('/dev')) {
     url = url.split('/dev').join('/exec');
   }
@@ -90,6 +95,32 @@ app.post('/api/webhook-proxy', async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+app.get('/api/drive-photo', async (req, res) => {
+  try {
+    const filename = typeof req.query.filename === 'string' ? req.query.filename.trim() : '';
+    const scriptUrlParam =
+      typeof req.query.scriptUrl === 'string' ? req.query.scriptUrl.trim() : undefined;
+    if (!filename) {
+      res.status(400).json({ success: false, message: 'No filename provided' });
+      return;
+    }
+    const store = readStore();
+    const targetUrl = normalizeUrl(
+      scriptUrlParam ||
+        store.googleScriptUrl ||
+        process.env.VITE_GOOGLE_SCRIPT_URL ||
+        DEFAULT_APPS_SCRIPT_URL
+    );
+    const sep = targetUrl.includes('?') ? '&' : '?';
+    const reqUrl = `${targetUrl}${sep}filename=${encodeURIComponent(filename)}`;
+    const response = await fetch(reqUrl, { redirect: 'follow' });
+    const text = await response.text();
+    res.json(JSON.parse(text));
+  } catch (err) {
+    res.status(502).json({ success: false, error: String(err) });
   }
 });
 

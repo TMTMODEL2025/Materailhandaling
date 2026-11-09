@@ -587,6 +587,17 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: 'Sheet บันทึกน้ำมัน not found' });
     }
 
+    if (action === 'appendTrailerRecord') {
+      var sheet = ss.getSheetByName('ฐานข้อมูลหาง');
+      var trailerNo = String(body.trailerNumber || '').trim();
+      if (sheet && trailerNo) {
+        sheet.appendRow([trailerNo]);
+        var rowNumber = sheet.getLastRow();
+        return jsonResponse({ ok: true, rowNumber: rowNumber });
+      }
+      return jsonResponse({ ok: false, error: 'Sheet ฐานข้อมูลหาง not found or empty trailerNumber' });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -595,39 +606,147 @@ function doPost(e) {
   }
 }
 
+function searchImageInFolder_(folder, cleanName, prefixKey) {
+  if (!folder) return null;
+  try {
+    var exact = folder.getFilesByName(cleanName);
+    while (exact.hasNext()) {
+      var f = exact.next();
+      if ((f.getMimeType() || '').indexOf('image/') === 0) return f;
+    }
+  } catch (e) {}
+
+  try {
+    var normTarget = cleanName.normalize ? cleanName.normalize('NFC').toLowerCase() : cleanName.toLowerCase();
+    var normPrefix = prefixKey ? (prefixKey.normalize ? prefixKey.normalize('NFC').toLowerCase() : prefixKey.toLowerCase()) : '';
+    var files = folder.getFiles();
+    var count = 0;
+    var prefixMatch = null;
+    while (files.hasNext() && count < 400) {
+      count++;
+      var file = files.next();
+      var mime = file.getMimeType() || '';
+      if (mime.indexOf('image/') !== 0) continue;
+      var fname = file.getName() || '';
+      var normName = fname.normalize ? fname.normalize('NFC').toLowerCase() : fname.toLowerCase();
+      if (normName === normTarget) return file;
+      if (normPrefix && normName.indexOf(normPrefix) === 0 && !prefixMatch) {
+        prefixMatch = file;
+      }
+    }
+    if (prefixMatch) return prefixMatch;
+  } catch (e) {}
+  return null;
+}
+
+function findAppSheetImageFile_(rawInput) {
+  var raw = String(rawInput || '').trim();
+  if (!raw) return null;
+
+  var folderName = '';
+  var cleanName = raw;
+  if (raw.indexOf('/') >= 0) {
+    var parts = raw.split('/');
+    folderName = parts[0].trim();
+    cleanName = parts[parts.length - 1].trim();
+  }
+
+  // Extract key prefix before AppSheet timestamp (e.g. "FL-1.รูปรถ." or "TMT2026-10-0035.รูปถ่ายที่1.")
+  var prefixKey = '';
+  var dotParts = cleanName.split('.');
+  if (dotParts.length >= 3) {
+    prefixKey = dotParts.slice(0, dotParts.length - 2).join('.') + '.';
+  }
+
+  var file = null;
+
+  // 1. Check main maintenance image folder
+  try {
+    var targetFolder = DriveApp.getFolderById('1y9_CzTkunm85vparUxDGg_lvCH0sa6P0');
+    file = searchImageInFolder_(targetFolder, cleanName, prefixKey);
+    if (file) return file;
+  } catch (e) {}
+
+  // 2. Check parent folder(s) of the Google Sheet for AppSheet subfolder (e.g. ฐานข้อมูลรถ_Images, Account_Images, บันทึกงานซ่อม_Images)
+  try {
+    var ssFile = DriveApp.getFileById('${GOOGLE_SHEET_ID}');
+    var parents = ssFile.getParents();
+    while (parents.hasNext()) {
+      var parent = parents.next();
+      if (folderName) {
+        var subFolders = parent.getFoldersByName(folderName);
+        while (subFolders.hasNext()) {
+          file = searchImageInFolder_(subFolders.next(), cleanName, prefixKey);
+          if (file) return file;
+        }
+      }
+      file = searchImageInFolder_(parent, cleanName, prefixKey);
+      if (file) return file;
+    }
+  } catch (e) {}
+
+  // 3. Search any folder in Drive matching folderName (e.g. inside /appsheet/data/...)
+  if (folderName) {
+    try {
+      var matchingFolders = DriveApp.getFoldersByName(folderName);
+      var fCount = 0;
+      while (matchingFolders.hasNext() && fCount < 10) {
+        fCount++;
+        file = searchImageInFolder_(matchingFolders.next(), cleanName, prefixKey);
+        if (file) return file;
+      }
+    } catch (e) {}
+  }
+
+  // 4. Global exact filename match (images only)
+  try {
+    var allFiles = DriveApp.getFilesByName(cleanName);
+    while (allFiles.hasNext()) {
+      var candidate = allFiles.next();
+      if ((candidate.getMimeType() || '').indexOf('image/') === 0) {
+        return candidate;
+      }
+    }
+  } catch (e) {}
+
+  // 5. Fallback Drive search by prefixKey or cleanName
+  try {
+    var searchTerm = (prefixKey || cleanName).replace(/'/g, "\\\\'");
+    var searched = DriveApp.searchFiles("title contains '" + searchTerm + "' and mimeType contains 'image/' and trashed = false");
+    if (searched.hasNext()) {
+      return searched.next();
+    }
+  } catch (e) {}
+
+  return null;
+}
+
 function doGet(e) {
   try {
+    var fileIdParam = (e && e.parameter && e.parameter.fileId) || '';
     var filename = (e && e.parameter && (e.parameter.filename || e.parameter.file || e.parameter.path)) || '';
-    if (!filename) {
-      return jsonResponse({ success: false, message: 'No filename provided' });
-    }
-    var cleanName = String(filename).trim();
-    if (cleanName.indexOf('/') >= 0) {
-      var parts = cleanName.split('/');
-      cleanName = parts[parts.length - 1].trim();
-    }
     var file = null;
-    try {
-      var targetFolder = DriveApp.getFolderById('1y9_CzTkunm85vparUxDGg_lvCH0sa6P0');
-      var folderFiles = targetFolder.getFilesByName(cleanName);
-      if (folderFiles.hasNext()) {
-        file = folderFiles.next();
-      }
-    } catch (ignoreErr) {}
 
-    if (!file) {
-      var allFiles = DriveApp.getFilesByName(cleanName);
-      if (allFiles.hasNext()) {
-        file = allFiles.next();
-      }
+    if (fileIdParam) {
+      try {
+        file = DriveApp.getFileById(String(fileIdParam).trim());
+      } catch (idErr) {}
+    }
+
+    if (!file && filename) {
+      file = findAppSheetImageFile_(filename);
     }
 
     if (!file) {
       return jsonResponse({
         success: false,
-        message: 'ไม่พบรูปภาพใน Google Drive: ' + cleanName
+        message: 'ไม่พบรูปภาพใน Google Drive: ' + (filename || fileIdParam)
       });
     }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {}
 
     var blob = file.getBlob();
     var base64 = Utilities.base64Encode(blob.getBytes());
@@ -650,9 +769,45 @@ function jsonResponse(obj) {
 
 export const DRIVE_FOLDER_ID = '1y9_CzTkunm85vparUxDGg_lvCH0sa6P0';
 
+const DRIVE_PHOTO_STORAGE_KEY = 'gsheets_drive_photo_cache_v2';
 const resolvedDriveImageCache = new Map<string, string>();
-const failedDriveImageCache = new Set<string>();
+const failedDriveImageCache = new Map<string, number>();
 const pendingDriveImagePromises = new Map<string, Promise<string | null>>();
+
+// Hydrate persistent Drive URL cache (only lightweight URLs, not large base64 strings)
+try {
+  const rawCache = localStorage.getItem(DRIVE_PHOTO_STORAGE_KEY);
+  if (rawCache) {
+    const parsed = JSON.parse(rawCache) as Record<string, string>;
+    Object.entries(parsed).forEach(([k, v]) => {
+      if (k && typeof v === 'string' && v.startsWith('http')) {
+        resolvedDriveImageCache.set(k, v);
+      }
+    });
+  }
+} catch {
+  // ignore storage errors
+}
+
+function persistResolvedDriveUrl(key: string, url: string): void {
+  if (!key || !url.startsWith('http')) return;
+  try {
+    const rawCache = localStorage.getItem(DRIVE_PHOTO_STORAGE_KEY);
+    const parsed: Record<string, string> = rawCache ? JSON.parse(rawCache) : {};
+    parsed[key] = url;
+    const keys = Object.keys(parsed);
+    if (keys.length > 500) {
+      delete parsed[keys[0]];
+    }
+    localStorage.setItem(DRIVE_PHOTO_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function clearFailedDriveImageCache(): void {
+  failedDriveImageCache.clear();
+}
 
 export function extractDriveFileId(url: string): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -725,7 +880,35 @@ export function getDriveThumbnailUrl(url: string): string {
   return trimmed;
 }
 
-export async function resolveDriveImageSrc(rawUrl: string): Promise<string | null> {
+// Concurrency limiter for Apps Script photo resolution so mounting 30+ rows doesn't flood Google Apps Script
+const MAX_CONCURRENT_DRIVE_RESOLVES = 3;
+let activeDriveResolves = 0;
+const driveResolveQueue: Array<() => void> = [];
+
+function runWithDriveResolveLimiter<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const execute = () => {
+      activeDriveResolves++;
+      fn()
+        .then(resolve, reject)
+        .finally(() => {
+          activeDriveResolves--;
+          const next = driveResolveQueue.shift();
+          if (next) next();
+        });
+    };
+    if (activeDriveResolves < MAX_CONCURRENT_DRIVE_RESOLVES) {
+      execute();
+    } else {
+      driveResolveQueue.push(execute);
+    }
+  });
+}
+
+export async function resolveDriveImageSrc(
+  rawUrl: string,
+  forceAppsScriptLookup = false
+): Promise<string | null> {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
   const trimmed = rawUrl.trim();
   if (!trimmed || trimmed === '-') return null;
@@ -734,83 +917,120 @@ export async function resolveDriveImageSrc(rawUrl: string): Promise<string | nul
     return trimmed;
   }
 
-  if (resolvedDriveImageCache.has(trimmed)) {
+  if (!forceAppsScriptLookup && resolvedDriveImageCache.has(trimmed)) {
     return resolvedDriveImageCache.get(trimmed)!;
   }
 
   const directFileId = extractDriveFileId(trimmed);
-  if (directFileId) {
+  if (directFileId && !forceAppsScriptLookup) {
     const formatted = `https://lh3.googleusercontent.com/d/${directFileId}`;
     resolvedDriveImageCache.set(trimmed, formatted);
     return formatted;
   }
 
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+  if (!directFileId && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
     return trimmed;
   }
 
-  if (failedDriveImageCache.has(trimmed)) {
+  const failedAt = failedDriveImageCache.get(trimmed);
+  if (failedAt && Date.now() - failedAt < 45_000) {
     return null;
   }
 
-  if (pendingDriveImagePromises.has(trimmed)) {
-    return pendingDriveImagePromises.get(trimmed)!;
+  const pendingKey = `${trimmed}::${forceAppsScriptLookup ? 'force' : 'normal'}`;
+  if (pendingDriveImagePromises.has(pendingKey)) {
+    return pendingDriveImagePromises.get(pendingKey)!;
   }
 
-  const promise = (async (): Promise<string | null> => {
+  const promise = runWithDriveResolveLimiter(async (): Promise<string | null> => {
     try {
       const scriptUrl = getConfiguredAppsScriptUrl();
-      if (scriptUrl) {
-        const cleanFileName = trimmed.includes('/')
-          ? trimmed.split('/').pop()!.trim()
-          : trimmed;
+      const queryParam = directFileId
+        ? `fileId=${encodeURIComponent(directFileId)}`
+        : `filename=${encodeURIComponent(trimmed)}`;
 
-        for (const candidate of [trimmed, cleanFileName]) {
-          try {
-            const sep = scriptUrl.includes('?') ? '&' : '?';
-            const reqUrl = `${scriptUrl}${sep}filename=${encodeURIComponent(candidate)}`;
-            const res = await fetch(reqUrl);
-            if (res.ok) {
-              const data = (await res.json()) as {
-                success?: boolean;
-                ok?: boolean;
-                base64?: string;
-                mimeType?: string;
-                fileId?: string;
-                url?: string;
-              };
-              if (data.base64) {
-                const mime = data.mimeType || 'image/jpeg';
-                const dataUrl = data.base64.startsWith('data:image/')
-                  ? data.base64
-                  : `data:${mime};base64,${data.base64}`;
-                resolvedDriveImageCache.set(trimmed, dataUrl);
-                return dataUrl;
-              }
-              if (data.fileId) {
-                const driveUrl = `https://lh3.googleusercontent.com/d/${data.fileId}`;
-                resolvedDriveImageCache.set(trimmed, driveUrl);
-                return driveUrl;
-              }
-              if (data.url) {
-                const formattedUrl = formatDriveImageUrl(data.url);
-                resolvedDriveImageCache.set(trimmed, formattedUrl);
-                return formattedUrl;
+      const parsePhotoPayload = (data: {
+        success?: boolean;
+        ok?: boolean;
+        base64?: string;
+        mimeType?: string;
+        fileId?: string;
+        url?: string;
+      }): string | null => {
+        if (data.base64) {
+          const mime = data.mimeType || 'image/jpeg';
+          const dataUrl = data.base64.startsWith('data:image/')
+            ? data.base64
+            : `data:${mime};base64,${data.base64}`;
+          resolvedDriveImageCache.set(trimmed, dataUrl);
+          if (data.fileId) {
+            persistResolvedDriveUrl(trimmed, `https://lh3.googleusercontent.com/d/${data.fileId}`);
+          }
+          return dataUrl;
+        }
+        if (data.fileId) {
+          const driveUrl = `https://lh3.googleusercontent.com/d/${data.fileId}`;
+          resolvedDriveImageCache.set(trimmed, driveUrl);
+          persistResolvedDriveUrl(trimmed, driveUrl);
+          return driveUrl;
+        }
+        if (data.url) {
+          const formattedUrl = formatDriveImageUrl(data.url);
+          resolvedDriveImageCache.set(trimmed, formattedUrl);
+          persistResolvedDriveUrl(trimmed, formattedUrl);
+          return formattedUrl;
+        }
+        return null;
+      };
+
+      // 1. Try backend proxy first to avoid browser CORS errors on Apps Script redirects
+      if (isBackendApiAvailable !== false && !directFileId) {
+        try {
+          const proxyResPromise = safeBackendFetch(
+            `/api/drive-photo?filename=${encodeURIComponent(trimmed)}&scriptUrl=${encodeURIComponent(scriptUrl || '')}`
+          );
+          if (proxyResPromise) {
+            const proxyRes = await proxyResPromise;
+            if (proxyRes.ok) {
+              const proxyData = await proxyRes.json();
+              const resolved = parsePhotoPayload(proxyData);
+              if (resolved) return resolved;
+              // If backend proxy explicitly returned a JSON miss from Apps Script, don't duplicate the call from browser
+              if (proxyData && proxyData.success === false) {
+                failedDriveImageCache.set(trimmed, Date.now());
+                return null;
               }
             }
-          } catch {
-            // continue to next candidate
           }
+        } catch {
+          // fall through to direct fetch
         }
       }
-      failedDriveImageCache.add(trimmed);
+
+      // 2. Fallback to direct browser fetch to Apps Script URL
+      if (scriptUrl) {
+        try {
+          const sep = scriptUrl.includes('?') ? '&' : '?';
+          const reqUrl = `${scriptUrl}${sep}${queryParam}`;
+          const res = await fetch(reqUrl);
+          if (res.ok) {
+            const data = await res.json();
+            const resolved = parsePhotoPayload(data);
+            if (resolved) return resolved;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      failedDriveImageCache.set(trimmed, Date.now());
       return null;
     } finally {
-      pendingDriveImagePromises.delete(trimmed);
+      pendingDriveImagePromises.delete(pendingKey);
     }
-  })();
+  });
 
-  pendingDriveImagePromises.set(trimmed, promise);
+  pendingDriveImagePromises.set(pendingKey, promise);
   return promise;
 }
 
@@ -1260,7 +1480,7 @@ const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '944294225': new Set([
     'A', 'B', 'C', 'G',
     'H', 'I', 'J', 'K', 'L', 'M',
-    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
+    'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
     'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH',
     'AJ', 'AK', 'AL', 'AM',
   ]),
@@ -1289,7 +1509,6 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'เลขที่ PR',
     'เลขที่PR',
     'เลขที่ใบกำกับภาษี',
-    'รูปถ่ายที่ 1',
     'รูปถ่ายที่ 2',
     'รูปถ่ายที่ 3',
     'รูปถ่ายที่ 4',
@@ -1298,7 +1517,6 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'รูปถ่ายที่ 7',
     'รูปถ่ายที่ 8',
     'รูปถ่ายที่ 9',
-    'ภาพถ่ายที่ 1',
     'ภาพถ่ายที่ 2',
     'ภาพถ่ายที่ 3',
     'ภาพถ่ายที่ 4',
@@ -2499,10 +2717,10 @@ export async function fetchSheetTabData(
     }
   });
 
-  // In ฐานข้อมูลรถ (gid: 378250263), display only the 6 requested columns in table:
-  // รูปพนักงาน (M), ชื่อพนักงานประจำรถ (I), ทะเบียนรถ (A), พื้นที่ปฎิบัติงาน (J), กะทำงาน (L), ทีม (O)
+  // In ฐานข้อมูลรถ (gid: 378250263), display the key columns including รูปรถ (B) and รูปพนักงาน (M):
+  // รูปรถ (B), รูปพนักงาน (M), ชื่อพนักงานประจำรถ (I), ทะเบียนรถ (A), พื้นที่ปฎิบัติงาน (J), กะทำงาน (L), ทีม (O)
   if (tab.gid === '378250263') {
-    const orderedActiveIds = ['M', 'I', 'A', 'J', 'L', 'O'];
+    const orderedActiveIds = ['B', 'M', 'I', 'A', 'J', 'L', 'O'];
     const colMap = new Map(allColumns.map((c) => [c.id, c]));
     activeColumns.length = 0;
     orderedActiveIds.forEach((id) => {
@@ -4545,3 +4763,42 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
 
   return map;
 }
+
+export async function appendTrailerRecord(trailerNumber: string): Promise<void> {
+  const clean = (trailerNumber || '').trim();
+  if (!clean) return;
+
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'appendTrailerRecord',
+        trailerNumber: clean,
+      });
+      if (res.ok !== false) return;
+    } catch {
+      // fall through to REST API
+    }
+  }
+
+  const token = await getOrConnectAccessToken(false);
+  if (token) {
+    try {
+      const range = encodeURIComponent('ฐานข้อมูลหาง!A:A');
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: [[clean]],
+        }),
+      });
+    } catch {
+      // ignore background error
+    }
+  }
+}
+

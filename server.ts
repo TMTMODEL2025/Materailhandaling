@@ -313,6 +313,66 @@ async function startServer() {
     }
   });
 
+  const drivePhotoServerCache = new Map<
+    string,
+    { data: Record<string, unknown>; expiresAt: number }
+  >();
+
+  app.get('/api/drive-photo', async (req, res) => {
+    try {
+      const filename = typeof req.query.filename === 'string' ? req.query.filename.trim() : '';
+      const scriptUrlParam =
+        typeof req.query.scriptUrl === 'string' ? req.query.scriptUrl.trim() : undefined;
+      if (!filename) {
+        res.status(400).json({ success: false, message: 'No filename provided' });
+        return;
+      }
+
+      const cached = drivePhotoServerCache.get(filename);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.json(cached.data);
+        return;
+      }
+
+      const store = readStore();
+      const targetUrl = normalizeUrl(
+        scriptUrlParam ||
+          store.googleScriptUrl ||
+          process.env.VITE_GOOGLE_SCRIPT_URL ||
+          DEFAULT_APPS_SCRIPT_URL
+      );
+
+      const sep = targetUrl.includes('?') ? '&' : '?';
+      const reqUrl = `${targetUrl}${sep}filename=${encodeURIComponent(filename)}`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch(reqUrl, {
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        const json = JSON.parse(text) as Record<string, unknown>;
+        if (json && (json.success || json.base64 || json.fileId || json.url)) {
+          drivePhotoServerCache.set(filename, {
+            data: json,
+            expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour cache for found photos
+          });
+        } else {
+          drivePhotoServerCache.set(filename, {
+            data: json,
+            expiresAt: Date.now() + 2 * 60 * 1000, // 2 min cache for misses
+          });
+        }
+        res.json(json);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      res.status(502).json({ success: false, error: String(err) });
+    }
+  });
+
   app.get('/api/script-url', (_req, res) => {
     const store = readStore();
     const candidate =

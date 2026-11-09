@@ -16,10 +16,12 @@ import {
   completeJobTransferRecord,
   fetchAccountEmployeeMap,
   normalizeDriverNameKey,
+  appendTrailerRecord,
 } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
 
 const CUSTOM_LOCATIONS_KEY = 'job_transfer_custom_locations';
+const CUSTOM_TRAILERS_KEY = 'job_transfer_custom_trailers';
 
 function getStoredCustomLocations(): string[] {
   try {
@@ -39,6 +41,29 @@ function getStoredCustomLocations(): string[] {
 function saveStoredCustomLocations(locations: string[]) {
   try {
     localStorage.setItem(CUSTOM_LOCATIONS_KEY, JSON.stringify(locations));
+  } catch {
+    // ignore
+  }
+}
+
+function getStoredCustomTrailers(): string[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TRAILERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((x) => String(x).trim()).filter(Boolean);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveStoredCustomTrailers(trailers: string[]) {
+  try {
+    localStorage.setItem(CUSTOM_TRAILERS_KEY, JSON.stringify(trailers));
   } catch {
     // ignore
   }
@@ -218,31 +243,44 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const [newLocationInput, setNewLocationInput] = useState<string>('');
   const [locationAddError, setLocationAddError] = useState<string | null>(null);
 
+  const [customTrailers, setCustomTrailers] = useState<string[]>(() =>
+    getStoredCustomTrailers()
+  );
+  const [isAddTrailerOpen, setIsAddTrailerOpen] = useState<boolean>(false);
+  const [newTrailerInput, setNewTrailerInput] = useState<string>('');
+  const [trailerAddError, setTrailerAddError] = useState<string | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fallbackRows, setFallbackRows] = useState<SheetRow[]>([]);
   const [vehicleDbRows, setVehicleDbRows] = useState<SheetRow[]>([]);
+  const [trailerDbRows, setTrailerDbRows] = useState<SheetRow[]>([]);
   const [accountEmpMap, setAccountEmpMap] = useState<Map<string, string>>(
     new Map()
   );
 
-  // Load ฐานข้อมูลรถ (gid: 378250263) + Account employee code mapping whenever modal opens
+  // Load ฐานข้อมูลรถ (gid: 378250263), ฐานข้อมูลหาง (gid: 1295975917) + Account employee code mapping whenever modal opens
   useEffect(() => {
     if (!isOpen && !inlineMode) return;
     const vehicleTab = SHEET_TABS.find((t) => t.gid === '378250263');
+    const trailerTab = SHEET_TABS.find((t) => t.gid === '1295975917');
     if (!vehicleTab) return;
     let cancelled = false;
     void Promise.all([
       fetchSheetTabData(vehicleTab, { limit: 250 }),
       fetchAccountEmployeeMap(),
+      trailerTab ? fetchSheetTabData(trailerTab, { limit: 250 }) : Promise.resolve(null),
     ])
-      .then(([vehRes, empMap]) => {
+      .then(([vehRes, empMap, trlRes]) => {
         if (cancelled) return;
         if (vehRes.rows.length > 0) {
           setVehicleDbRows(vehRes.rows);
         }
         if (empMap.size > 0) {
           setAccountEmpMap(new Map(empMap));
+        }
+        if (trlRes && trlRes.rows.length > 0) {
+          setTrailerDbRows(trlRes.rows);
         }
       })
       .catch(() => {});
@@ -382,6 +420,19 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       });
     }
 
+    trailerDbRows.forEach((row) => {
+      const trl = (row.values['A'] ?? '').trim();
+      if (trl && trl !== '-' && trl !== 'หมายเลขหาง' && trl !== 'หมายเลขหางพ่วง') {
+        trailers.add(trl);
+      }
+    });
+
+    customTrailers.forEach((trl) => {
+      if (trl) {
+        trailers.add(trl);
+      }
+    });
+
     DEFAULT_LOCATIONS.forEach((loc) => {
       origins.add(loc);
       destinations.add(loc);
@@ -406,12 +457,47 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       employees: Array.from(employeeMap.keys()),
       drivers: Array.from(driverMap.keys()),
       vehicles: Array.from(vehicles),
-      trailers: Array.from(trailers),
+      trailers: sortLocations(Array.from(trailers)),
       products: Array.from(products),
       origins: sortLocations(Array.from(origins)),
       destinations: sortLocations(Array.from(destinations)),
     };
-  }, [sourceRows, vehicleDbRows, accountEmpMap, customLocations]);
+  }, [sourceRows, vehicleDbRows, trailerDbRows, accountEmpMap, customLocations, customTrailers]);
+
+  const handleOpenAddTrailerModal = () => {
+    setNewTrailerInput('');
+    setTrailerAddError(null);
+    setIsAddTrailerOpen(true);
+  };
+
+  const handleAddTrailerSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newTrailerInput.trim();
+    if (!trimmed) {
+      setTrailerAddError('กรุณากรอกเบอร์หาง');
+      return;
+    }
+
+    if (!customTrailers.includes(trimmed)) {
+      const updated = [...customTrailers, trimmed];
+      setCustomTrailers(updated);
+      saveStoredCustomTrailers(updated);
+    }
+
+    setTrailerNumber(trimmed);
+    void appendTrailerRecord(trimmed);
+    setIsAddTrailerOpen(false);
+    setNewTrailerInput('');
+  };
+
+  const handleDeleteCustomTrailer = (trailerToDelete: string) => {
+    const updated = customTrailers.filter((t) => t !== trailerToDelete);
+    setCustomTrailers(updated);
+    saveStoredCustomTrailers(updated);
+    if (trailerNumber === trailerToDelete) {
+      setTrailerNumber('');
+    }
+  };
 
   const handleOpenAddLocationModal = (
     target: 'origin' | 'destination' | 'both' = 'origin'
@@ -1065,17 +1151,33 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
             {/* เบอร์หาง */}
             <div>
-              <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                เบอร์หาง
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  เบอร์หาง
+                </label>
+                <button
+                  type="button"
+                  onClick={handleOpenAddTrailerModal}
+                  className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                >
+                  <Plus className="w-3 h-3" /> เพิ่มเบอร์หาง
+                </button>
+              </div>
               <select
                 value={trailerNumber}
-                onChange={(e) => setTrailerNumber(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === '__ADD_NEW_TRAILER__') {
+                    handleOpenAddTrailerModal();
+                  } else {
+                    setTrailerNumber(e.target.value);
+                  }
+                }}
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
               >
                 <option value="">-- เลือกเบอร์หาง (ถ้ามี) --</option>
                 {trailerNumber &&
-                  !referenceOptions.trailers.includes(trailerNumber) && (
+                  !referenceOptions.trailers.includes(trailerNumber) &&
+                  trailerNumber !== '__ADD_NEW_TRAILER__' && (
                     <option value={trailerNumber}>{trailerNumber}</option>
                   )}
                 {referenceOptions.trailers.map((t) => (
@@ -1083,6 +1185,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                     {t}
                   </option>
                 ))}
+                <option value="__ADD_NEW_TRAILER__" className="font-semibold text-indigo-600">
+                  + เพิ่มเบอร์หางใหม่...
+                </option>
               </select>
             </div>
 
@@ -1446,11 +1551,105 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     </div>
   ) : null;
 
+  const addTrailerModalElement = isAddTrailerOpen ? (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-xs"
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+    >
+      <div
+        className="w-full max-w-md rounded-xl bg-white p-4 sm:p-5 shadow-xl transition-all"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-sm sm:text-base font-semibold text-slate-900 flex items-center gap-2">
+            <Truck className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
+            เพิ่มเบอร์หางใหม่
+          </h3>
+          <button
+            type="button"
+            onClick={() => setIsAddTrailerOpen(false)}
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleAddTrailerSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              หมายเลขเบอร์หาง <span className="text-red-600">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              autoFocus
+              value={newTrailerInput}
+              onChange={(e) => {
+                setNewTrailerInput(e.target.value);
+                setTrailerAddError(null);
+              }}
+              placeholder="เช่น TTL-67, หางพ่วง 01..."
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs sm:text-sm text-slate-900 focus:border-indigo-600 focus:outline-none"
+            />
+            {trailerAddError && (
+              <p className="mt-1 text-xs text-red-600">{trailerAddError}</p>
+            )}
+          </div>
+
+          {customTrailers.length > 0 && (
+            <div className="border-t border-slate-100 pt-3">
+              <span className="block text-[11px] font-medium text-slate-500 mb-1.5">
+                เบอร์หางที่เพิ่มเอง ({customTrailers.length}):
+              </span>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                {customTrailers.map((trl) => (
+                  <span
+                    key={trl}
+                    className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 font-mono text-xs font-medium text-indigo-700 border border-indigo-100"
+                  >
+                    {trl}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCustomTrailer(trl)}
+                      title="ลบเบอร์หางนี้"
+                      className="text-indigo-400 hover:text-red-600 ml-0.5 font-bold"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setIsAddTrailerOpen(false)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs"
+            >
+              บันทึกเบอร์หาง
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  ) : null;
+
   if (inlineMode) {
     return (
       <>
         {cardContent}
         {addLocationModalElement}
+        {addTrailerModalElement}
       </>
     );
   }
@@ -1466,6 +1665,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         {cardContent}
       </div>
       {addLocationModalElement}
+      {addTrailerModalElement}
     </>
   );
 };

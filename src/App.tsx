@@ -2400,7 +2400,11 @@ function playNotificationChime() {
                               isNumeric ? 'ml-auto flex-row-reverse' : ''
                             }`}
                           >
-                            <span>{col.label}</span>
+                            <span>
+                              {activeTab.gid === '944294225' && col.id === 'Q'
+                                ? 'รูปถ่าย'
+                                : col.label}
+                            </span>
                             {isSorted ? (
                               sortConfig.direction === 'asc' ? (
                                 <ArrowUp className="h-3 w-3 text-slate-900 shrink-0" />
@@ -2748,6 +2752,37 @@ function playNotificationChime() {
                                             </button>
                                           </div>
                                         )
+                                      ) : activeTab.gid === '944294225' && col.id === 'Q' ? (
+                                        (() => {
+                                          const repairPhotos = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']
+                                            .map((cId) => (row.values[cId] ?? '').trim())
+                                            .filter((v) => isPhotoValue(v))
+                                            .sort((a, b) => {
+                                              const aDirect = a.startsWith('data:image/') || a.startsWith('http') ? 0 : 1;
+                                              const bDirect = b.startsWith('data:image/') || b.startsWith('http') ? 0 : 1;
+                                              return aDirect - bDirect;
+                                            });
+                                          if (repairPhotos.length === 0) {
+                                            return <span className="text-slate-400">-</span>;
+                                          }
+                                          return (
+                                            <div className="flex items-center gap-1">
+                                              {repairPhotos.slice(0, 2).map((pSrc, pIdx) => (
+                                                <DrivePhotoImg
+                                                  key={pIdx}
+                                                  src={pSrc}
+                                                  alt={`รูปงานซ่อม ${pIdx + 1}`}
+                                                  className="h-9 w-12 rounded border border-slate-200 object-cover shrink-0"
+                                                />
+                                              ))}
+                                              {repairPhotos.length > 2 && (
+                                                <span className="inline-flex h-6 items-center rounded-md bg-slate-100 px-1.5 text-[10px] font-bold text-slate-600 border border-slate-200 shrink-0">
+                                                  +{repairPhotos.length - 2}
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })()
                                       ) : isPhotoValue(val) ? (
                                         <DrivePhotoImg
                                           src={val}
@@ -3096,6 +3131,37 @@ function playNotificationChime() {
                                   </button>
                                 </div>
                               )
+                            ) : activeTab.gid === '944294225' && col.id === 'Q' ? (
+                              (() => {
+                                const repairPhotos = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']
+                                  .map((cId) => (row.values[cId] ?? '').trim())
+                                  .filter((v) => isPhotoValue(v))
+                                  .sort((a, b) => {
+                                    const aDirect = a.startsWith('data:image/') || a.startsWith('http') ? 0 : 1;
+                                    const bDirect = b.startsWith('data:image/') || b.startsWith('http') ? 0 : 1;
+                                    return aDirect - bDirect;
+                                  });
+                                if (repairPhotos.length === 0) {
+                                  return <span className="text-slate-400">-</span>;
+                                }
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    {repairPhotos.slice(0, 2).map((pSrc, pIdx) => (
+                                      <DrivePhotoImg
+                                        key={pIdx}
+                                        src={pSrc}
+                                        alt={`รูปงานซ่อม ${pIdx + 1}`}
+                                        className="h-9 w-12 rounded border border-slate-200 object-cover shrink-0"
+                                      />
+                                    ))}
+                                    {repairPhotos.length > 2 && (
+                                      <span className="inline-flex h-6 items-center rounded-md bg-slate-100 px-1.5 text-[10px] font-bold text-slate-600 border border-slate-200 shrink-0">
+                                        +{repairPhotos.length - 2}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()
                             ) : isPhotoValue(val) ? (
                               <DrivePhotoImg
                                 src={val}
