@@ -1368,7 +1368,7 @@ export const SHEET_TABS: SheetTabConfig[] = [
     category: 'เชื้อเพลิง',
     description: 'ประวัติการรับเข้าและเบิกจ่ายน้ำมันเชื้อเพลิง ดีเซล/เบนซิน',
     reverseOrder: true,
-    defaultLimit: 250,
+    defaultLimit: 50000,
   },
   {
     gid: '1031154414',
@@ -1477,6 +1477,7 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
 const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
   '606634465': new Set(['P', 'Q', 'R', 'S', 'T', 'U', 'V']),
   '1156877149': new Set(['D', 'Z']),
+  '1733355146': new Set(['A', 'C', 'T', 'U', 'V', 'W', 'X']),
   '944294225': new Set([
     'A', 'B', 'C', 'G',
     'H', 'I', 'J', 'K', 'L', 'M',
@@ -1494,6 +1495,17 @@ const HIDDEN_COLUMN_LABELS: Record<string, Set<string>> = {
     'ภาพถ่ายที่ 2',
     'น้ำหนักสุทธิ',
     'จำนวนรอบ',
+  ]),
+  '1733355146': new Set([
+    'ID',
+    'id',
+    'Id',
+    'เวลา',
+    'ผู้รับเข้า',
+    'เลขที่ใบเบิก',
+    'หมายเหตุ',
+    'Update3',
+    'MONTH',
   ]),
   '944294225': new Set([
     'ลำดับ',
@@ -2734,7 +2746,10 @@ export async function fetchSheetTabData(
     signal?: AbortSignal;
   }
 ): Promise<SheetDataResult> {
-  const limit = options?.limit ?? tab.defaultLimit ?? 250;
+  const limit =
+    tab.gid === '1733355146'
+      ? 50000
+      : options?.limit ?? tab.defaultLimit ?? 250;
   const search = options?.remoteSearchQuery?.trim() ?? '';
 
   const [totalRowsInSheet, mutationsStore] = await Promise.all([

@@ -58,6 +58,7 @@ import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
+import { FuelCharts } from './components/FuelCharts';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
@@ -176,6 +177,44 @@ function getRowVehicleShift(row: SheetRow, columns?: SheetColumn[]): string {
   return trimmed ? `กะ: ${trimmed}` : 'ไม่ระบุกะทำงาน';
 }
 
+function getRowFuelStatus(row: SheetRow, columns?: SheetColumn[]): string {
+  const inColId = columns?.find((c) => c.label.includes('รับเข้า'))?.id ?? 'E';
+  const outColId = columns?.find((c) => c.label.includes('จ่ายออก'))?.id ?? 'G';
+
+  const inRaw = row.rawValues[inColId] ?? row.rawValues['E'];
+  const inVal =
+    typeof inRaw === 'number'
+      ? inRaw
+      : parseFloat(String(row.values[inColId] ?? row.values['E'] ?? '').replace(/,/g, '').trim());
+
+  if (!Number.isNaN(inVal) && inVal > 0) {
+    return 'รับเข้า';
+  }
+
+  const outRaw = row.rawValues[outColId] ?? row.rawValues['G'];
+  const outVal =
+    typeof outRaw === 'number'
+      ? outRaw
+      : parseFloat(String(row.values[outColId] ?? row.values['G'] ?? '').replace(/,/g, '').trim());
+
+  if (!Number.isNaN(outVal) && outVal > 0) {
+    return 'เบิกออก';
+  }
+
+  const statusCol = columns?.find(
+    (c) => c.label.trim().toUpperCase() === 'STATUS' || c.id === 'S'
+  );
+  const raw =
+    (statusCol ? row.values[statusCol.id] : row.values['S']) ??
+    row.values['S'] ??
+    row.values['STATUS'] ??
+    '';
+  const trimmed = raw.trim();
+  if (trimmed.includes('รับเข้า')) return 'รับเข้า';
+  if (trimmed.includes('เบิก') || trimmed.includes('จ่าย')) return 'เบิกออก';
+  return trimmed || 'เบิกออก';
+}
+
 interface StatusGroupHeaderTheme {
   rowClass: string;
   chevronClass: string;
@@ -186,6 +225,28 @@ interface StatusGroupHeaderTheme {
 
 function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHeaderTheme {
   const s = status.trim();
+
+  if (s.includes('รับเข้า')) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-emerald-600/15 via-emerald-500/10 to-teal-500/5 hover:from-emerald-600/25 hover:via-emerald-500/15 border-y border-emerald-200/90',
+      chevronClass: 'bg-emerald-600 text-white shadow-xs',
+      titleClass: 'text-emerald-950',
+      countClass: 'bg-emerald-600 text-white shadow-2xs',
+      actionClass: 'text-emerald-700',
+    };
+  }
+
+  if (s.includes('เบิกออก') || s.includes('จ่ายออก')) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-amber-500/20 via-amber-400/12 to-orange-400/5 hover:from-amber-500/30 hover:via-amber-400/20 border-y border-amber-300/90',
+      chevronClass: 'bg-amber-500 text-white shadow-xs',
+      titleClass: 'text-amber-950',
+      countClass: 'bg-amber-600 text-white shadow-2xs',
+      actionClass: 'text-amber-800',
+    };
+  }
 
   // บันทึกงานซ่อม (gid: 944294225) & บันทึกการย้ายงาน (gid: 606634465)
   if (
@@ -1071,7 +1132,8 @@ function playNotificationChime() {
     if (
       activeTab.gid !== '944294225' &&
       activeTab.gid !== '606634465' &&
-      activeTab.gid !== '378250263'
+      activeTab.gid !== '378250263' &&
+      activeTab.gid !== '1733355146'
     ) {
       return null;
     }
@@ -1082,12 +1144,32 @@ function playNotificationChime() {
           ? getRowApprovalStatus(row)
           : activeTab.gid === '378250263'
           ? getRowVehicleShift(row, sheetData?.columns)
+          : activeTab.gid === '1733355146'
+          ? getRowFuelStatus(row, sheetData?.columns)
           : getRowJobTransferStatus(row, sheetData?.columns);
       if (!tempGroups.has(status)) {
         tempGroups.set(status, []);
       }
       tempGroups.get(status)!.push(row);
     });
+
+    if (activeTab.gid === '1733355146') {
+      const getFuelStatusPriority = (statusKey: string): number => {
+        const s = statusKey.trim();
+        if (s.includes('รับเข้า')) return 0;
+        if (s.includes('เบิกออก') || s.includes('จ่ายออก')) return 1;
+        return 2;
+      };
+
+      const sortedEntries = Array.from(tempGroups.entries()).sort(([keyA], [keyB]) => {
+        const prioA = getFuelStatusPriority(keyA);
+        const prioB = getFuelStatusPriority(keyB);
+        if (prioA !== prioB) return prioA - prioB;
+        return keyA.localeCompare(keyB, 'th');
+      });
+
+      return new Map<string, SheetRow[]>(sortedEntries);
+    }
 
     if (activeTab.gid === '944294225') {
       const orderedGroups = new Map<string, SheetRow[]>();
@@ -1405,11 +1487,22 @@ function playNotificationChime() {
     let latestBenzeneBalance = 0;
 
     let totalInLiters = 0;
-    let totalInDiesel = 0;
-    let totalInBenzene = 0;
+    let totalInCount = 0;
+    let inDieselLiters = 0;
+    let inDieselCount = 0;
+    let inBenzeneLiters = 0;
+    let inBenzeneCount = 0;
+    let inOtherLiters = 0;
+    let inOtherCount = 0;
 
     let totalOutLiters = 0;
-    let dispenseCount = 0;
+    let totalOutCount = 0;
+    let outDieselLiters = 0;
+    let outDieselCount = 0;
+    let outBenzeneLiters = 0;
+    let outBenzeneCount = 0;
+    let outOtherLiters = 0;
+    let outOtherCount = 0;
 
     let totalOutValue = 0;
     let latestPrice = 0;
@@ -1474,6 +1567,12 @@ function playNotificationChime() {
 
     filteredRows.forEach((r) => {
       const fType = (r.values[fuelTypeColId] ?? r.values['D'] ?? '').trim();
+      const isDiesel = fType.includes('ดี') || fType.includes('เซล');
+      const isBenzene =
+        fType.includes('เบน') ||
+        fType.includes('ซิน') ||
+        fType.toLowerCase().includes('benzene') ||
+        fType.includes('โซฮอล์');
 
       // Liters In
       const inRaw = r.rawValues[inColId] ?? r.rawValues['E'];
@@ -1485,10 +1584,16 @@ function playNotificationChime() {
             );
       if (!Number.isNaN(inVal) && inVal > 0) {
         totalInLiters += inVal;
-        if (fType.includes('ดีเซล')) {
-          totalInDiesel += inVal;
-        } else if (fType.includes('เบนซิน') || fType.includes('เบนซิล')) {
-          totalInBenzene += inVal;
+        totalInCount += 1;
+        if (isDiesel) {
+          inDieselLiters += inVal;
+          inDieselCount += 1;
+        } else if (isBenzene) {
+          inBenzeneLiters += inVal;
+          inBenzeneCount += 1;
+        } else {
+          inOtherLiters += inVal;
+          inOtherCount += 1;
         }
       }
 
@@ -1502,7 +1607,17 @@ function playNotificationChime() {
             );
       if (!Number.isNaN(outVal) && outVal > 0) {
         totalOutLiters += outVal;
-        dispenseCount += 1;
+        totalOutCount += 1;
+        if (isDiesel) {
+          outDieselLiters += outVal;
+          outDieselCount += 1;
+        } else if (isBenzene) {
+          outBenzeneLiters += outVal;
+          outBenzeneCount += 1;
+        } else {
+          outOtherLiters += outVal;
+          outOtherCount += 1;
+        }
       }
 
       // Value / Amount
@@ -1543,10 +1658,22 @@ function playNotificationChime() {
       latestDieselBalance,
       latestBenzeneBalance,
       totalInLiters,
-      totalInDiesel,
-      totalInBenzene,
+      totalInCount,
+      inDieselLiters,
+      inDieselCount,
+      inBenzeneLiters,
+      inBenzeneCount,
+      inOtherLiters,
+      inOtherCount,
       totalOutLiters,
-      dispenseCount,
+      totalOutCount,
+      dispenseCount: totalOutCount,
+      outDieselLiters,
+      outDieselCount,
+      outBenzeneLiters,
+      outBenzeneCount,
+      outOtherLiters,
+      outOtherCount,
       totalOutValue,
       latestPrice,
       avgPrice,
@@ -2402,67 +2529,141 @@ function playNotificationChime() {
                 <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-semibold text-slate-600">
-                        ยอดรับเข้าสะสม (ลิตร)
+                        ยอดรับเข้าสะสม
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
-                        <span>
-                          {isLoading && !sheetData
-                            ? '...'
-                            : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
+                      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-1">
+                        <div className="flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                          <span>
+                            {isLoading && !sheetData
+                              ? '...'
+                              : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
+                          </span>
+                          <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
+                            ลิตร
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-full px-2 py-0.5 tabular-nums">
+                          รวม {fuelKpiMetrics.totalInCount.toLocaleString('th-TH')} ครั้ง
                         </span>
-                        <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
-                          ลิตร
-                        </span>
+                      </div>
+
+                      <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                          <span className="text-slate-500 font-medium text-[11px]">ดีเซล:</span>
+                          <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                            <span className="text-emerald-700 font-bold">
+                              {fuelKpiMetrics.inDieselLiters.toLocaleString('th-TH')}
+                            </span>{' '}
+                            ลิตร{' '}
+                            <span className="text-slate-400 font-normal">
+                              ({fuelKpiMetrics.inDieselCount.toLocaleString('th-TH')} ครั้ง)
+                            </span>
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                          <span className="text-slate-500 font-medium text-[11px]">เบนซิน:</span>
+                          <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                            <span className="text-indigo-700 font-bold">
+                              {fuelKpiMetrics.inBenzeneLiters.toLocaleString('th-TH')}
+                            </span>{' '}
+                            ลิตร{' '}
+                            <span className="text-slate-400 font-normal">
+                              ({fuelKpiMetrics.inBenzeneCount.toLocaleString('th-TH')} ครั้ง)
+                            </span>
+                          </span>
+                        </div>
+                        {fuelKpiMetrics.inOtherLiters > 0 && (
+                          <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                            <span className="text-slate-500 font-medium text-[11px]">อื่นๆ:</span>
+                            <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                              <span className="text-slate-700 font-bold">
+                                {fuelKpiMetrics.inOtherLiters.toLocaleString('th-TH')}
+                              </span>{' '}
+                              ลิตร{' '}
+                              <span className="text-slate-400 font-normal">
+                                ({fuelKpiMetrics.inOtherCount.toLocaleString('th-TH')} ครั้ง)
+                              </span>
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
                       <Droplet className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
-                    ดีเซล{' '}
-                    <span className="font-sans font-bold tracking-tight text-emerald-700 tabular-nums">
-                      {fuelKpiMetrics.totalInDiesel.toLocaleString('th-TH')}
-                    </span>{' '}
-                    ลิตร · เบนซิน{' '}
-                    <span className="font-sans font-bold tracking-tight text-indigo-700 tabular-nums">
-                      {fuelKpiMetrics.totalInBenzene.toLocaleString('th-TH')}
-                    </span>{' '}
-                    ลิตร
-                  </div>
                 </div>
 
-                {/* Card 3: ยอดจ่ายออกสะสม (ลิตร) */}
+                {/* Card 3: ยอดจ่ายออกสะสม (เบิกออก) */}
                 <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-semibold text-slate-600">
-                        ยอดจ่ายออกสะสม (ลิตร)
+                        ยอดจ่ายออกสะสม (เบิกออก)
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
-                        <span>
-                          {isLoading && !sheetData
-                            ? '...'
-                            : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
+                      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-1">
+                        <div className="flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                          <span>
+                            {isLoading && !sheetData
+                              ? '...'
+                              : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
+                          </span>
+                          <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
+                            ลิตร
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 rounded-full px-2 py-0.5 tabular-nums">
+                          รวม {fuelKpiMetrics.totalOutCount.toLocaleString('th-TH')} ครั้ง
                         </span>
-                        <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
-                          ลิตร
-                        </span>
+                      </div>
+
+                      <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                          <span className="text-slate-500 font-medium text-[11px]">ดีเซล:</span>
+                          <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                            <span className="text-amber-700 font-bold">
+                              {fuelKpiMetrics.outDieselLiters.toLocaleString('th-TH')}
+                            </span>{' '}
+                            ลิตร{' '}
+                            <span className="text-slate-400 font-normal">
+                              ({fuelKpiMetrics.outDieselCount.toLocaleString('th-TH')} ครั้ง)
+                            </span>
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                          <span className="text-slate-500 font-medium text-[11px]">เบนซิน:</span>
+                          <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                            <span className="text-indigo-700 font-bold">
+                              {fuelKpiMetrics.outBenzeneLiters.toLocaleString('th-TH')}
+                            </span>{' '}
+                            ลิตร{' '}
+                            <span className="text-slate-400 font-normal">
+                              ({fuelKpiMetrics.outBenzeneCount.toLocaleString('th-TH')} ครั้ง)
+                            </span>
+                          </span>
+                        </div>
+                        {fuelKpiMetrics.outOtherLiters > 0 && (
+                          <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
+                            <span className="text-slate-500 font-medium text-[11px]">อื่นๆ:</span>
+                            <span className="font-sans font-semibold text-slate-800 tabular-nums">
+                              <span className="text-slate-700 font-bold">
+                                {fuelKpiMetrics.outOtherLiters.toLocaleString('th-TH')}
+                              </span>{' '}
+                              ลิตร{' '}
+                              <span className="text-slate-400 font-normal">
+                                ({fuelKpiMetrics.outOtherCount.toLocaleString('th-TH')} ครั้ง)
+                              </span>
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
                       <Repeat className="h-4 w-4" />
                     </div>
-                  </div>
-                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
-                    เบิกจ่ายทั้งหมด{' '}
-                    <span className="font-sans font-bold tracking-tight text-amber-700 tabular-nums">
-                      {fuelKpiMetrics.dispenseCount.toLocaleString('th-TH')}
-                    </span>{' '}
-                    ครั้ง
                   </div>
                 </div>
 
@@ -2613,6 +2814,16 @@ function playNotificationChime() {
             </div>
           )}
 
+          {/* Fuel Charts section for tab 1733355146 */}
+          {activeTab.gid === '1733355146' && (
+            <div className="mt-4">
+              <FuelCharts
+                rows={sheetData?.rows ?? []}
+                columns={sheetData?.columns}
+              />
+            </div>
+          )}
+
           {/* Error State */}
           {error && (
             <div className="mt-2.5 flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-800">
@@ -2639,11 +2850,9 @@ function playNotificationChime() {
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-600">
-                    {activeTab.gid !== '944294225' && (
+                    {activeTab.gid !== '944294225' && activeTab.gid !== '1733355146' && (
                       <th
-                        className={`w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap ${
-                          activeTab.gid === '1733355146' ? 'hidden sm:table-cell' : ''
-                        }`}
+                        className="w-16 px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap"
                       >
                         <button
                           type="button"
@@ -2799,14 +3008,20 @@ function playNotificationChime() {
                   </tr>
                 ) : (activeTab.gid === '944294225' ||
                     activeTab.gid === '606634465' ||
-                    activeTab.gid === '378250263') &&
+                    activeTab.gid === '378250263' ||
+                    activeTab.gid === '1733355146') &&
                   repairGroupedRows ? (
                   Array.from(repairGroupedRows.entries()).map(([status, rows]) => {
                     const isCollapsed = collapsedGroups[status] ?? true;
                     const colSpan =
                       (sheetData?.columns.length ?? 5) +
-                      (activeTab.gid === '378250263' ? 2 : 1);
-                    const groupPageSize = activeTab.gid === '378250263' ? 50 : 15;
+                      (activeTab.gid === '378250263'
+                        ? 2
+                        : activeTab.gid === '944294225' || activeTab.gid === '1733355146'
+                        ? 0
+                        : 1);
+                    const groupPageSize =
+                      activeTab.gid === '378250263' || activeTab.gid === '1733355146' ? 50 : 15;
                     const currentGroupPage = groupPages[status] ?? 1;
                     const groupTotalPages = Math.max(1, Math.ceil(rows.length / groupPageSize));
                     const paginatedGroupRows = rows.slice(
@@ -2865,7 +3080,7 @@ function playNotificationChime() {
                                 onClick={() => setSelectedRow(row)}
                                 className="cursor-pointer transition-colors hover:bg-slate-50"
                               >
-                                {activeTab.gid !== '944294225' && (
+                                {activeTab.gid !== '944294225' && activeTab.gid !== '1733355146' && (
                                   <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
                                     <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
                                   </td>
