@@ -1082,6 +1082,35 @@ function playNotificationChime() {
       return orderedGroups;
     }
 
+    if (activeTab.gid === '606634465') {
+      const getJobTransferStatusPriority = (statusKey: string): number => {
+        const s = statusKey.trim();
+        if (
+          s.includes('อยู่ระหว่าง') ||
+          s.includes('อยู่ระว่าง') ||
+          s.includes('ระหว่าง') ||
+          s.includes('ระว่าง') ||
+          s.includes('กำลังส่ง') ||
+          s.includes('กำลังดำเนินการ')
+        ) {
+          return 0;
+        }
+        if (s.includes('เรียบร้อย') || s.includes('สำเร็จ')) {
+          return 1;
+        }
+        return 2;
+      };
+
+      const sortedEntries = Array.from(tempGroups.entries()).sort(([keyA], [keyB]) => {
+        const prioA = getJobTransferStatusPriority(keyA);
+        const prioB = getJobTransferStatusPriority(keyB);
+        if (prioA !== prioB) return prioA - prioB;
+        return keyA.localeCompare(keyB, 'th');
+      });
+
+      return new Map<string, SheetRow[]>(sortedEntries);
+    }
+
     return tempGroups;
   }, [sortedRows, activeTab.gid, sheetData?.columns]);
 
