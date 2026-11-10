@@ -321,10 +321,12 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
   // Build employee/driver/vehicle options from ฐานข้อมูลรถ (gid: 378250263)
   // while keeping products, origins, destinations, and trailers from บันทึกการย้ายงาน
+  // Build employee/driver/vehicle options from ฐานข้อมูลรถ (gid: 378250263)
+  // while keeping products, origins, destinations, and trailers from บันทึกการย้ายงาน
   const referenceOptions = useMemo(() => {
     const employeeMap = new Map<
       string,
-      { name: string; vehicle: string; trailer: string }
+      { empCode: string; name: string; vehicle: string; trailer: string }
     >();
     const driverMap = new Map<
       string,
@@ -363,10 +365,11 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
       // Fallback only while ฐานข้อมูลรถ is still loading
       if (vehicleDbRows.length === 0) {
-        if (emp) {
-          const existing = employeeMap.get(emp);
+        const key = emp || drv;
+        if (key) {
+          const existing = employeeMap.get(key);
           if (!existing) {
-            employeeMap.set(emp, { name: drv, vehicle: veh, trailer: trl });
+            employeeMap.set(key, { empCode: emp || key, name: drv || key, vehicle: veh, trailer: trl });
           } else {
             if (!existing.name && drv) existing.name = drv;
             if (!existing.vehicle && veh) existing.vehicle = veh;
@@ -374,7 +377,7 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
           }
         }
         if (drv && !driverMap.has(drv)) {
-          driverMap.set(drv, { empId: emp, vehicle: veh, trailer: trl });
+          driverMap.set(drv, { empId: key, vehicle: veh, trailer: trl });
         }
         if (veh) vehicles.add(veh);
       }
@@ -383,9 +386,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     // Primary source of truth: ฐานข้อมูลรถ (gid: 378250263)
     if (vehicleDbRows.length > 0) {
       vehicleDbRows.forEach((row) => {
-        const veh = row.values['A']?.trim() ?? '';
-        const drv = row.values['I']?.trim() ?? '';
-        const empColP = row.values['P']?.trim() ?? '';
+        const veh = (row.values['A'] ?? row.values['ทะเบียนรถ'] ?? '').trim();
+        const drv = (row.values['I'] ?? row.values['ชื่อพนักงานประจำรถ'] ?? '').trim();
+        const empColP = (row.values['P'] ?? row.values['รหัสพนักงาน'] ?? '').trim();
 
         if (veh && veh !== '-') {
           vehicles.add(veh);
@@ -396,23 +399,29 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         }
 
         const normDrv = normalizeDriverNameKey(drv);
-        const resolvedEmpId =
+        const candidateEmpCode =
           (empColP && empColP !== '-' ? empColP : '') ||
           accountEmpMap.get(normDrv) ||
           historyNameToEmp.get(normDrv) ||
-          drv;
+          '';
         const resolvedTrailer = historyNameToTrailer.get(normDrv) || '';
 
-        if (resolvedEmpId) {
-          employeeMap.set(resolvedEmpId, {
-            name: drv,
-            vehicle: veh,
-            trailer: resolvedTrailer,
-          });
+        // Prevent collisions: ensure every unique driver name from ฐานข้อมูลรถ gets its own option key
+        let empKey = candidateEmpCode;
+        if (!empKey || (employeeMap.has(empKey) && employeeMap.get(empKey)?.name !== drv)) {
+          empKey = drv;
         }
+
+        employeeMap.set(empKey, {
+          empCode: candidateEmpCode || empKey,
+          name: drv || empKey,
+          vehicle: veh,
+          trailer: resolvedTrailer,
+        });
+
         if (drv) {
           driverMap.set(drv, {
-            empId: resolvedEmpId,
+            empId: empKey,
             vehicle: veh,
             trailer: resolvedTrailer,
           });
@@ -451,10 +460,18 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       );
     };
 
+    const sortedEmployees = Array.from(employeeMap.keys()).sort((a, b) => {
+      const infoA = employeeMap.get(a);
+      const infoB = employeeMap.get(b);
+      const nameA = infoA?.name || a;
+      const nameB = infoB?.name || b;
+      return nameA.localeCompare(nameB, 'th');
+    });
+
     return {
       employeeMap,
       driverMap,
-      employees: Array.from(employeeMap.keys()),
+      employees: sortedEmployees,
       drivers: Array.from(driverMap.keys()),
       vehicles: Array.from(vehicles),
       trailers: sortLocations(Array.from(trailers)),
@@ -1099,18 +1116,29 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
                 onChange={(e) => handleEmployeeIdChange(e.target.value)}
                 className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
               >
-                <option value="">-- เลือกรหัสพนักงาน --</option>
+                <option value="">-- เลือกรหัสพนักงาน / ชื่อพนักงาน --</option>
                 {employeeId &&
                   !referenceOptions.employees.includes(employeeId) && (
                     <option value={employeeId}>{employeeId}</option>
                   )}
-                {referenceOptions.employees.map((emp) => {
-                  const info = referenceOptions.employeeMap.get(emp);
+                {referenceOptions.employees.map((empKey) => {
+                  const info = referenceOptions.employeeMap.get(empKey);
+                  const hasSeparateCode = info?.empCode && info.empCode !== info?.name;
+                  const labelParts = [];
+                  if (hasSeparateCode) {
+                    labelParts.push(info.empCode);
+                  }
+                  if (info?.name) {
+                    labelParts.push(info.name);
+                  } else {
+                    labelParts.push(empKey);
+                  }
+                  const labelText = labelParts.join(' - ');
+                  const vehSuffix = info?.vehicle ? ` (${info.vehicle})` : '';
+
                   return (
-                    <option key={emp} value={emp}>
-                      {emp}
-                      {info?.name ? ` - ${info.name}` : ''}
-                      {info?.vehicle ? ` (${info.vehicle})` : ''}
+                    <option key={empKey} value={empKey}>
+                      {labelText}{vehSuffix}
                     </option>
                   );
                 })}
