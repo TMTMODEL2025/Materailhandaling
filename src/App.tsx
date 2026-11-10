@@ -33,6 +33,8 @@ import {
   Clock,
   Droplet,
   Bell,
+  Users,
+  MapPin,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -1680,6 +1682,79 @@ function playNotificationChime() {
     };
   }, [sheetData, filteredRows]);
 
+  // Real-time KPI summary metrics specifically for ฐานข้อมูลรถ (gid: 378250263)
+  const vehicleKpiMetrics = useMemo(() => {
+    if (activeTab.gid !== '378250263') {
+      return {
+        totalVehicles: 0,
+        withDriverCount: 0,
+        withoutDriverCount: 0,
+        shifts: {} as Record<string, number>,
+        teams: {} as Record<string, number>,
+        areas: {} as Record<string, number>,
+        distinctAreaCount: 0,
+      };
+    }
+
+    const driverColId =
+      sheetData?.columns.find(
+        (c) => c.label.includes('ชื่อพนักงานประจำรถ') || c.label.includes('พนักงาน')
+      )?.id ?? 'I';
+    const areaColId =
+      sheetData?.columns.find((c) => c.label.includes('พื้นที่'))?.id ?? 'J';
+    const shiftColId =
+      sheetData?.columns.find((c) => c.label.includes('กะ'))?.id ?? 'L';
+    const teamColId =
+      sheetData?.columns.find((c) => c.label.includes('ทีม'))?.id ?? 'O';
+
+    let totalVehicles = filteredRows.length;
+    let withDriverCount = 0;
+    let withoutDriverCount = 0;
+
+    const shifts: Record<string, number> = {};
+    const teams: Record<string, number> = {};
+    const areas: Record<string, number> = {};
+
+    filteredRows.forEach((r) => {
+      // Driver check
+      const driverName = (r.values[driverColId] ?? r.values['I'] ?? '').trim();
+      if (driverName) {
+        withDriverCount += 1;
+      } else {
+        withoutDriverCount += 1;
+      }
+
+      // Shift check
+      const shiftRaw = (r.values[shiftColId] ?? r.values['L'] ?? '').trim();
+      const shift = shiftRaw || 'ไม่ระบุกะ';
+      shifts[shift] = (shifts[shift] || 0) + 1;
+
+      // Team check
+      const teamRaw = (r.values[teamColId] ?? r.values['O'] ?? '').trim();
+      const team = teamRaw ? `ทีม ${teamRaw}` : 'ไม่ระบุทีม';
+      teams[team] = (teams[team] || 0) + 1;
+
+      // Area check
+      const areaRaw = (r.values[areaColId] ?? r.values['J'] ?? '').trim();
+      const area = areaRaw || 'ไม่ระบุพื้นที่';
+      areas[area] = (areas[area] || 0) + 1;
+    });
+
+    const distinctAreaCount = Object.keys(areas).filter(
+      (k) => k !== 'ไม่ระบุพื้นที่'
+    ).length;
+
+    return {
+      totalVehicles,
+      withDriverCount,
+      withoutDriverCount,
+      shifts,
+      teams,
+      areas,
+      distinctAreaCount,
+    };
+  }, [sheetData, filteredRows, activeTab.gid]);
+
   const handleSort = (colId: string) => {
     setSortConfig((prev) => {
       if (!prev || prev.colId !== colId) {
@@ -2706,6 +2781,163 @@ function playNotificationChime() {
                       })}
                     </span>{' '}
                     ฿/ลิตร
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : activeTab.gid === '378250263' ? (
+            <div className="relative rounded-2xl bg-gradient-to-br from-blue-100/60 via-slate-100/70 to-amber-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: จำนวนรถทั้งหมด */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        จำนวนรถทั้งหมด
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : vehicleKpiMetrics.totalVehicles.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-blue-700">
+                          คัน
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/70 bg-blue-500/10 text-blue-700 backdrop-blur-sm">
+                      <Truck className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1 font-sans text-xs">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-500 font-medium">มีพนักงานประจำรถ:</span>
+                      <span className="font-bold text-emerald-700 tabular-nums">
+                        {vehicleKpiMetrics.withDriverCount.toLocaleString('th-TH')} คัน
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-500 font-medium">ยังไม่มีพนักงาน:</span>
+                      <span className="font-bold text-amber-700 tabular-nums">
+                        {vehicleKpiMetrics.withoutDriverCount.toLocaleString('th-TH')} คัน
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: สรุปตามกะทำงาน */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        สรุปตามกะทำงาน
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : vehicleKpiMetrics.totalVehicles.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
+                          คัน
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
+                      <Clock className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1 font-sans text-xs">
+                    {Object.entries(vehicleKpiMetrics.shifts).map(([shiftName, count]) => (
+                      <div key={shiftName} className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-500 font-medium">{shiftName}:</span>
+                        <span className="font-bold text-slate-800 tabular-nums">
+                          {count.toLocaleString('th-TH')} คัน
+                        </span>
+                      </div>
+                    ))}
+                    {Object.keys(vehicleKpiMetrics.shifts).length === 0 && (
+                      <div className="text-[11px] text-slate-400">ไม่มีข้อมูลกะ</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Card 3: สรุปตามทีม */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        สรุปตามทีม
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : `${Object.keys(vehicleKpiMetrics.teams).filter((t) => !t.includes('ไม่ระบุ')).length} ทีม`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-sm">
+                      <Users className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-wrap items-center gap-x-2 gap-y-1 font-sans text-xs">
+                    {Object.entries(vehicleKpiMetrics.teams).map(([teamName, count]) => (
+                      <div key={teamName} className="flex items-center gap-1 text-[11px] bg-indigo-50/80 border border-indigo-100 rounded-md px-1.5 py-0.5">
+                        <span className="text-slate-600 font-medium">{teamName}:</span>
+                        <span className="font-bold text-indigo-700 tabular-nums">
+                          {count.toLocaleString('th-TH')}
+                        </span>
+                      </div>
+                    ))}
+                    {Object.keys(vehicleKpiMetrics.teams).length === 0 && (
+                      <div className="text-[11px] text-slate-400">ไม่มีข้อมูลทีม</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Card 4: สรุปตามพื้นที่ปฏิบัติงาน */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        สรุปตามพื้นที่ปฏิบัติงาน
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : `${vehicleKpiMetrics.distinctAreaCount} พื้นที่`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                      <MapPin className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-wrap items-center gap-x-1.5 gap-y-1 font-sans text-[11px]">
+                    {Object.entries(vehicleKpiMetrics.areas)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 4)
+                      .map(([areaName, count]) => (
+                        <span key={areaName} className="text-slate-600 font-medium">
+                          {areaName}{' '}
+                          <strong className="font-bold text-emerald-700 tabular-nums">
+                            {count}
+                          </strong>
+                          คัน ·
+                        </span>
+                      ))}
+                    {Object.keys(vehicleKpiMetrics.areas).length > 4 && (
+                      <span className="text-slate-400 font-normal">
+                        และอื่นๆ +{Object.keys(vehicleKpiMetrics.areas).length - 4} พื้นที่
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
