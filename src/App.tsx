@@ -175,6 +175,119 @@ function getRowVehicleShift(row: SheetRow, columns?: SheetColumn[]): string {
   return trimmed ? `กะ: ${trimmed}` : 'ไม่ระบุกะทำงาน';
 }
 
+interface StatusGroupHeaderTheme {
+  rowClass: string;
+  chevronClass: string;
+  titleClass: string;
+  countClass: string;
+  actionClass: string;
+}
+
+function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHeaderTheme {
+  const s = status.trim();
+
+  // บันทึกงานซ่อม (gid: 944294225) & บันทึกการย้ายงาน (gid: 606634465)
+  if (
+    s === 'อนุมัติ' ||
+    s.includes('ส่งสินค้าเรียบร้อย') ||
+    s.includes('เรียบร้อย') ||
+    s.includes('สำเร็จ') ||
+    s.includes('ซ่อมเสร็จ')
+  ) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-emerald-600/15 via-emerald-500/10 to-teal-500/5 hover:from-emerald-600/25 hover:via-emerald-500/15 border-y border-emerald-200/90',
+      chevronClass: 'bg-emerald-600 text-white shadow-xs',
+      titleClass: 'text-emerald-950',
+      countClass: 'bg-emerald-600 text-white shadow-2xs',
+      actionClass: 'text-emerald-700',
+    };
+  }
+
+  if (s === 'รอตรวจสอบ') {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-sky-600/15 via-sky-500/10 to-blue-500/5 hover:from-sky-600/25 hover:via-sky-500/15 border-y border-sky-200/90',
+      chevronClass: 'bg-sky-600 text-white shadow-xs',
+      titleClass: 'text-sky-950',
+      countClass: 'bg-sky-600 text-white shadow-2xs',
+      actionClass: 'text-sky-700',
+    };
+  }
+
+  if (
+    s === 'รออนุมัติ' ||
+    s === 'รอพิจารณา' ||
+    s.includes('อยู่ระหว่าง') ||
+    s.includes('อยู่ระว่าง') ||
+    s.includes('กำลังส่ง') ||
+    s.includes('กำลังซ่อม') ||
+    s.includes('รอคิว') ||
+    s.includes('รออะไหล่')
+  ) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-amber-500/20 via-amber-400/12 to-orange-400/5 hover:from-amber-500/30 hover:via-amber-400/20 border-y border-amber-300/90',
+      chevronClass: 'bg-amber-500 text-white shadow-xs',
+      titleClass: 'text-amber-950',
+      countClass: 'bg-amber-600 text-white shadow-2xs',
+      actionClass: 'text-amber-800',
+    };
+  }
+
+  if (s === 'ขอข้อมูลเพิ่มเติม' || s.includes('ข้อมูลเพิ่มเติม')) {
+    if (s.includes('ตอบกลับ')) {
+      return {
+        rowClass:
+          'bg-gradient-to-r from-indigo-600/15 via-indigo-500/10 to-cyan-500/5 hover:from-indigo-600/25 hover:via-indigo-500/15 border-y border-indigo-200/90',
+        chevronClass: 'bg-indigo-600 text-white shadow-xs',
+        titleClass: 'text-indigo-950',
+        countClass: 'bg-indigo-600 text-white shadow-2xs',
+        actionClass: 'text-indigo-700',
+      };
+    }
+    return {
+      rowClass:
+        'bg-gradient-to-r from-violet-600/15 via-violet-500/10 to-purple-500/5 hover:from-violet-600/25 hover:via-violet-500/15 border-y border-violet-200/90',
+      chevronClass: 'bg-violet-600 text-white shadow-xs',
+      titleClass: 'text-violet-950',
+      countClass: 'bg-violet-600 text-white shadow-2xs',
+      actionClass: 'text-violet-700',
+    };
+  }
+
+  if (s === 'ไม่อนุมัติ' || s.includes('ยกเลิก') || s.includes('ไม่ผ่าน')) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-rose-600/15 via-rose-500/10 to-red-500/5 hover:from-rose-600/25 hover:via-rose-500/15 border-y border-rose-200/90',
+      chevronClass: 'bg-rose-600 text-white shadow-xs',
+      titleClass: 'text-rose-950',
+      countClass: 'bg-rose-600 text-white shadow-2xs',
+      actionClass: 'text-rose-700',
+    };
+  }
+
+  if (gid === '606634465' || gid === '944294225') {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-blue-600/15 via-indigo-500/10 to-sky-500/5 hover:from-blue-600/25 hover:via-indigo-500/15 border-y border-blue-200/90',
+      chevronClass: 'bg-blue-600 text-white shadow-xs',
+      titleClass: 'text-blue-950',
+      countClass: 'bg-blue-600 text-white shadow-2xs',
+      actionClass: 'text-blue-700',
+    };
+  }
+
+  return {
+    rowClass:
+      'bg-gradient-to-r from-slate-200/80 via-slate-100/90 to-slate-50 hover:from-slate-200 hover:via-slate-200/70 border-y border-slate-200',
+    chevronClass: 'bg-slate-700 text-white shadow-xs',
+    titleClass: 'text-slate-900',
+    countClass: 'bg-slate-700 text-white shadow-2xs',
+    actionClass: 'text-slate-600',
+  };
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
@@ -2651,6 +2764,7 @@ function playNotificationChime() {
                       (currentGroupPage - 1) * groupPageSize,
                       currentGroupPage * groupPageSize
                     );
+                    const groupTheme = getStatusGroupHeaderTheme(status, activeTab.gid);
                     return (
                       <React.Fragment key={status}>
                         <tr
@@ -2660,14 +2774,14 @@ function playNotificationChime() {
                               [status]: !isCollapsed,
                             }))
                           }
-                          className="cursor-pointer bg-slate-100/90 font-semibold text-slate-800 transition-colors hover:bg-slate-200/80 select-none"
+                          className={`cursor-pointer font-semibold transition-all duration-150 select-none ${groupTheme.rowClass}`}
                         >
                           <td colSpan={colSpan} className="px-3 py-2.5 sm:px-4 sm:py-3">
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2.5">
                                 <button
                                   type="button"
-                                  className="flex h-5 w-5 items-center justify-center rounded text-slate-600"
+                                  className={`flex h-6 w-6 items-center justify-center rounded-lg transition-transform duration-150 ${groupTheme.chevronClass}`}
                                 >
                                   {isCollapsed ? (
                                     <ChevronRight className="h-4 w-4" />
@@ -2675,14 +2789,20 @@ function playNotificationChime() {
                                     <ChevronDown className="h-4 w-4" />
                                   )}
                                 </button>
-                                <span className="text-xs sm:text-sm font-bold text-slate-900">
+                                <span
+                                  className={`text-xs sm:text-sm font-extrabold tracking-tight ${groupTheme.titleClass}`}
+                                >
                                   {status}
                                 </span>
-                                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-mono text-slate-700">
+                                <span
+                                  className={`rounded-lg px-2.5 py-0.5 font-sans text-[11px] font-bold tracking-tight tabular-nums ${groupTheme.countClass}`}
+                                >
                                   {rows.length.toLocaleString('th-TH')} รายการ
                                 </span>
                               </div>
-                              <span className="text-[11px] font-medium text-slate-500">
+                              <span
+                                className={`text-[11px] font-semibold ${groupTheme.actionClass}`}
+                              >
                                 {isCollapsed ? 'คลิกเพื่อขยาย' : 'คลิกเพื่อย่อ'}
                               </span>
                             </div>
