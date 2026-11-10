@@ -282,6 +282,64 @@ function playNotificationChime() {
   const seenRepairIdsRef = useRef<Set<string>>(new Set());
   const isInitialRepairLoadRef = useRef<boolean>(true);
 
+  const urlBase64ToUint8Array = useCallback((base64String: string): Uint8Array => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }, []);
+
+  const registerAndSubscribeWebPush = useCallback(async (): Promise<{
+    subscribed: boolean;
+    subscriptionJson?: PushSubscriptionJSON;
+  }> => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      return { subscribed: false };
+    }
+
+    try {
+      const reg = await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+      await navigator.serviceWorker.ready;
+
+      if (!('pushManager' in reg)) {
+        return { subscribed: false };
+      }
+
+      const keyRes = await fetch('/api/push/vapid-public-key');
+      if (!keyRes.ok) return { subscribed: false };
+      const { publicKey } = (await keyRes.json()) as { publicKey?: string };
+      if (!publicKey) return { subscribed: false };
+
+      const applicationServerKey = urlBase64ToUint8Array(publicKey);
+      let subscription = await reg.pushManager.getSubscription();
+
+      if (!subscription) {
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: applicationServerKey as unknown as BufferSource,
+        });
+      }
+
+      const subJson = subscription.toJSON();
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: subJson,
+          userAgent: navigator.userAgent,
+        }),
+      });
+
+      return { subscribed: true, subscriptionJson: subJson };
+    } catch {
+      return { subscribed: false };
+    }
+  }, [urlBase64ToUint8Array]);
+
   const handleUpdateRepairRows = useCallback((rows: SheetRow[]) => {
     setRepairTabRows(rows);
     setPendingApprovalCount(calculatePendingApprovalCount(rows));
@@ -326,11 +384,12 @@ function playNotificationChime() {
           const title = `🔔 มีรายการแจ้งซ่อมใหม่! (${vehicle})`;
           const body = `อาการ: ${symptom}${reporter ? ` | ผู้แจ้ง: ${reporter}` : ''}`;
           try {
-            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            if ('serviceWorker' in navigator) {
               void navigator.serviceWorker.ready.then((reg) => {
                 void reg.showNotification(title, {
                   body,
                   icon: '/pwa-192x192.png',
+                  badge: '/pwa-192x192.png',
                   tag: `repair-${latestNew.rowNumber}`,
                 });
               });
@@ -350,7 +409,7 @@ function playNotificationChime() {
 
   const handleToggleMobileNotifications = async () => {
     if (!('Notification' in window)) {
-      alert('เบราว์เซอร์นี้ไม่รองรับระบบการแจ้งเตือนบนหน้าจอ');
+      setError('เบราว์เซอร์นี้ไม่รองรับระบบการแจ้งเตือนบนหน้าจอ');
       return;
     }
 
@@ -359,17 +418,31 @@ function playNotificationChime() {
       setNotificationPermission(res);
       if (res === 'granted') {
         playNotificationChime();
-        const title = '🔔 เปิดการแจ้งเตือนงานซ่อมเรียบร้อย';
-        const body =
-          'ระบบจะส่งการแจ้งเตือนเด้งไปที่หน้าจอมือถือทันทีเมื่อมีรายการแจ้งซ่อมใหม่';
-        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-          const reg = await navigator.serviceWorker.ready;
-          void reg.showNotification(title, { body, icon: '/pwa-192x192.png' });
+        const { subscribed, subscriptionJson } = await registerAndSubscribeWebPush();
+
+        if (subscribed) {
+          await fetch('/api/push/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: subscriptionJson }),
+          }).catch(() => {});
+          setSaveSuccessMsg(
+            'เปิดระบบแจ้งเตือนพื้นหลัง (Web Push) สำเร็จ แม้ปิดแอปหรือล็อกหน้าจอก็จะได้รับการแจ้งเตือน'
+          );
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
         } else {
-          new Notification(title, { body, icon: '/pwa-192x192.png' });
+          const title = '🔔 เปิดการแจ้งเตือนงานซ่อมเรียบร้อย';
+          const body =
+            'ระบบจะส่งการแจ้งเตือนเด้งไปที่หน้าจอมือถือทันทีเมื่อมีรายการแจ้งซ่อมใหม่';
+          if ('serviceWorker' in navigator) {
+            const reg = await navigator.serviceWorker.ready;
+            void reg.showNotification(title, { body, icon: '/pwa-192x192.png' });
+          } else {
+            new Notification(title, { body, icon: '/pwa-192x192.png' });
+          }
         }
       } else if (res === 'denied') {
-        alert(
+        setError(
           'สิทธิ์การแจ้งเตือนถูกปฏิเสธ กรุณาอนุญาตการแจ้งเตือนในการตั้งค่าเบราว์เซอร์ของมือถือ'
         );
       }
@@ -442,7 +515,7 @@ function playNotificationChime() {
         }
       }
     },
-    [activeTab, rowLimit, deepSearchTerm]
+    [activeTab, rowLimit, deepSearchTerm, handleUpdateRepairRows]
   );
 
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes
@@ -452,6 +525,66 @@ function playNotificationChime() {
       abortControllerRef.current?.abort();
     };
   }, [loadData]);
+
+  // Register Service Worker & Web Push subscription + handle background push events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Check URL parameter ?tab=repair when opened from notification
+    if (window.location.search.includes('tab=repair')) {
+      const repairTab = SHEET_TABS.find((t) => t.gid === '944294225');
+      if (repairTab) {
+        setActiveTab(repairTab);
+      }
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    if ('serviceWorker' in navigator) {
+      void navigator.serviceWorker.register('/push-sw.js', { scope: '/' }).catch(() => {});
+
+      if ('Notification' in window && Notification.permission === 'granted') {
+        void registerAndSubscribeWebPush();
+      }
+
+      const handleServiceWorkerMessage = (event: MessageEvent) => {
+        const msg = event.data;
+        if (!msg || typeof msg !== 'object') return;
+
+        if (msg.type === 'PUSH_REPAIR_RECEIVED') {
+          playNotificationChime();
+          const payload = msg.payload || {};
+          if (payload.vehicle || payload.symptom) {
+            setNewRepairToast({
+              vehicle: payload.vehicle || 'แจ้งซ่อมใหม่',
+              symptom: payload.symptom || 'มีรายการแจ้งซ่อมใหม่เข้ามาในระบบ',
+              reporter: payload.reporter || '',
+            });
+          }
+          void loadData({ silent: true });
+        } else if (msg.type === 'OPEN_REPAIR_TAB') {
+          const repairTab = SHEET_TABS.find((t) => t.gid === '944294225');
+          if (repairTab) {
+            setActiveTab(repairTab);
+          }
+          void loadData({ silent: true });
+        }
+      };
+
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible' && !isFetchingRef.current) {
+          void loadData({ silent: true });
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    }
+  }, [registerAndSubscribeWebPush, loadData]);
 
   // Real-time polling
   useEffect(() => {

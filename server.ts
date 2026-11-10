@@ -1,10 +1,38 @@
 import express from 'express';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+
+interface WebPushLib {
+  generateVAPIDKeys: () => { publicKey: string; privateKey: string };
+  setVapidDetails: (subject: string, publicKey: string, privateKey: string) => void;
+  sendNotification: (
+    subscription: PushSubscriptionRecord,
+    payload?: string,
+    options?: { TTL?: number; urgency?: 'very-low' | 'low' | 'normal' | 'high' }
+  ) => Promise<unknown>;
+}
+
+let webpush: WebPushLib | null = null;
+try {
+  webpush = require('web-push') as WebPushLib;
+} catch (err) {
+  console.error('Optional web-push load warning:', err);
+}
+
+export interface PushSubscriptionRecord {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys?: {
+    p256dh?: string;
+    auth?: string;
+  };
+}
 
 const DATA_FILE = process.env.VERCEL
   ? path.join('/tmp', 'sheet-mutations.json')
@@ -153,6 +181,11 @@ interface MutationsStore {
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
+  appsheetDriveFolderId?: string;
+  vapidPublicKey?: string;
+  vapidPrivateKey?: string;
+  pushSubscriptions?: PushSubscriptionRecord[];
+  notifiedRepairKeys?: string[];
 }
 
 function isRecentMutation(tsStr?: string, maxAgeMs = 20000): boolean {
@@ -216,6 +249,20 @@ function readStore(): MutationsStore {
           typeof parsed.googleScriptUrl === 'string'
             ? parsed.googleScriptUrl
             : undefined,
+        appsheetDriveFolderId:
+          typeof parsed.appsheetDriveFolderId === 'string'
+            ? parsed.appsheetDriveFolderId
+            : undefined,
+        vapidPublicKey:
+          typeof parsed.vapidPublicKey === 'string' ? parsed.vapidPublicKey : undefined,
+        vapidPrivateKey:
+          typeof parsed.vapidPrivateKey === 'string' ? parsed.vapidPrivateKey : undefined,
+        pushSubscriptions: Array.isArray(parsed.pushSubscriptions)
+          ? parsed.pushSubscriptions
+          : [],
+        notifiedRepairKeys: Array.isArray(parsed.notifiedRepairKeys)
+          ? parsed.notifiedRepairKeys
+          : [],
       };
     }
   } catch (err) {
@@ -236,6 +283,8 @@ function readStore(): MutationsStore {
     repairReplyEdits: [],
     repairFinancialEdits: [],
     fuelRecords: [],
+    pushSubscriptions: [],
+    notifiedRepairKeys: [],
   };
 }
 
@@ -246,6 +295,184 @@ function writeStore(store: MutationsStore): void {
     console.error('Error writing mutations store:', err);
   }
 }
+
+function ensureVapidConfigured(): { publicKey: string; privateKey: string } {
+  try {
+    const store = readStore();
+    let publicKey = process.env.VAPID_PUBLIC_KEY || store.vapidPublicKey || '';
+    let privateKey = process.env.VAPID_PRIVATE_KEY || store.vapidPrivateKey || '';
+    if ((!publicKey || !privateKey) && webpush) {
+      const generated = webpush.generateVAPIDKeys();
+      publicKey = generated.publicKey;
+      privateKey = generated.privateKey;
+      store.vapidPublicKey = publicKey;
+      store.vapidPrivateKey = privateKey;
+      writeStore(store);
+    }
+    if (publicKey && privateKey && webpush) {
+      webpush.setVapidDetails('mailto:tmtmodel2025@gmail.com', publicKey, privateKey);
+    }
+    return { publicKey, privateKey };
+  } catch (err) {
+    console.error('Error configuring VAPID keys:', err);
+    return { publicKey: '', privateKey: '' };
+  }
+}
+
+const vapidKeys = ensureVapidConfigured();
+
+async function broadcastRepairPushNotification(params: {
+  sequenceNo?: string;
+  vehicle: string;
+  repairType?: string;
+  symptom: string;
+  reporter?: string;
+  skipDedup?: boolean;
+}): Promise<number> {
+  if (!webpush) return 0;
+  try {
+    const store = readStore();
+    const subs = Array.isArray(store.pushSubscriptions) ? store.pushSubscriptions : [];
+    const notifiedKeys = new Set<string>(store.notifiedRepairKeys ?? []);
+    const seq = (params.sequenceNo || '').trim();
+    const veh = (params.vehicle || 'ไม่ระบุเบอร์รถ').trim();
+    const sym = (params.symptom || params.repairType || 'แจ้งซ่อมใหม่').trim();
+    const rep = (params.reporter || '').trim();
+
+    const dedupKey = seq ? `seq:${seq}` : `item:${veh}:${sym}:${rep}`;
+    if (!params.skipDedup && notifiedKeys.has(dedupKey)) {
+      return 0;
+    }
+
+    if (!params.skipDedup) {
+      notifiedKeys.add(dedupKey);
+      store.notifiedRepairKeys = Array.from(notifiedKeys).slice(-300);
+      writeStore(store);
+    }
+
+    if (subs.length === 0) return 0;
+
+    const title = `🔔 มีรายการแจ้งซ่อมใหม่! (${veh})`;
+    const body = `อาการ: ${sym}${rep ? ` | ผู้แจ้ง: ${rep}` : ''}`;
+    const payloadStr = JSON.stringify({
+      title,
+      body,
+      icon: '/pwa-192x192.png',
+      badge: '/pwa-192x192.png',
+      tag: seq ? `repair-${seq}` : `repair-${Date.now()}`,
+      url: '/?tab=repair',
+      vehicle: veh,
+      symptom: sym,
+      reporter: rep,
+      sequenceNo: seq,
+    });
+
+    const validSubs: PushSubscriptionRecord[] = [];
+    let sentCount = 0;
+
+    await Promise.all(
+      subs.map(async (sub) => {
+        try {
+          if (!webpush) return;
+          await webpush.sendNotification(sub, payloadStr, {
+            TTL: 86400,
+            urgency: 'high',
+          });
+          validSubs.push(sub);
+          sentCount++;
+        } catch (err: unknown) {
+          const statusCode = (err as { statusCode?: number })?.statusCode;
+          if (statusCode !== 404 && statusCode !== 410) {
+            validSubs.push(sub);
+          }
+        }
+      })
+    );
+
+    if (validSubs.length !== subs.length) {
+      const latestStore = readStore();
+      latestStore.pushSubscriptions = validSubs;
+      writeStore(latestStore);
+    }
+
+    return sentCount;
+  } catch (err) {
+    console.error('Error broadcasting push notification:', err);
+    return 0;
+  }
+}
+
+const GOOGLE_SHEET_ID_FOR_PUSH = '1Dn72dYdEGz3GBvk3O5n1FN0RCKv5S1IvgLeA5M5RzWc';
+let isInitialServerSheetPoll = true;
+
+async function pollRepairSheetForNewItems(): Promise<void> {
+  try {
+    const tq = encodeURIComponent('select A, D, E, F, G, AA order by A desc limit 8');
+    const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID_FOR_PUSH}/gviz/tq?tqx=out:json&gid=944294225&tq=${tq}&_t=${Date.now()}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) return;
+      const text = await res.text();
+      const startIdx = text.indexOf('{');
+      const endIdx = text.lastIndexOf('}');
+      if (startIdx === -1 || endIdx === -1) return;
+      const json = JSON.parse(text.substring(startIdx, endIdx + 1));
+      const rows: Array<{ c?: Array<{ v?: unknown; f?: string } | null> }> =
+        json?.table?.rows ?? [];
+      if (rows.length === 0) return;
+
+      const store = readStore();
+      const notifiedSet = new Set<string>(store.notifiedRepairKeys ?? []);
+
+      if (isInitialServerSheetPoll) {
+        let changed = false;
+        for (const r of rows) {
+          const seq = String(r.c?.[0]?.f ?? r.c?.[0]?.v ?? '').trim();
+          if (seq && !notifiedSet.has(`seq:${seq}`)) {
+            notifiedSet.add(`seq:${seq}`);
+            changed = true;
+          }
+        }
+        if (changed) {
+          store.notifiedRepairKeys = Array.from(notifiedSet).slice(-300);
+          writeStore(store);
+        }
+        isInitialServerSheetPoll = false;
+        return;
+      }
+
+      for (const r of rows) {
+        const seq = String(r.c?.[0]?.f ?? r.c?.[0]?.v ?? '').trim();
+        if (!seq || notifiedSet.has(`seq:${seq}`)) continue;
+        const vehicle = String(r.c?.[1]?.f ?? r.c?.[1]?.v ?? 'ไม่ระบุเบอร์รถ').trim();
+        const repairType = String(r.c?.[2]?.f ?? r.c?.[2]?.v ?? '').trim();
+        const symptom = String(
+          r.c?.[3]?.f ?? r.c?.[3]?.v ?? repairType ?? 'แจ้งซ่อมใหม่'
+        ).trim();
+        const reporter = String(r.c?.[5]?.f ?? r.c?.[5]?.v ?? '').trim();
+
+        await broadcastRepairPushNotification({
+          sequenceNo: seq,
+          vehicle,
+          repairType,
+          symptom,
+          reporter,
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // ignore background polling errors
+  }
+}
+
+setInterval(() => {
+  void pollRepairSheetForNewItems();
+}, 15000);
+void pollRepairSheetForNewItems();
 
 async function startServer() {
   const app = express();
@@ -287,6 +514,89 @@ async function startServer() {
     return url;
   }
 
+  app.get('/api/push/vapid-public-key', (_req, res) => {
+    try {
+      const store = readStore();
+      res.json({
+        publicKey: vapidKeys.publicKey,
+        subscribedCount: store.pushSubscriptions?.length ?? 0,
+      });
+    } catch (err) {
+      res.status(500).json({ publicKey: '', error: String(err) });
+    }
+  });
+
+  app.post('/api/push/subscribe', (req, res) => {
+    try {
+      const sub = req.body?.subscription as PushSubscriptionRecord | undefined;
+      if (!sub || typeof sub.endpoint !== 'string' || !sub.endpoint) {
+        res.status(400).json({ ok: false, error: 'Invalid push subscription' });
+        return;
+      }
+      const store = readStore();
+      const list = Array.isArray(store.pushSubscriptions) ? store.pushSubscriptions : [];
+      const idx = list.findIndex((item) => item.endpoint === sub.endpoint);
+      if (idx >= 0) {
+        list[idx] = sub;
+      } else {
+        list.push(sub);
+      }
+      store.pushSubscriptions = list;
+      writeStore(store);
+      res.json({ ok: true, count: list.length });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
+  app.post('/api/push/send', async (req, res) => {
+    try {
+      const { sequenceNo, vehicle, repairType, symptom, reporter } = req.body ?? {};
+      const sent = await broadcastRepairPushNotification({
+        sequenceNo: String(sequenceNo ?? ''),
+        vehicle: String(vehicle ?? 'ไม่ระบุเบอร์รถ'),
+        repairType: String(repairType ?? ''),
+        symptom: String(symptom ?? 'แจ้งซ่อมใหม่'),
+        reporter: String(reporter ?? ''),
+      });
+      res.json({ ok: true, sent });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
+  app.post('/api/push/test', async (req, res) => {
+    try {
+      const sub = req.body?.subscription as PushSubscriptionRecord | undefined;
+      const payloadStr = JSON.stringify({
+        title: '🔔 เปิดแจ้งเตือนงานซ่อมบนมือถือสำเร็จ!',
+        body: 'ระบบจะส่งแจ้งเตือนเด้งเข้ามือถือทันทีเมื่อมีแจ้งซ่อมใหม่ แม้ปิดแอปหรือล็อกหน้าจอ',
+        icon: '/pwa-192x192.png',
+        badge: '/pwa-192x192.png',
+        tag: 'repair-test-' + Date.now(),
+        url: '/?tab=repair',
+      });
+      if (sub && sub.endpoint && webpush) {
+        await webpush.sendNotification(sub, payloadStr, {
+          TTL: 3600,
+          urgency: 'high',
+        });
+        res.json({ ok: true, sent: 1 });
+        return;
+      }
+      const sent = await broadcastRepairPushNotification({
+        sequenceNo: String(Date.now()),
+        vehicle: 'ทดสอบระบบ',
+        symptom: 'ระบบแจ้งเตือนขณะปิดแอปพร้อมใช้งานแล้ว',
+        reporter: 'ระบบแจ้งเตือนอัตโนมัติ',
+        skipDedup: true,
+      });
+      res.json({ ok: true, sent });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
   app.post('/api/webhook-proxy', async (req, res) => {
     try {
       const { scriptUrl, payload } = req.body ?? {};
@@ -300,6 +610,20 @@ async function startServer() {
       const text = await response.text();
       try {
         const json = JSON.parse(text);
+        if (
+          payload &&
+          payload.action === 'appendRepairRequest' &&
+          Array.isArray(payload.rowValues)
+        ) {
+          const rv = payload.rowValues;
+          void broadcastRepairPushNotification({
+            sequenceNo: String(rv[0] ?? '').trim(),
+            vehicle: String(rv[3] ?? '').trim(),
+            repairType: String(rv[4] ?? '').trim(),
+            symptom: String(rv[5] ?? '').trim(),
+            reporter: String(rv[26] ?? '').trim(),
+          });
+        }
         res.json(json);
       } catch {
         res.status(502).json({
@@ -320,21 +644,31 @@ async function startServer() {
 
   app.get('/api/drive-photo', async (req, res) => {
     try {
+      const action = typeof req.query.action === 'string' ? req.query.action.trim() : '';
       const filename = typeof req.query.filename === 'string' ? req.query.filename.trim() : '';
+      const folderName = typeof req.query.folderName === 'string' ? req.query.folderName.trim() : '';
+      const folderIdParam = typeof req.query.folderId === 'string' ? req.query.folderId.trim() : '';
+      const bypassCache = req.query.bypassCache === '1' || req.query.bypassCache === 'true';
       const scriptUrlParam =
         typeof req.query.scriptUrl === 'string' ? req.query.scriptUrl.trim() : undefined;
-      if (!filename) {
-        res.status(400).json({ success: false, message: 'No filename provided' });
-        return;
-      }
 
-      const cached = drivePhotoServerCache.get(filename);
-      if (cached && cached.expiresAt > Date.now()) {
-        res.json(cached.data);
+      if (!filename && !action) {
+        res.status(400).json({ success: false, message: 'No filename or action provided' });
         return;
       }
 
       const store = readStore();
+      const effectiveFolderId = folderIdParam || store.appsheetDriveFolderId || '';
+      const cacheKey = `${action || 'file'}::${filename || folderName}::${effectiveFolderId}`;
+
+      if (!bypassCache) {
+        const cached = drivePhotoServerCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          res.json(cached.data);
+          return;
+        }
+      }
+
       const targetUrl = normalizeUrl(
         scriptUrlParam ||
           store.googleScriptUrl ||
@@ -342,10 +676,16 @@ async function startServer() {
           DEFAULT_APPS_SCRIPT_URL
       );
 
+      const params = new URLSearchParams();
+      if (action) params.set('action', action);
+      if (filename) params.set('filename', filename);
+      if (folderName) params.set('folderName', folderName);
+      if (effectiveFolderId) params.set('folderId', effectiveFolderId);
+
       const sep = targetUrl.includes('?') ? '&' : '?';
-      const reqUrl = `${targetUrl}${sep}filename=${encodeURIComponent(filename)}`;
+      const reqUrl = `${targetUrl}${sep}${params.toString()}`;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
+      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
         const response = await fetch(reqUrl, {
           redirect: 'follow',
@@ -353,15 +693,15 @@ async function startServer() {
         });
         const text = await response.text();
         const json = JSON.parse(text) as Record<string, unknown>;
-        if (json && (json.success || json.base64 || json.fileId || json.url)) {
-          drivePhotoServerCache.set(filename, {
+        if (json && (json.success || json.base64 || json.fileId || json.url || Array.isArray(json.files))) {
+          drivePhotoServerCache.set(cacheKey, {
             data: json,
-            expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour cache for found photos
+            expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour cache for found photos/indexes
           });
         } else {
-          drivePhotoServerCache.set(filename, {
+          drivePhotoServerCache.set(cacheKey, {
             data: json,
-            expiresAt: Date.now() + 2 * 60 * 1000, // 2 min cache for misses
+            expiresAt: Date.now() + 30 * 1000, // 30 sec cache for misses
           });
         }
         res.json(json);
@@ -381,17 +721,26 @@ async function startServer() {
       DEFAULT_APPS_SCRIPT_URL;
     res.json({
       scriptUrl: normalizeUrl(candidate),
+      driveFolderId: store.appsheetDriveFolderId ?? '',
     });
   });
 
   app.post('/api/script-url', (req, res) => {
     const store = readStore();
-    const { scriptUrl } = req.body ?? {};
+    const { scriptUrl, driveFolderId } = req.body ?? {};
     if (typeof scriptUrl === 'string') {
       store.googleScriptUrl = normalizeUrl(scriptUrl);
-      writeStore(store);
     }
-    res.json({ ok: true, scriptUrl: store.googleScriptUrl });
+    if (typeof driveFolderId === 'string') {
+      store.appsheetDriveFolderId = driveFolderId.trim();
+      drivePhotoServerCache.clear();
+    }
+    writeStore(store);
+    res.json({
+      ok: true,
+      scriptUrl: store.googleScriptUrl,
+      driveFolderId: store.appsheetDriveFolderId ?? '',
+    });
   });
 
   app.get('/api/google-token', (_req, res) => {
@@ -723,6 +1072,14 @@ async function startServer() {
 
     store.repairRequests.push(entry);
     writeStore(store);
+
+    void broadcastRepairPushNotification({
+      sequenceNo,
+      vehicle: values['D'] || values['O'] || '',
+      repairType: values['E'] || '',
+      symptom: values['F'] || values['E'] || '',
+      reporter: values['AA'] || '',
+    });
 
     res.json({ ok: true, entry });
   });

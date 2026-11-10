@@ -122,4 +122,3 @@ export interface FuelRecordPayload {
   note?: string;
   monthLabel: string;
 }
-
