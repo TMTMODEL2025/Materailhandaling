@@ -47,6 +47,7 @@ import {
   updateRepairFinancialDetails,
   inspectRepairRecord,
   isPhotoValue,
+  flushPendingMutationsToGoogleSheet,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -566,15 +567,26 @@ function playNotificationChime() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const isFetchingRef = useRef<boolean>(false);
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadData = useCallback(
     async (options?: { silent?: boolean; remoteSearch?: string }) => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
       const controller = new AbortController();
       abortControllerRef.current = controller;
       isFetchingRef.current = true;
+
+      // Safety watchdog: ensure spinner NEVER hangs longer than 12 seconds
+      syncTimeoutRef.current = setTimeout(() => {
+        isFetchingRef.current = false;
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }, 12000);
 
       if (options?.silent) {
         setIsRefreshing(true);
@@ -592,8 +604,6 @@ function playNotificationChime() {
         if (controller.signal.aborted) return;
 
         setSheetData(result);
-        setIsLoading(false);
-        setIsRefreshing(false);
 
         if (activeTab.gid === '944294225') {
           handleUpdateRepairRows(result.rows);
@@ -621,15 +631,28 @@ function playNotificationChime() {
             : 'เกิดข้อผิดพลาดในการดึงข้อมูลจาก Google Sheets'
         );
       } finally {
-        if (abortControllerRef.current === controller) {
-          isFetchingRef.current = false;
-          setIsLoading(false);
-          setIsRefreshing(false);
+        if (syncTimeoutRef.current) {
+          clearTimeout(syncTimeoutRef.current);
+          syncTimeoutRef.current = null;
         }
+        isFetchingRef.current = false;
+        setIsLoading(false);
+        setIsRefreshing(false);
       }
     },
     [activeTab, rowLimit, deepSearchTerm, handleUpdateRepairRows]
   );
+
+  const handleManualSync = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await flushPendingMutationsToGoogleSheet();
+    } catch {
+      // ignore
+    }
+    await loadData({ silent: true });
+    showSuccessToast('ซิงค์ข้อมูลสำเร็จ!', 'ดึงข้อมูลล่าสุดจาก Google Sheets เรียบร้อยแล้ว');
+  }, [loadData]);
 
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes
   useEffect(() => {
@@ -1938,7 +1961,7 @@ function playNotificationChime() {
 
             <button
               type="button"
-              onClick={() => loadData({ silent: true })}
+              onClick={handleManualSync}
               disabled={isLoading || isRefreshing}
               title="ซิงค์ข้อมูลล่าสุด"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-60 whitespace-nowrap shrink-0"

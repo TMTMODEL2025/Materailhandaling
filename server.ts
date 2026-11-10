@@ -404,8 +404,11 @@ async function broadcastRepairPushNotification(params: {
 
 const GOOGLE_SHEET_ID_FOR_PUSH = '1Dn72dYdEGz3GBvk3O5n1FN0RCKv5S1IvgLeA5M5RzWc';
 let isInitialServerSheetPoll = true;
+let isPollingRepairSheet = false;
 
 async function pollRepairSheetForNewItems(): Promise<void> {
+  if (isPollingRepairSheet) return;
+  isPollingRepairSheet = true;
   try {
     const tq = encodeURIComponent('select A, D, E, F, G, AA order by A desc limit 8');
     const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID_FOR_PUSH}/gviz/tq?tqx=out:json&gid=944294225&tq=${tq}&_t=${Date.now()}`;
@@ -466,13 +469,17 @@ async function pollRepairSheetForNewItems(): Promise<void> {
     }
   } catch {
     // ignore background polling errors
+  } finally {
+    isPollingRepairSheet = false;
   }
 }
 
 setInterval(() => {
   void pollRepairSheetForNewItems();
-}, 15000);
-void pollRepairSheetForNewItems();
+}, 60000);
+setTimeout(() => {
+  void pollRepairSheetForNewItems();
+}, 5000);
 
 async function startServer() {
   const app = express();
@@ -598,6 +605,8 @@ async function startServer() {
   });
 
   app.post('/api/webhook-proxy', async (req, res) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
     try {
       const { scriptUrl, payload } = req.body ?? {};
       const targetUrl = normalizeUrl(typeof scriptUrl === 'string' ? scriptUrl : undefined);
@@ -606,6 +615,7 @@ async function startServer() {
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload ?? {}),
         redirect: 'follow',
+        signal: controller.signal,
       });
       const text = await response.text();
       try {
@@ -632,8 +642,60 @@ async function startServer() {
           rawText: text,
         });
       }
-    } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
+    } catch (err: unknown) {
+      const isAbort = (err as { name?: string })?.name === 'AbortError';
+      res.status(isAbort ? 504 : 500).json({
+        ok: false,
+        error: isAbort ? 'Apps Script request timed out (12s)' : String(err),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  const sheetProxyCache = new Map<string, { data: string; expiresAt: number }>();
+
+  app.get('/api/sheet-proxy', async (req, res) => {
+    try {
+      const gid = typeof req.query.gid === 'string' ? req.query.gid.trim() : '0';
+      const tq = typeof req.query.tq === 'string' ? req.query.tq.trim() : '';
+      const cacheKey = `${gid}::${tq}`;
+      const now = Date.now();
+      const cached = sheetProxyCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        res.setHeader('Content-Type', 'application/json;charset=utf-8');
+        res.send(cached.data);
+        return;
+      }
+
+      const params = new URLSearchParams({
+        tqx: 'out:json',
+        gid,
+        _t: String(now),
+      });
+      if (tq) params.set('tq', tq);
+      const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID_FOR_PUSH}/gviz/tq?${params.toString()}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) {
+          res.status(response.status).json({ error: `Google Sheets HTTP ${response.status}` });
+          return;
+        }
+        const text = await response.text();
+        sheetProxyCache.set(cacheKey, {
+          data: text,
+          expiresAt: now + 10000, // 10 sec cache
+        });
+        res.setHeader('Content-Type', 'application/json;charset=utf-8');
+        res.send(text);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err: unknown) {
+      res.status(504).json({ error: String(err) });
     }
   });
 

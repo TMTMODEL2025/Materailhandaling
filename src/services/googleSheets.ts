@@ -2132,6 +2132,45 @@ async function postRepairRowToGoogleSheetsApi(
   return rowNumber;
 }
 
+async function postDeliveryPointRowToGoogleSheetsApi(
+  rowValues: Array<string | number>,
+  accessToken: string
+): Promise<number | null> {
+  const range = encodeURIComponent('จุดส่งสินค้า!A:C');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [rowValues],
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      invalidateCachedToken();
+    }
+    throw new Error(`Google Sheets API HTTP ${response.status}`);
+  }
+
+  let rowNumber: number | null = null;
+  try {
+    const resJson = await response.json();
+    const updatedRange: string = resJson?.updates?.updatedRange ?? '';
+    const match = updatedRange.match(/![A-Z]+(\d+)/i);
+    if (match && match[1]) {
+      rowNumber = parseInt(match[1], 10);
+    }
+  } catch {
+    // ignore
+  }
+  return rowNumber;
+}
+
 async function resolveJobTransferSheetRowNumber(
   accessToken: string,
   fallbackRowNumber: number | null,
@@ -2371,6 +2410,112 @@ export async function flushPendingMutationsToGoogleSheet(): Promise<void> {
       }).catch(() => {});
     }
 
+    // Flush Delivery Points
+    for (const dp of store.deliveryPoints) {
+      if (dp.syncedToSheet) continue;
+      const v = dp.values;
+      const rowValues = [v['A'] ?? '', v['B'] ?? '', v['C'] ?? ''];
+      let synced = false;
+      if (scriptUrl) {
+        try {
+          await callAppsScriptWebhook(scriptUrl, {
+            action: 'appendDeliveryPoint',
+            rowValues,
+          });
+          synced = true;
+        } catch {}
+      }
+      if (!synced && token) {
+        try {
+          await postDeliveryPointRowToGoogleSheetsApi(rowValues, token);
+          synced = true;
+        } catch {}
+      }
+      if (synced) {
+        dp.syncedToSheet = true;
+        const localDp = localStore.deliveryPoints.find((i) => i.id === dp.id);
+        if (localDp) {
+          localDp.syncedToSheet = true;
+          localChanged = true;
+        }
+      }
+    }
+
+    // Flush Delivery Point Gate Edits
+    for (const dpe of store.deliveryPointEdits) {
+      if (scriptUrl) {
+        try {
+          await callAppsScriptWebhook(scriptUrl, {
+            action: 'updateDeliveryPointGate',
+            deliveryPoint: dpe.deliveryPoint,
+            oldGate: dpe.oldGate,
+            newGate: dpe.newGate,
+            updatedDate: dpe.updatedDate,
+          });
+        } catch {}
+      }
+    }
+
+    // Flush Vehicle Field Edits
+    for (const vfe of store.vehicleFieldEdits ?? []) {
+      if (scriptUrl && vfe.rowNumber > 0 && vfe.colId) {
+        try {
+          await callAppsScriptWebhook(scriptUrl, {
+            action: 'updateVehicleField',
+            rowNumber: vfe.rowNumber,
+            colId: vfe.colId,
+            value: vfe.value,
+          });
+        } catch {}
+      }
+    }
+
+    // Flush Job Transfer Notes
+    for (const jtn of store.jobTransferNoteEdits) {
+      if (scriptUrl) {
+        try {
+          await callAppsScriptWebhook(scriptUrl, {
+            action: 'updateJobTransferNote',
+            date: jtn.date,
+            driverName: jtn.driverName,
+            vehicleNumber: jtn.vehicleNumber,
+            startTime: jtn.startTime,
+            note: jtn.note,
+          });
+        } catch {}
+      }
+    }
+
+    // Flush Fuel Records
+    for (const fr of store.fuelRecords ?? []) {
+      if (fr.syncedToSheet) continue;
+      const v = fr.values;
+      const rowValues = [
+        v['A'] ?? '', v['B'] ?? '', v['C'] ?? '', v['D'] ?? '', v['E'] ?? '',
+        v['F'] ?? '', v['G'] ?? '', v['H'] ?? '', v['I'] ?? '', v['J'] ?? '',
+        v['K'] ?? '', v['L'] ?? '', v['M'] ?? '', v['N'] ?? '', v['O'] ?? '',
+        v['P'] ?? '', v['Q'] ?? '', v['R'] ?? '', v['S'] ?? '', v['T'] ?? ''
+      ];
+      let synced = false;
+      if (scriptUrl) {
+        try {
+          await callAppsScriptWebhook(scriptUrl, {
+            action: 'appendFuelRecord',
+            rowValues,
+          });
+          synced = true;
+        } catch {}
+      }
+      if (synced) {
+        fr.syncedToSheet = true;
+        const localFr = localStore.fuelRecords?.find((i) => i.id === fr.id);
+        if (localFr) {
+          localFr.syncedToSheet = true;
+          localChanged = true;
+        }
+      }
+    }
+
     if (localChanged) {
       writeLocalMutationsStore(localStore);
     }
@@ -2441,7 +2586,7 @@ async function queryGviz(
   gid: string,
   tq: string,
   signal?: AbortSignal,
-  timeoutMs = 20000
+  timeoutMs = 12000
 ): Promise<GvizResponse> {
   if (signal?.aborted) {
     const abortErr = new Error('การร้องขอถูกยกเลิก');
@@ -2456,20 +2601,34 @@ async function queryGviz(
     const params = new URLSearchParams({
       tqx: 'out:json',
       gid,
-      tq,
       _t: String(Date.now()),
     });
-    const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
+    if (tq) params.set('tq', tq);
+    const directUrl = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
+    const proxyUrl = `/api/sheet-proxy?${params.toString()}`;
 
     sharedPromise = (async () => {
       const timeoutController = new AbortController();
       const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
       try {
-        const response = await fetch(url, { signal: timeoutController.signal });
-        if (!response.ok) {
-          throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${response.status})`);
+        let text = '';
+        try {
+          const response = await fetch(directUrl, { signal: timeoutController.signal });
+          if (response.ok) {
+            text = await response.text();
+          }
+        } catch {
+          // Direct fetch failed or timed out, attempt backend proxy
         }
-        const text = await response.text();
+
+        if (!text || !text.includes('google.visualization.Query.setResponse')) {
+          const proxyResp = await fetch(proxyUrl, { signal: timeoutController.signal });
+          if (!proxyResp.ok) {
+            throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${proxyResp.status})`);
+          }
+          text = await proxyResp.text();
+        }
+
         return parseGvizJson(text);
       } catch (err: unknown) {
         if (timeoutController.signal.aborted) {
@@ -2517,7 +2676,7 @@ const rowCountCache = new Map<string, { count: number; timestamp: number }>();
 
 function getStoredRowCount(gid: string): number {
   const cached = rowCountCache.get(gid);
-  if (cached && cached.count > 0 && Date.now() - cached.timestamp < 30_000) {
+  if (cached && cached.count > 0 && Date.now() - cached.timestamp < 60_000) {
     return cached.count;
   }
   try {
@@ -2546,24 +2705,10 @@ function setStoredRowCount(gid: string, count: number): void {
 
 export async function fetchSheetRowCount(
   gid: string,
-  signal?: AbortSignal
+  _signal?: AbortSignal
 ): Promise<number> {
-  const cachedCount = getStoredRowCount(gid);
-  const mem = rowCountCache.get(gid);
-  if (cachedCount > 0 && mem && Date.now() - mem.timestamp < 15_000) {
-    return cachedCount;
-  }
-  try {
-    const res = await queryGviz(gid, 'select count(A)', signal, 15000);
-    const val = res.table?.rows?.[0]?.c?.[0]?.v;
-    const count = typeof val === 'number' ? val : 0;
-    if (count > 0) {
-      setStoredRowCount(gid, count);
-    }
-    return count > 0 ? count : cachedCount;
-  } catch {
-    return cachedCount;
-  }
+  // Returns stored or estimated row count immediately to avoid blocking 150-second count(A) queries
+  return getStoredRowCount(gid);
 }
 
 export async function fetchSheetTabData(
@@ -2583,10 +2728,10 @@ export async function fetchSheetTabData(
   ]);
 
   let dataResponse: GvizResponse;
-  let rowOffset = 0;
+  let isDescendingOrdered = false;
 
-  if (search.length > 0 && totalRowsInSheet > limit) {
-    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 12000);
+  if (search.length > 0) {
+    const metaRes = await queryGviz(tab.gid, 'select * limit 1', options?.signal, 8000);
     const stringCols = (metaRes.table?.cols ?? []).filter(
       (c) => c.type === 'string' && (c.label || FALLBACK_COLUMN_LABELS[tab.gid]?.[c.id])
     );
@@ -2597,52 +2742,46 @@ export async function fetchSheetTabData(
         .map((c) => `lower(${c.id}) contains '${escaped}'`)
         .join(' or ');
       const searchTq = `select * where ${whereClause} limit ${limit}`;
-      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 20000);
+      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 12000);
     } else {
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        20000
+        12000
       );
     }
-  } else if (tab.reverseOrder && totalRowsInSheet > limit) {
-    rowOffset = Math.max(0, totalRowsInSheet - limit);
+  } else if (tab.reverseOrder) {
+    // Fast path: order by A desc limit N returns the latest records in ~800ms to 2s
     try {
       dataResponse = await queryGviz(
         tab.gid,
-        `select * offset ${rowOffset}`,
+        `select * order by A desc limit ${limit}`,
         options?.signal,
-        20000
+        12000
       );
+      isDescendingOrdered = true;
     } catch {
-      // Fallback to limit query if offset query fails
+      // Fallback to select * limit N
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        15000
+        12000
       );
-      rowOffset = 0;
+      isDescendingOrdered = false;
     }
   } else {
     dataResponse = await queryGviz(
       tab.gid,
       `select * limit ${limit}`,
       options?.signal,
-      20000
+      12000
     );
   }
 
   const rawCols = dataResponse.table?.cols ?? [];
   let rawRows = dataResponse.table?.rows ?? [];
-
-  if (tab.reverseOrder && rowOffset > 0 && rawRows.length > 0) {
-    const estimatedTotal = rowOffset + rawRows.length;
-    if (estimatedTotal > totalRowsInSheet) {
-      setStoredRowCount(tab.gid, estimatedTotal);
-    }
-  }
 
   // Auto-discover Apps Script URL if present in column D of จุดส่งสินค้า
   if (tab.gid === '1156877149') {
@@ -2741,6 +2880,13 @@ export async function fetchSheetTabData(
 
   const existingRecordIds = new Set<string>();
 
+  let rowOffset = 0;
+  if (tab.reverseOrder && !isDescendingOrdered && totalRowsInSheet > limit) {
+    rowOffset = Math.max(0, totalRowsInSheet - limit);
+  }
+
+  const colIdxA = rawCols.findIndex((c) => c.id === 'A');
+
   rawRows.forEach((r, idx) => {
     const values: Record<string, string> = {};
     const rawValues: Record<string, string | number | null> = {};
@@ -2769,8 +2915,16 @@ export async function fetchSheetTabData(
     });
 
     if (hasNonEmptyValue) {
+      let rowNumber = rowOffset + idx + 1;
+      // If tab is reverseOrder with numerical sequence in Col A (like บันทึกงานซ่อม: gid 944294225)
+      if (tab.gid === '944294225' && colIdxA >= 0) {
+        const valA = Number(r.c?.[colIdxA]?.v);
+        if (!isNaN(valA) && valA > 0) {
+          rowNumber = valA + 1; // Row 1 is header, sequence 1 is row 2
+        }
+      }
       parsedRows.push({
-        rowNumber: rowOffset + idx + 1,
+        rowNumber,
         values,
         rawValues,
       });
@@ -2985,8 +3139,14 @@ export async function fetchSheetTabData(
     }
   }
 
-  if (tab.reverseOrder) {
+  if (tab.reverseOrder && !isDescendingOrdered) {
     parsedRows.reverse();
+  }
+
+  // Auto-update stored row count based on highest rowNumber or sequence seen
+  const maxRowSeen = parsedRows.reduce((max, r) => Math.max(max, r.rowNumber), 0);
+  if (maxRowSeen > 0 && maxRowSeen > totalRowsInSheet) {
+    setStoredRowCount(tab.gid, maxRowSeen);
   }
 
   return {
@@ -2996,7 +3156,7 @@ export async function fetchSheetTabData(
     columns: activeColumns,
     allColumns,
     rows: parsedRows,
-    totalRowsInSheet: Math.max(totalRowsInSheet, parsedRows.length),
+    totalRowsInSheet: Math.max(totalRowsInSheet, maxRowSeen, parsedRows.length),
     fetchedAt: new Date().toISOString(),
   };
 }
