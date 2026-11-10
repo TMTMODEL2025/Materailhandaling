@@ -677,7 +677,7 @@ async function startServer() {
       const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID_FOR_PUSH}/gviz/tq?${params.toString()}`;
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeout = setTimeout(() => controller.abort(), 35000);
       try {
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) {
@@ -687,7 +687,7 @@ async function startServer() {
         const text = await response.text();
         sheetProxyCache.set(cacheKey, {
           data: text,
-          expiresAt: now + 10000, // 10 sec cache
+          expiresAt: now + 60000, // 60 sec cache
         });
         res.setHeader('Content-Type', 'application/json;charset=utf-8');
         res.send(text);

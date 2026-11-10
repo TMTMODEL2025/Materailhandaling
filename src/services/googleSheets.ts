@@ -2586,7 +2586,7 @@ async function queryGviz(
   gid: string,
   tq: string,
   signal?: AbortSignal,
-  timeoutMs = 12000
+  timeoutMs = 35000
 ): Promise<GvizResponse> {
   if (signal?.aborted) {
     const abortErr = new Error('การร้องขอถูกยกเลิก');
@@ -2611,25 +2611,40 @@ async function queryGviz(
       const timeoutController = new AbortController();
       const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
       try {
-        let text = '';
+        // Race direct fetch with server-side proxy
+        const fetchDirect = async () => {
+          const res = await fetch(directUrl, { signal: timeoutController.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          if (!text.includes('google.visualization.Query.setResponse')) {
+            throw new Error('Invalid Gviz format');
+          }
+          return text;
+        };
+
+        const fetchProxy = async () => {
+          const res = await fetch(proxyUrl, { signal: timeoutController.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          if (!text.includes('google.visualization.Query.setResponse')) {
+            throw new Error('Invalid Gviz format');
+          }
+          return text;
+        };
+
+        let rawText = '';
         try {
-          const response = await fetch(directUrl, { signal: timeoutController.signal });
-          if (response.ok) {
-            text = await response.text();
-          }
+          rawText = await Promise.any([fetchDirect(), fetchProxy()]);
         } catch {
-          // Direct fetch failed or timed out, attempt backend proxy
-        }
-
-        if (!text || !text.includes('google.visualization.Query.setResponse')) {
-          const proxyResp = await fetch(proxyUrl, { signal: timeoutController.signal });
-          if (!proxyResp.ok) {
-            throw new Error(`ไม่สามารถเชื่อมต่อ Google Sheets (HTTP ${proxyResp.status})`);
+          // If Promise.any failed, wait for either or throw
+          try {
+            rawText = await fetchDirect();
+          } catch {
+            rawText = await fetchProxy();
           }
-          text = await proxyResp.text();
         }
 
-        return parseGvizJson(text);
+        return parseGvizJson(rawText);
       } catch (err: unknown) {
         if (timeoutController.signal.aborted) {
           throw new Error('การดึงข้อมูลจาก Google Sheets ใช้เวลานานเกินกำหนด กรุณากดซิงค์ข้อมูลอีกครั้ง');
@@ -2742,13 +2757,13 @@ export async function fetchSheetTabData(
         .map((c) => `lower(${c.id}) contains '${escaped}'`)
         .join(' or ');
       const searchTq = `select * where ${whereClause} limit ${limit}`;
-      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 12000);
+      dataResponse = await queryGviz(tab.gid, searchTq, options?.signal, 35000);
     } else {
       dataResponse = await queryGviz(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        12000
+        35000
       );
     }
   } else if (tab.reverseOrder) {
@@ -2758,7 +2773,7 @@ export async function fetchSheetTabData(
         tab.gid,
         `select * order by A desc limit ${limit}`,
         options?.signal,
-        12000
+        35000
       );
       isDescendingOrdered = true;
     } catch {
@@ -2767,7 +2782,7 @@ export async function fetchSheetTabData(
         tab.gid,
         `select * limit ${limit}`,
         options?.signal,
-        12000
+        35000
       );
       isDescendingOrdered = false;
     }
@@ -2776,7 +2791,7 @@ export async function fetchSheetTabData(
       tab.gid,
       `select * limit ${limit}`,
       options?.signal,
-      12000
+      35000
     );
   }
 

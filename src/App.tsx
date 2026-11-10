@@ -581,12 +581,12 @@ function playNotificationChime() {
       abortControllerRef.current = controller;
       isFetchingRef.current = true;
 
-      // Safety watchdog: ensure spinner NEVER hangs longer than 12 seconds
+      // Safety watchdog: ensure spinner NEVER hangs indefinitely
       syncTimeoutRef.current = setTimeout(() => {
         isFetchingRef.current = false;
         setIsLoading(false);
         setIsRefreshing(false);
-      }, 12000);
+      }, 45000);
 
       if (options?.silent) {
         setIsRefreshing(true);
