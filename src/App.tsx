@@ -1532,49 +1532,15 @@ function playNotificationChime() {
           (c.label.includes('เบนซิน') || c.label.includes('เบนซิล'))
       )?.id ?? 'N';
 
-    // 1. Find latest balance from top rows
-    const rowsForBalance =
-      filteredRows.length > 0 ? filteredRows : sheetData?.rows ?? [];
-    for (const r of rowsForBalance) {
-      const dBalRaw = r.rawValues[balDieselColId] ?? r.rawValues['M'];
-      const bBalRaw = r.rawValues[balBenzeneColId] ?? r.rawValues['N'];
-
-      let dParsed =
-        typeof dBalRaw === 'number'
-          ? dBalRaw
-          : parseFloat(
-              String(r.values[balDieselColId] ?? r.values['M'] ?? '').replace(
-                /,/g,
-                ''
-              )
-            );
-      let bParsed =
-        typeof bBalRaw === 'number'
-          ? bBalRaw
-          : parseFloat(
-              String(r.values[balBenzeneColId] ?? r.values['N'] ?? '').replace(
-                /,/g,
-                ''
-              )
-            );
-
-      if (!latestDieselBalance && !Number.isNaN(dParsed) && dParsed > 0) {
-        latestDieselBalance = dParsed;
-      }
-      if (!latestBenzeneBalance && !Number.isNaN(bParsed) && bParsed > 0) {
-        latestBenzeneBalance = bParsed;
-      }
-      if (latestDieselBalance > 0 && latestBenzeneBalance > 0) break;
-    }
-
     filteredRows.forEach((r) => {
       const fType = (r.values[fuelTypeColId] ?? r.values['D'] ?? '').trim();
-      const isDiesel = fType.includes('ดี') || fType.includes('เซล');
       const isBenzene =
         fType.includes('เบน') ||
         fType.includes('ซิน') ||
+        fType.includes('ซิล') ||
         fType.toLowerCase().includes('benzene') ||
         fType.includes('โซฮอล์');
+      const isDiesel = !isBenzene;
 
       // Liters In
       const inRaw = r.rawValues[inColId] ?? r.rawValues['E'];
@@ -1587,15 +1553,12 @@ function playNotificationChime() {
       if (!Number.isNaN(inVal) && inVal > 0) {
         totalInLiters += inVal;
         totalInCount += 1;
-        if (isDiesel) {
-          inDieselLiters += inVal;
-          inDieselCount += 1;
-        } else if (isBenzene) {
+        if (isBenzene) {
           inBenzeneLiters += inVal;
           inBenzeneCount += 1;
         } else {
-          inOtherLiters += inVal;
-          inOtherCount += 1;
+          inDieselLiters += inVal;
+          inDieselCount += 1;
         }
       }
 
@@ -1610,15 +1573,12 @@ function playNotificationChime() {
       if (!Number.isNaN(outVal) && outVal > 0) {
         totalOutLiters += outVal;
         totalOutCount += 1;
-        if (isDiesel) {
-          outDieselLiters += outVal;
-          outDieselCount += 1;
-        } else if (isBenzene) {
+        if (isBenzene) {
           outBenzeneLiters += outVal;
           outBenzeneCount += 1;
         } else {
-          outOtherLiters += outVal;
-          outOtherCount += 1;
+          outDieselLiters += outVal;
+          outDieselCount += 1;
         }
       }
 
@@ -1656,6 +1616,9 @@ function playNotificationChime() {
         ? totalOutValue / totalOutLiters
         : 0;
 
+    latestDieselBalance = inDieselLiters - outDieselLiters;
+    latestBenzeneBalance = inBenzeneLiters - outBenzeneLiters;
+
     return {
       latestDieselBalance,
       latestBenzeneBalance,
@@ -1665,8 +1628,8 @@ function playNotificationChime() {
       inDieselCount,
       inBenzeneLiters,
       inBenzeneCount,
-      inOtherLiters,
-      inOtherCount,
+      inOtherLiters: 0,
+      inOtherCount: 0,
       totalOutLiters,
       totalOutCount,
       dispenseCount: totalOutCount,
@@ -1674,8 +1637,8 @@ function playNotificationChime() {
       outDieselCount,
       outBenzeneLiters,
       outBenzeneCount,
-      outOtherLiters,
-      outOtherCount,
+      outOtherLiters: 0,
+      outOtherCount: 0,
       totalOutValue,
       latestPrice,
       avgPrice,

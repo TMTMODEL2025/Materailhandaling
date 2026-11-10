@@ -145,12 +145,13 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({ rows, columns }) => {
       if (endDate && ymd > endDate) return;
 
       const fType = (r.values[fuelTypeColId] ?? r.values['D'] ?? '').trim();
-      const isDiesel = fType.includes('ดี') || fType.includes('เซล');
       const isBenzene =
         fType.includes('เบน') ||
         fType.includes('ซิน') ||
+        fType.includes('ซิล') ||
         fType.toLowerCase().includes('benzene') ||
         fType.includes('โซฮอล์');
+      const isDiesel = !isBenzene;
 
       // Check Liters In
       const inRaw = r.rawValues[inColId] ?? r.rawValues['E'];
@@ -178,15 +179,12 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({ rows, columns }) => {
         }
         inMap[ymd].totalLiters += inVal;
         inMap[ymd].totalCount += 1;
-        if (isDiesel) {
-          inMap[ymd].dieselLiters += inVal;
-          inMap[ymd].dieselCount += 1;
-        } else if (isBenzene) {
+        if (isBenzene) {
           inMap[ymd].benzeneLiters += inVal;
           inMap[ymd].benzeneCount += 1;
         } else {
-          inMap[ymd].otherLiters += inVal;
-          inMap[ymd].otherCount += 1;
+          inMap[ymd].dieselLiters += inVal;
+          inMap[ymd].dieselCount += 1;
         }
       }
 
@@ -216,15 +214,12 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({ rows, columns }) => {
         }
         outMap[ymd].totalLiters += outVal;
         outMap[ymd].totalCount += 1;
-        if (isDiesel) {
-          outMap[ymd].dieselLiters += outVal;
-          outMap[ymd].dieselCount += 1;
-        } else if (isBenzene) {
+        if (isBenzene) {
           outMap[ymd].benzeneLiters += outVal;
           outMap[ymd].benzeneCount += 1;
         } else {
-          outMap[ymd].otherLiters += outVal;
-          outMap[ymd].otherCount += 1;
+          outMap[ymd].dieselLiters += outVal;
+          outMap[ymd].dieselCount += 1;
         }
       }
     });
