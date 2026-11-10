@@ -1860,9 +1860,6 @@ function playNotificationChime() {
             <h1 className="text-sm font-bold text-slate-900 sm:text-base truncate">
               {activeTab.name}
             </h1>
-            <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-mono font-medium text-slate-600 border border-slate-200 shrink-0">
-              v{APP_VERSION}
-            </span>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
