@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import {
   X,
   ZoomIn,
@@ -37,6 +37,9 @@ interface PhotoLightboxModalProps {
   onPhotosUpdated?: (updatedPhotos: string[]) => void;
 }
 
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 8;
+
 export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
   isOpen,
   onClose,
@@ -55,12 +58,16 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
   const [zoom, setZoom] = useState<number>(1);
   const [rotation, setRotation] = useState<number>(0);
   const [naturalDimensions, setNaturalDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1024,
+    height: typeof window !== 'undefined' ? window.innerHeight * 0.75 : 700,
+  });
   const [isActual1to1, setIsActual1to1] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [enableSharpen, setEnableSharpen] = useState<boolean>(false);
   const [isUploadingHighRes, setIsUploadingHighRes] = useState<boolean>(false);
 
-  // Dragging / Panning states for scroll container
+  // Mouse & 1-finger touch drag/pan state
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number; scrollLeft: number; scrollTop: number }>({
     x: 0,
@@ -72,6 +79,55 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileReplaceInputRef = useRef<HTMLInputElement>(null);
+
+  // Refs for pinch-to-zoom, 1-finger pan/swipe, and double-tap zoom
+  const zoomRef = useRef<number>(zoom);
+  zoomRef.current = zoom;
+
+  const isActual1to1Ref = useRef<boolean>(isActual1to1);
+  isActual1to1Ref.current = isActual1to1;
+
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
+
+  const pinchStateRef = useRef<{
+    active: boolean;
+    initialDist: number;
+    initialZoom: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+    startOriginX: number;
+    startOriginY: number;
+  }>({
+    active: false,
+    initialDist: 0,
+    initialZoom: 1,
+    startScrollLeft: 0,
+    startScrollTop: 0,
+    startOriginX: 0,
+    startOriginY: 0,
+  });
+
+  const singleTouchRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+    moved: boolean;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startScrollLeft: 0,
+    startScrollTop: 0,
+    moved: false,
+  });
+
+  const lastTapRef = useRef<{ time: number; x: number; y: number }>({
+    time: 0,
+    x: 0,
+    y: 0,
+  });
 
   // Sync localPhotos and index when modal opens or photos prop changes
   useEffect(() => {
@@ -89,6 +145,68 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
       setEnableSharpen(false);
     }
   }, [isOpen, initialIndex, photos.length]);
+
+  // Measure scroll container dimensions so mobile/desktop zoom scales smoothly from 100% fit size
+  useEffect(() => {
+    if (!isOpen) return;
+    const updateSize = () => {
+      if (scrollContainerRef.current) {
+        setContainerSize({
+          width: scrollContainerRef.current.clientWidth || window.innerWidth,
+          height: scrollContainerRef.current.clientHeight || window.innerHeight * 0.75,
+        });
+      }
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, [isOpen]);
+
+  // Apply anchored scroll position synchronously right after zoom state updates
+  useLayoutEffect(() => {
+    if (pendingScrollRef.current && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft = Math.max(0, pendingScrollRef.current.left);
+      scrollContainerRef.current.scrollTop = Math.max(0, pendingScrollRef.current.top);
+      pendingScrollRef.current = null;
+    }
+  }, [zoom, isActual1to1]);
+
+  // Compute the base "fit-to-screen" width in pixels at zoom = 1
+  const getBaseFitWidth = useCallback((): number => {
+    const pad = containerSize.width < 640 ? 16 : 32;
+    const availW = Math.max(240, containerSize.width - pad);
+    const availH = Math.max(200, containerSize.height - pad);
+
+    if (naturalDimensions && naturalDimensions.width > 0 && naturalDimensions.height > 0) {
+      const aspect = naturalDimensions.width / naturalDimensions.height;
+      return Math.round(Math.min(availW, availH * aspect));
+    }
+    return Math.round(availW * 0.92);
+  }, [containerSize.width, containerSize.height, naturalDimensions]);
+
+  // Helper to zoom while keeping a specific viewport point (originX, originY) anchored
+  const applyZoomAtPoint = useCallback(
+    (nextZoomRaw: number, originX?: number, originY?: number) => {
+      const container = scrollContainerRef.current;
+      const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, parseFloat(nextZoomRaw.toFixed(2))));
+      const prevZoom = zoomRef.current;
+
+      if (container && clampedZoom > 1) {
+        const ox = originX !== undefined ? originX : container.clientWidth / 2;
+        const oy = originY !== undefined ? originY : container.clientHeight / 2;
+        const ratio = clampedZoom / Math.max(1, prevZoom);
+        const nextLeft = (container.scrollLeft + ox) * ratio - ox;
+        const nextTop = (container.scrollTop + oy) * ratio - oy;
+        pendingScrollRef.current = { left: nextLeft, top: nextTop };
+      } else if (container && clampedZoom <= 1) {
+        pendingScrollRef.current = { left: 0, top: 0 };
+      }
+
+      setIsActual1to1(false);
+      setZoom(clampedZoom);
+    },
+    []
+  );
 
   const handleSelectPhoto = (idx: number) => {
     setCurrentIndex(idx);
@@ -120,19 +238,16 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
   }, [localPhotos.length]);
 
   const handleZoomIn = () => {
-    setIsActual1to1(false);
-    setZoom((z) => Math.min(6, parseFloat((z + (z >= 2 ? 0.5 : 0.25)).toFixed(2))));
+    const step = zoomRef.current >= 2 ? 0.5 : 0.25;
+    applyZoomAtPoint(zoomRef.current + step);
   };
 
   const handleZoomOut = () => {
-    setIsActual1to1(false);
-    setZoom((z) => {
-      const next = Math.max(1, parseFloat((z - (z > 2 ? 0.5 : 0.25)).toFixed(2)));
-      return next;
-    });
+    const step = zoomRef.current > 2 ? 0.5 : 0.25;
+    applyZoomAtPoint(zoomRef.current - step);
   };
 
-  const handleResetZoom = () => {
+  const handleResetZoom = useCallback(() => {
     setIsActual1to1(false);
     setZoom(1);
     setRotation(0);
@@ -140,13 +255,16 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
       scrollContainerRef.current.scrollLeft = 0;
       scrollContainerRef.current.scrollTop = 0;
     }
-  };
+  }, []);
 
   const handleSetActualSize = () => {
     setIsActual1to1((prev) => {
       const next = !prev;
       if (next) {
-        setZoom(2);
+        const fitW = getBaseFitWidth();
+        const targetW = naturalDimensions ? Math.max(naturalDimensions.width, fitW * 2) : fitW * 2;
+        const computedZoom = Math.max(1.5, Math.min(MAX_ZOOM, parseFloat((targetW / Math.max(1, fitW)).toFixed(2))));
+        setZoom(computedZoom);
       } else {
         setZoom(1);
       }
@@ -157,6 +275,187 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
   const handleRotate = () => {
     setRotation((r) => (r + 90) % 360);
   };
+
+  // Native non-passive touch listeners for smooth 2-finger pinch-to-zoom, 1-finger pan, and double-tap zoom on mobile
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!isOpen || !container) return;
+
+    const getTouchDistance = (t1: Touch, t2: Touch) => {
+      const dx = t2.clientX - t1.clientX;
+      const dy = t2.clientY - t1.clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const getTouchMidpoint = (t1: Touch, t2: Touch) => ({
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    });
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Two-finger pinch start: prevent browser page zoom
+        e.preventDefault();
+        e.stopPropagation();
+        singleTouchRef.current.active = false;
+
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        const mid = getTouchMidpoint(e.touches[0], e.touches[1]);
+        const rect = container.getBoundingClientRect();
+
+        pinchStateRef.current = {
+          active: true,
+          initialDist: Math.max(10, dist),
+          initialZoom: zoomRef.current,
+          startScrollLeft: container.scrollLeft,
+          startScrollTop: container.scrollTop,
+          startOriginX: mid.x - rect.left,
+          startOriginY: mid.y - rect.top,
+        };
+      } else if (e.touches.length === 1) {
+        pinchStateRef.current.active = false;
+        const touch = e.touches[0];
+        singleTouchRef.current = {
+          active: true,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          startScrollLeft: container.scrollLeft,
+          startScrollTop: container.scrollTop,
+          moved: false,
+        };
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && pinchStateRef.current.active) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        const mid = getTouchMidpoint(e.touches[0], e.touches[1]);
+        const rect = container.getBoundingClientRect();
+        const currentOriginX = mid.x - rect.left;
+        const currentOriginY = mid.y - rect.top;
+
+        const scaleRatio = dist / pinchStateRef.current.initialDist;
+        const nextZoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, parseFloat((pinchStateRef.current.initialZoom * scaleRatio).toFixed(2)))
+        );
+
+        const effectiveRatio = nextZoom / Math.max(1, pinchStateRef.current.initialZoom);
+        const contentX = pinchStateRef.current.startScrollLeft + pinchStateRef.current.startOriginX;
+        const contentY = pinchStateRef.current.startScrollTop + pinchStateRef.current.startOriginY;
+
+        pendingScrollRef.current = {
+          left: contentX * effectiveRatio - currentOriginX,
+          top: contentY * effectiveRatio - currentOriginY,
+        };
+
+        setIsActual1to1(false);
+        setZoom(nextZoom);
+      } else if (e.touches.length === 1 && singleTouchRef.current.active) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - singleTouchRef.current.startX;
+        const dy = touch.clientY - singleTouchRef.current.startY;
+
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          singleTouchRef.current.moved = true;
+        }
+
+        // When zoomed in, pan the scroll container smoothly with 1 finger
+        if (zoomRef.current > 1 || isActual1to1Ref.current) {
+          if (e.cancelable) e.preventDefault();
+          container.scrollLeft = singleTouchRef.current.startScrollLeft - dx;
+          container.scrollTop = singleTouchRef.current.startScrollTop - dy;
+        }
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (pinchStateRef.current.active && e.touches.length < 2) {
+        pinchStateRef.current.active = false;
+        // If 1 finger remains on screen after pinching, transition smoothly to 1-finger pan
+        if (e.touches.length === 1) {
+          singleTouchRef.current = {
+            active: true,
+            startX: e.touches[0].clientX,
+            startY: e.touches[0].clientY,
+            startScrollLeft: container.scrollLeft,
+            startScrollTop: container.scrollTop,
+            moved: true,
+          };
+        }
+        return;
+      }
+
+      if (e.touches.length === 0 && singleTouchRef.current.active) {
+        const wasMoved = singleTouchRef.current.moved;
+        const endTouch = e.changedTouches[0];
+        singleTouchRef.current.active = false;
+
+        if (!endTouch) return;
+
+        // Check for horizontal swipe to change photo when at 1x zoom
+        if (wasMoved && zoomRef.current <= 1 && !isActual1to1Ref.current && localPhotos.length > 1) {
+          const dx = endTouch.clientX - singleTouchRef.current.startX;
+          const dy = endTouch.clientY - singleTouchRef.current.startY;
+          if (Math.abs(dx) > 65 && Math.abs(dy) < 50) {
+            if (dx < 0) {
+              handleNextPhoto();
+            } else {
+              handlePrevPhoto();
+            }
+          }
+          return;
+        }
+
+        // Check for double-tap to zoom on mobile (when finger didn't drag)
+        if (!wasMoved) {
+          const targetEl = e.target as HTMLElement | null;
+          if (targetEl && targetEl.closest('button, a, input')) return;
+
+          const now = Date.now();
+          const dt = now - lastTapRef.current.time;
+          const dist = Math.hypot(
+            endTouch.clientX - lastTapRef.current.x,
+            endTouch.clientY - lastTapRef.current.y
+          );
+
+          if (dt > 0 && dt < 320 && dist < 36) {
+            // Double-tap detected!
+            if (e.cancelable) e.preventDefault();
+            const rect = container.getBoundingClientRect();
+            const originX = endTouch.clientX - rect.left;
+            const originY = endTouch.clientY - rect.top;
+
+            if (zoomRef.current > 1 || isActual1to1Ref.current) {
+              handleResetZoom();
+            } else {
+              applyZoomAtPoint(2.5, originX, originY);
+            }
+            lastTapRef.current = { time: 0, x: 0, y: 0 };
+          } else {
+            lastTapRef.current = {
+              time: now,
+              x: endTouch.clientX,
+              y: endTouch.clientY,
+            };
+          }
+        }
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd, { passive: false });
+
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [isOpen, localPhotos.length, handleNextPhoto, handlePrevPhoto, handleResetZoom, applyZoomAtPoint]);
 
   // Replace current blurry photo with a full 4K high-res file directly from Lightbox
   const handleReplaceCurrentPhoto = async (files: FileList | null) => {
@@ -198,18 +497,21 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
     }
   };
 
-  // Mouse wheel zoom inside scroll container
+  // Mouse wheel zoom inside scroll container (Desktop)
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey || e.altKey) {
       e.preventDefault();
-      setIsActual1to1(false);
+      const rect = scrollContainerRef.current?.getBoundingClientRect();
+      const ox = rect ? e.clientX - rect.left : undefined;
+      const oy = rect ? e.clientY - rect.top : undefined;
       const delta = e.deltaY < 0 ? 0.25 : -0.25;
-      setZoom((z) => Math.max(1, Math.min(6, parseFloat((z + delta).toFixed(2)))));
+      applyZoomAtPoint(zoomRef.current + delta, ox, oy);
     }
   };
 
-  // Mouse drag panning on the scroll container
+  // Mouse drag panning on the scroll container (Desktop)
   const handleMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (zoom <= 1 && !isActual1to1) return;
     if (!scrollContainerRef.current) return;
     if ((e.target as HTMLElement).closest('button, a, input')) return;
@@ -236,30 +538,18 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
     setIsDragging(false);
   };
 
-  // Touch drag support
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if ((zoom <= 1 && !isActual1to1) || !scrollContainerRef.current) return;
-    if (e.touches.length === 1) {
-      setIsDragging(true);
-      setDragStart({
-        x: e.touches[0].clientX,
-        y: e.touches[0].clientY,
-        scrollLeft: scrollContainerRef.current.scrollLeft,
-        scrollTop: scrollContainerRef.current.scrollTop,
-      });
+  // Desktop double-click to toggle zoom at cursor
+  const handleViewerDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if ((e.target as HTMLElement).closest('button, a, input')) return;
+    const rect = scrollContainerRef.current?.getBoundingClientRect();
+    const ox = rect ? e.clientX - rect.left : undefined;
+    const oy = rect ? e.clientY - rect.top : undefined;
+    if (zoom > 1 || isActual1to1) {
+      handleResetZoom();
+    } else {
+      applyZoomAtPoint(2.5, ox, oy);
     }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isDragging || !scrollContainerRef.current || e.touches.length !== 1) return;
-    const dx = e.touches[0].clientX - dragStart.x;
-    const dy = e.touches[0].clientY - dragStart.y;
-    scrollContainerRef.current.scrollLeft = dragStart.scrollLeft - dx;
-    scrollContainerRef.current.scrollTop = dragStart.scrollTop - dy;
-  };
-
-  const handleTouchEnd = () => {
-    setIsDragging(false);
   };
 
   // Keyboard navigation
@@ -286,7 +576,7 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, handleNextPhoto, handlePrevPhoto, onClose]);
+  }, [isOpen, handleNextPhoto, handlePrevPhoto, handleResetZoom, onClose]);
 
   // Toggle fullscreen
   const toggleFullscreen = () => {
@@ -315,34 +605,8 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
       ? 'url(#hd-crisp-sharpen) contrast(1.08)'
       : undefined;
 
-    if (isActual1to1 && naturalDimensions) {
-      return {
-        width: `${naturalDimensions.width}px`,
-        maxWidth: 'none',
-        height: 'auto',
-        filter: filterValue,
-        transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
-      };
-    }
-
-    if (zoom <= 1) {
-      return {
-        maxWidth: '92vw',
-        maxHeight: '76vh',
-        width: 'auto',
-        height: 'auto',
-        objectFit: 'contain',
-        filter: filterValue,
-        transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
-      };
-    }
-
-    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    const baseWidth = naturalDimensions
-      ? Math.min(viewportWidth * 0.85, Math.max(naturalDimensions.width, 720))
-      : Math.round(viewportWidth * 0.75);
-
-    const targetWidth = Math.round(baseWidth * zoom);
+    const baseFitWidth = getBaseFitWidth();
+    const targetWidth = Math.round(baseFitWidth * zoom);
 
     return {
       width: `${targetWidth}px`,
@@ -353,14 +617,19 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
     };
   };
 
-  const zoomPercent = isActual1to1 && naturalDimensions
-    ? `1:1 (${naturalDimensions.width}px)`
-    : `${Math.round(zoom * 100)}%`;
+  const zoomPercent =
+    isActual1to1 && naturalDimensions
+      ? `1:1 (${Math.round(zoom * 100)}%)`
+      : `${Math.round(zoom * 100)}%`;
 
   return (
     <div
       ref={modalRef}
       className="fixed inset-0 z-70 flex flex-col bg-slate-950/95 backdrop-blur-md select-none animate-in fade-in duration-150"
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
       onWheel={handleWheel}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
@@ -391,18 +660,18 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
       />
 
       {/* 1. Header Toolbar */}
-      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-2.5 text-white z-20 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 shrink-0">
-            <Sparkles className="h-4 w-4" />
+      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-3 py-2 sm:px-4 sm:py-2.5 text-white z-20 shrink-0 gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 shrink-0">
+            <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
           </div>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-xs sm:text-sm font-bold text-white truncate">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <h3 className="text-xs sm:text-sm font-bold text-white truncate max-w-[180px] sm:max-w-none">
                 {title || (vehicleNo ? `รูปถ่ายงานซ่อม เบอร์รถ ${vehicleNo}` : 'ดูรูปถ่ายความละเอียดสูง')}
               </h3>
               {sequenceNo && (
-                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-300 border border-slate-700 shrink-0">
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] sm:text-[11px] text-slate-300 border border-slate-700 shrink-0">
                   #{sequenceNo}
                 </span>
               )}
@@ -416,18 +685,18 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
                 >
                   <Sparkles className="h-2.5 w-2.5" />
                   <span>
-                    ความละเอียดไฟล์จริง: {naturalDimensions.width} × {naturalDimensions.height} px
-                    {isLegacyLowResFile ? ' (ไฟล์เดิมถูกบีบอัดไว้ต่ำ)' : ' (HD/4K)'}
+                    {naturalDimensions.width}×{naturalDimensions.height}px
+                    {isLegacyLowResFile ? ' (ไฟล์เดิมขนาดเล็ก)' : ' (HD/4K)'}
                   </span>
                 </span>
               ) : (
                 <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400 border border-slate-700 animate-pulse">
-                  กำลังดึงความละเอียดจริงจาก Google Drive...
+                  กำลังโหลดความละเอียดจริง...
                 </span>
               )}
             </div>
             {subtitle && (
-              <p className="text-[11px] text-slate-400 truncate max-w-xl">
+              <p className="text-[11px] text-slate-400 truncate max-w-xl hidden sm:block">
                 {subtitle}
               </p>
             )}
@@ -435,18 +704,21 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
         </div>
 
         {/* Right Header Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Button to replace current photo with 100% uncompressed 4K original */}
           <button
             type="button"
             disabled={isUploadingHighRes}
             onClick={() => fileReplaceInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] sm:text-xs font-bold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 transition-colors cursor-pointer"
             title="เลือกไฟล์ภาพต้นฉบับจากเครื่องเพื่ออัปเดตแทนที่รูปนี้ด้วยความละเอียดสูงสุด 4K (ไม่บีบอัด)"
           >
-            <Upload className="h-3.5 w-3.5" />
-            <span>
+            <Upload className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden md:inline">
               {isUploadingHighRes ? 'กำลังอัปโหลดรูปชัด 4K...' : 'อัปโหลดรูปชัด (HD/4K) แทนที่รูปนี้'}
+            </span>
+            <span className="md:hidden">
+              {isUploadingHighRes ? 'กำลังอัปโหลด...' : 'อัปโหลดรูปชัด'}
             </span>
           </button>
 
@@ -455,11 +727,11 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
               href={directDriveViewUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
               title="เปิดรูปต้นฉบับใน Google Drive แท็บใหม่"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">เปิดดูใน Drive</span>
+              <span className="hidden lg:inline">เปิดดูใน Drive</span>
             </a>
           )}
 
@@ -475,7 +747,7 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-slate-400 hover:bg-rose-600 hover:text-white transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-slate-300 hover:bg-rose-600 hover:text-white transition-colors"
             title="ปิดหน้าต่าง (Esc)"
           >
             <X className="h-4 w-4" />
@@ -485,43 +757,37 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
 
       {/* Low-Res Original File Warning Banner */}
       {isLegacyLowResFile && (
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-950/90 border-b border-amber-700/60 px-4 py-2 text-xs text-amber-200 z-20 shrink-0">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-950/90 border-b border-amber-700/60 px-3 py-1.5 sm:px-4 sm:py-2 text-[11px] sm:text-xs text-amber-200 z-20 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
             <span>
-              <strong>สาเหตุที่ภาพนี้ยังแตก:</strong> ไฟล์รูปนี้ใน Google Drive ถูกบันทึกไว้เดิมด้วยความละเอียดต่ำเพียง{' '}
-              <strong className="text-white underline">
-                {naturalDimensions.width} × {naturalDimensions.height} px
-              </strong>{' '}
-              (จากการบีบอัดก่อนอัปโหลดรอบเดิม) — กรุณากดปุ่ม{' '}
-              <strong className="text-emerald-300">"อัปโหลดรูปชัด (HD/4K) แทนที่รูปนี้"</strong>{' '}
-              เพื่อใช้ไฟล์ต้นฉบับความละเอียดสูง (สูงสุด 4096px ไม่บีบอัด)
+              ไฟล์รูปเดิมใน Drive มีความละเอียดต่ำ ({naturalDimensions.width}×{naturalDimensions.height}px) — กด{' '}
+              <strong className="text-emerald-300">"อัปโหลดรูปชัด"</strong> เพื่อเปลี่ยนเป็นไฟล์ 4K
             </span>
           </div>
           <button
             type="button"
             disabled={isUploadingHighRes}
             onClick={() => fileReplaceInputRef.current?.click()}
-            className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-slate-950 hover:bg-amber-400 shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 shrink-0 cursor-pointer"
           >
             <Upload className="h-3 w-3" />
-            <span>เลือกไฟล์ต้นฉบับเปลี่ยนทันที</span>
+            <span>เปลี่ยนเป็นไฟล์ชัด</span>
           </button>
         </div>
       )}
 
-      {/* 2. Main Viewer Area with overflow: auto for genuine raster zoom */}
+      {/* 2. Main Viewer Area with 2-finger pinch-to-zoom, 1-finger pan, and genuine raster width rendering */}
       <div
         ref={scrollContainerRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        className={`relative flex-1 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px] ${
+        onDoubleClick={handleViewerDoubleClick}
+        style={{ touchAction: 'none' }}
+        className={`relative flex-1 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px] overflow-auto ${
           zoom > 1 || isActual1to1
-            ? 'overflow-auto cursor-grab active:cursor-grabbing'
-            : 'overflow-hidden flex items-center justify-center cursor-default'
+            ? 'cursor-grab active:cursor-grabbing'
+            : 'cursor-default'
         }`}
       >
         {/* Navigation Buttons */}
@@ -533,10 +799,10 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
                 e.stopPropagation();
                 handlePrevPhoto();
               }}
-              className="fixed left-3 top-1/2 -translate-y-1/2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm hover:bg-blue-600 transition-colors border border-slate-700"
+              className="fixed left-2 sm:left-3 top-1/2 -translate-y-1/2 z-30 flex h-9 w-9 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm hover:bg-blue-600 transition-colors border border-slate-700"
               title="รูปก่อนหน้า (ลูกศรซ้าย)"
             >
-              <ChevronLeft className="h-6 w-6" />
+              <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
             </button>
             <button
               type="button"
@@ -544,59 +810,58 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
                 e.stopPropagation();
                 handleNextPhoto();
               }}
-              className="fixed right-3 top-1/2 -translate-y-1/2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm hover:bg-blue-600 transition-colors border border-slate-700"
+              className="fixed right-2 sm:right-3 top-1/2 -translate-y-1/2 z-30 flex h-9 w-9 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm hover:bg-blue-600 transition-colors border border-slate-700"
               title="รูปถัดไป (ลูกศรขวา)"
             >
-              <ChevronRight className="h-6 w-6" />
+              <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
             </button>
           </>
         )}
 
-        {/* Center container for the image */}
-        <div
-          className={`min-h-full min-w-full flex items-center justify-center p-4 ${
-            zoom > 1 || isActual1to1 ? 'p-12' : ''
-          }`}
-        >
-          <DrivePhotoImg
-            key={`${currentPhoto}_${currentIndex}`}
-            src={currentPhoto}
-            alt={`รูปถ่ายที่ ${currentIndex + 1}`}
-            highRes={true}
-            onLoad={(e) => {
-              const img = e.currentTarget;
-              if (img.naturalWidth && img.naturalHeight) {
-                setNaturalDimensions({
-                  width: img.naturalWidth,
-                  height: img.naturalHeight,
-                });
-                // Automatically enable sharpen filter if the stored file is low-res (<= 800px)
-                if (img.naturalWidth <= 800 && img.naturalHeight <= 800) {
-                  setEnableSharpen(true);
+        {/* Flex wrapper with m-auto child so all 4 edges remain scrollable when zoomed in */}
+        <div className="min-h-full min-w-full flex p-2 sm:p-6">
+          <div className="m-auto flex items-center justify-center">
+            <DrivePhotoImg
+              key={`${currentPhoto}_${currentIndex}`}
+              src={currentPhoto}
+              alt={`รูปถ่ายที่ ${currentIndex + 1}`}
+              highRes={true}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth && img.naturalHeight) {
+                  setNaturalDimensions({
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                  });
+                  if (img.naturalWidth <= 800 && img.naturalHeight <= 800) {
+                    setEnableSharpen(true);
+                  }
                 }
-              }
-            }}
-            className="rounded-lg shadow-2xl transition-all select-none"
-            style={computeImageStyle()}
-          />
+              }}
+              className="rounded-lg shadow-2xl select-none"
+              style={computeImageStyle()}
+            />
+          </div>
         </div>
 
-        {/* Drag Hint overlay when zoomed */}
-        {(zoom > 1 || isActual1to1) && (
-          <div className="pointer-events-none fixed bottom-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 rounded-full bg-slate-900/90 px-3.5 py-1 text-[11px] font-medium text-slate-300 border border-slate-700 shadow-xl backdrop-blur-xs">
-            <Move className="h-3 w-3 text-blue-400" />
-            <span>คลิกค้างแล้วลากเพื่อเลื่อนดูรอยซ่อม • หมุนล้อเมาส์พร้อมกด Ctrl เพื่อซูม</span>
-          </div>
-        )}
+        {/* Gesture Hint overlay */}
+        <div className="pointer-events-none fixed bottom-20 sm:bottom-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 rounded-full bg-slate-900/90 px-3 py-1 text-[10px] sm:text-[11px] font-medium text-slate-300 border border-slate-700 shadow-xl backdrop-blur-xs whitespace-nowrap">
+          <Move className="h-3 w-3 text-blue-400 shrink-0" />
+          <span>
+            {zoom > 1 || isActual1to1
+              ? 'ใช้นิ้วลากเพื่อเลื่อนดู • ถ่าง 2 นิ้วซูมเข้า/ออก • แตะ 2 ครั้งเพื่อรีเซ็ต'
+              : 'ถ่าง 2 นิ้วเพื่อซูมขยาย (Pinch to Zoom) • แตะ 2 ครั้งเพื่อซูมด่วน'}
+          </span>
+        </div>
       </div>
 
-      {/* 3. Floating Bottom Zoom & Tool Controls */}
-      <div className="z-20 border-t border-slate-800 bg-slate-900/95 px-3 py-2 sm:px-4 backdrop-blur-md shrink-0">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5">
+      {/* 3. Bottom Zoom & Tool Controls */}
+      <div className="z-20 border-t border-slate-800 bg-slate-900/95 px-2.5 py-2 sm:px-4 backdrop-blur-md shrink-0">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
           {/* Photo Counter */}
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span className="font-semibold text-white">
-              รูปที่ {currentIndex + 1} จาก {localPhotos.length}
+              รูปที่ {currentIndex + 1} / {localPhotos.length}
             </span>
             <span>•</span>
             <span className="font-mono text-emerald-400 font-bold">
@@ -627,12 +892,12 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (zoom === 1) setZoom(2);
-                else if (zoom === 2) setZoom(3);
+                if (zoom < 2) applyZoomAtPoint(2);
+                else if (zoom < 3.5) applyZoomAtPoint(3.5);
                 else handleResetZoom();
               }}
-              className="px-2.5 py-1 text-xs font-mono font-bold text-white hover:bg-slate-700 rounded-lg transition-colors min-w-[55px] text-center"
-              title="คลิกเพื่อสลับขนาดซูม (พอดีจอ / 200% / 300%)"
+              className="px-2 py-1 text-xs font-mono font-bold text-white hover:bg-slate-700 rounded-lg transition-colors min-w-[52px] text-center"
+              title="แตะเพื่อสลับระดับการซูม (100% / 200% / 350%)"
             >
               {zoomPercent}
             </button>
@@ -641,7 +906,7 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
             <button
               type="button"
               onClick={handleZoomIn}
-              disabled={zoom >= 6}
+              disabled={zoom >= MAX_ZOOM}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-colors"
               title="ซูมเข้า (+)"
             >
@@ -673,7 +938,7 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
                   ? 'bg-emerald-600 text-white font-semibold shadow-xs'
                   : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               }`}
-              title="แสดงขนาดจริงตามพิกเซลของภาพ (100% 1:1 Actual Size คมชัดสูงสุด ไม่แตก)"
+              title="แสดงขนาดขยาย 1:1 ตามพิกเซลภาพ"
             >
               ขนาดจริง (1:1)
             </button>
@@ -708,11 +973,18 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
           {localPhotos.length > 1 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-[260px] py-0.5">
               {localPhotos.map((pSrc, pIdx) => (
-                <button
+                <div
                   key={pIdx}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleSelectPhoto(pIdx)}
-                  className={`h-9 w-12 rounded border overflow-hidden transition-all shrink-0 ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectPhoto(pIdx);
+                    }
+                  }}
+                  className={`h-9 w-12 rounded border overflow-hidden transition-all shrink-0 cursor-pointer ${
                     pIdx === currentIndex
                       ? 'border-blue-500 ring-2 ring-blue-500/50 scale-105'
                       : 'border-slate-700 opacity-60 hover:opacity-100'
@@ -722,9 +994,9 @@ export const PhotoLightboxModal: React.FC<PhotoLightboxModalProps> = ({
                   <DrivePhotoImg
                     src={pSrc}
                     alt={`Thumbnail ${pIdx + 1}`}
-                    className="h-full w-full object-cover"
+                    className="h-9 w-12 object-cover"
                   />
-                </button>
+                </div>
               ))}
             </div>
           )}

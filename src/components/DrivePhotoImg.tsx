@@ -66,7 +66,9 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
   const [retryCount, setRetryCount] = useState<number>(0);
 
   const isCompactThumbnail =
-    /\bh-(7|8|9|10|11|12)\b/.test(className) || /\bw-(9|10|12|14|16)\b/.test(className);
+    /\bh-(7|8|9|10|11|12)\b/.test(className) ||
+    /\bw-(9|10|12|14|16)\b/.test(className) ||
+    alt.toLowerCase().includes('thumbnail');
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +108,7 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [trimmed, retryCount]);
+  }, [trimmed, retryCount, highRes]);
 
   if (isLoading) {
     if (isCompactThumbnail) {
@@ -186,18 +188,27 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2 pt-0.5">
-          <button
-            type="button"
+          <span
+            role="button"
+            tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
               clearFailedDriveImageCache();
               setRetryCount((c) => c + 1);
             }}
-            className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                clearFailedDriveImageCache();
+                setRetryCount((c) => c + 1);
+              }
+            }}
+            className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
             <RefreshCw className="h-2.5 w-2.5" />
             <span>ลองดึงรูปจาก Drive อีกครั้ง</span>
-          </button>
+          </span>
         </div>
       </div>
     );
