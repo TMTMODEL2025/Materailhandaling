@@ -615,6 +615,40 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: 'Sheet ฐานข้อมูลหาง not found or empty trailerNumber' });
     }
 
+    if (action === 'updateTireStock') {
+      var sheet = ss.getSheetByName('STOCK ยาง');
+      if (!sheet) {
+        return jsonResponse({ ok: false, error: 'Sheet STOCK ยาง not found' });
+      }
+      var lastRow = sheet.getLastRow();
+      var targetRow = Number(body.rowNumber) || 0;
+      var tireCode = String(body.tireCode || '').trim();
+
+      if (tireCode && lastRow >= 2) {
+        var checkData = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+        for (var i = 0; i < checkData.length; i++) {
+          var rowCode = String(checkData[i][0] || '').trim();
+          if (rowCode === tireCode) {
+            targetRow = i + 2;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2) {
+        sheet.getRange(targetRow, 4, 1, 3).setValues([[
+          Number(body.receivedQty) || 0,
+          Number(body.issuedQty) || 0,
+          Number(body.balanceQty) || 0
+        ]]);
+        sheet.getRange(targetRow, 14, 1, 2).setValues([[
+          String(body.alertText || '').trim(),
+          String(body.updateNote || '').trim()
+        ]]);
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -1712,6 +1746,19 @@ interface StoredFuelRecord {
   syncedToSheet?: boolean;
 }
 
+export interface StoredTireStockEdit {
+  rowNumber: number;
+  tireCode: string;
+  tireName: string;
+  receivedQty: number;
+  issuedQty: number;
+  balanceQty: number;
+  alertText: string;
+  updateNote: string;
+  updatedAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -1727,6 +1774,7 @@ interface MutationsStore {
   repairReplyEdits: StoredRepairReplyEdit[];
   repairFinancialEdits: StoredRepairFinancialEdit[];
   fuelRecords: StoredFuelRecord[];
+  tireStockEdits: StoredTireStockEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -1745,6 +1793,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairReplyEdits: [],
     repairFinancialEdits: [],
     fuelRecords: [],
+    tireStockEdits: [],
   };
 }
 
@@ -1828,6 +1877,9 @@ function readLocalMutationsStore(): MutationsStore {
       repairFinancialEdits,
       fuelRecords: Array.isArray(parsed.fuelRecords)
         ? parsed.fuelRecords
+        : [],
+      tireStockEdits: Array.isArray(parsed.tireStockEdits)
+        ? parsed.tireStockEdits
         : [],
     };
   } catch {
@@ -2077,6 +2129,18 @@ async function fetchCombinedMutationsStore(
         );
       });
 
+      const mergedTireMap = new Map<string, StoredTireStockEdit>();
+      (remote.tireStockEdits ?? []).forEach((t) =>
+        mergedTireMap.set(t.tireCode || String(t.rowNumber), t)
+      );
+      (local.tireStockEdits ?? []).forEach((t) => {
+        const key = t.tireCode || String(t.rowNumber);
+        const existing = mergedTireMap.get(key);
+        if (!existing || new Date(t.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+          mergedTireMap.set(key, t);
+        }
+      });
+
       return {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -2092,6 +2156,7 @@ async function fetchCombinedMutationsStore(
         repairReplyEdits: Array.from(mergedReplyEditMap.values()),
         repairFinancialEdits: Array.from(mergedFinancialEditMap.values()),
         fuelRecords: Array.from(mergedFuelMap.values()),
+        tireStockEdits: Array.from(mergedTireMap.values()),
       };
   } catch {
     // ignore fetch error on static hosting
@@ -3325,6 +3390,29 @@ export async function fetchSheetTabData(
           values: { ...fuel.values },
           rawValues: { ...fuel.values },
         });
+      }
+    }
+  } else if (tab.gid === '1031154414') {
+    for (const tireEdit of mutationsStore.tireStockEdits ?? []) {
+      const target = parsedRows.find(
+        (r) =>
+          (tireEdit.tireCode &&
+            (r.values['A'] ?? '').trim() === tireEdit.tireCode.trim()) ||
+          (tireEdit.rowNumber > 0 && r.rowNumber === tireEdit.rowNumber)
+      );
+      if (target) {
+        target.values['D'] = String(tireEdit.receivedQty);
+        target.rawValues['D'] = tireEdit.receivedQty;
+        target.values['E'] = String(tireEdit.issuedQty);
+        target.rawValues['E'] = tireEdit.issuedQty;
+        target.values['F'] = String(tireEdit.balanceQty);
+        target.rawValues['F'] = tireEdit.balanceQty;
+        target.values['N'] = tireEdit.alertText;
+        target.rawValues['N'] = tireEdit.alertText;
+        if (tireEdit.updateNote) {
+          target.values['O'] = tireEdit.updateNote;
+          target.rawValues['O'] = tireEdit.updateNote;
+        }
       }
     }
   }
@@ -5472,4 +5560,287 @@ export async function appendTrailerRecord(trailerNumber: string): Promise<void> 
     }
   }
 }
+
+export function extractTireSafetyStock(row: SheetRow): number {
+  const minRaw = row.rawValues['L'];
+  if (typeof minRaw === 'number' && !Number.isNaN(minRaw) && minRaw > 0) {
+    return minRaw;
+  }
+  const minStr = (row.values['L'] ?? '').replace(/,/g, '').trim();
+  const parsedMin = parseFloat(minStr);
+  if (!Number.isNaN(parsedMin) && parsedMin > 0) {
+    return parsedMin;
+  }
+
+  const noteStr = (row.values['K'] ?? '').trim();
+  if (noteStr) {
+    const match = noteStr.match(/(?:saftystock|safety\s*stock|ควรมีติดไว้)\s*(\d+)/i);
+    if (match && match[1]) {
+      const num = parseInt(match[1], 10);
+      if (!Number.isNaN(num) && num > 0) {
+        return num;
+      }
+    }
+  }
+  return 0;
+}
+
+export function parseTireNumericCell(row: SheetRow, colId: string): number {
+  const raw = row.rawValues[colId];
+  if (typeof raw === 'number' && !Number.isNaN(raw)) {
+    return raw;
+  }
+  const str = String(row.values[colId] ?? '').replace(/,/g, '').trim();
+  const parsed = parseFloat(str);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+export function computeTireAlertText(
+  balance: number,
+  safetyStock: number,
+  existingAlert?: string
+): string {
+  if (balance <= 0) {
+    return 'สินค้าหมดสต็อก (ยอดคงเหลือ 0 ชิ้น)';
+  }
+  if (safetyStock > 0 && balance <= safetyStock) {
+    return `อะไหล่เหลือน้อยยอดตอนนี้ ${balance} ชิ้น`;
+  }
+  if (safetyStock > 0 && balance > safetyStock) {
+    return '';
+  }
+  return (existingAlert ?? '').trim();
+}
+
+export function isTireLowStock(row: SheetRow): boolean {
+  const balance = parseTireNumericCell(row, 'F');
+  const safetyStock = extractTireSafetyStock(row);
+  const alertText = (row.values['N'] ?? '').trim();
+
+  if (balance <= 0) return true;
+  if (safetyStock > 0 && balance <= safetyStock) return true;
+  if (safetyStock > 0 && balance > safetyStock) return false;
+  return Boolean(alertText);
+}
+
+export async function updateTireStockTransaction(params: {
+  rowNumber: number;
+  tireCode: string;
+  tireName: string;
+  transactionType: 'IN' | 'OUT';
+  quantity: number;
+  currentReceived: number;
+  currentIssued: number;
+  currentBalance: number;
+  safetyStock: number;
+  existingAlert?: string;
+  vehicleRegistration?: string;
+  wheelPositionOrNote?: string;
+}): Promise<{
+  receivedQty: number;
+  issuedQty: number;
+  balanceQty: number;
+  alertText: string;
+  updateNote: string;
+  syncedToSheet: boolean;
+}> {
+  const qty = Math.max(1, Math.round(params.quantity));
+  const receivedQty =
+    params.transactionType === 'IN'
+      ? params.currentReceived + qty
+      : params.currentReceived;
+  const issuedQty =
+    params.transactionType === 'OUT'
+      ? params.currentIssued + qty
+      : params.currentIssued;
+  const balanceQty =
+    params.transactionType === 'IN'
+      ? params.currentBalance + qty
+      : Math.max(0, params.currentBalance - qty);
+
+  const alertText = computeTireAlertText(
+    balanceQty,
+    params.safetyStock,
+    params.existingAlert
+  );
+
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(now.getFullYear() + 543);
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+
+  const vehPart = params.vehicleRegistration?.trim()
+    ? ` รถ: ${params.vehicleRegistration.trim()}`
+    : '';
+  const notePart = params.wheelPositionOrNote?.trim()
+    ? ` (${params.wheelPositionOrNote.trim()})`
+    : '';
+  const actionLabel =
+    params.transactionType === 'IN' ? `รับเข้า +${qty} เส้น` : `เบิกออก -${qty} เส้น`;
+  const updateNote = `${dd}/${mm}/${yyyy} ${hh}:${min} • ${actionLabel}${vehPart}${notePart}`;
+
+  let syncedToSheet = false;
+
+  // 1. Update local store immediately
+  const localStore = readLocalMutationsStore();
+  if (!localStore.tireStockEdits) {
+    localStore.tireStockEdits = [];
+  }
+  const code = params.tireCode.trim();
+  const existingIdx = localStore.tireStockEdits.findIndex(
+    (item) =>
+      (code && item.tireCode.trim() === code) ||
+      (params.rowNumber > 0 && item.rowNumber === params.rowNumber)
+  );
+  const entry: StoredTireStockEdit = {
+    rowNumber: params.rowNumber,
+    tireCode: code,
+    tireName: params.tireName.trim(),
+    receivedQty,
+    issuedQty,
+    balanceQty,
+    alertText,
+    updateNote,
+    updatedAt: new Date().toISOString(),
+    syncedToSheet: false,
+  };
+  if (existingIdx >= 0) {
+    localStore.tireStockEdits[existingIdx] = entry;
+  } else {
+    localStore.tireStockEdits.push(entry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Try Google Apps Script Webhook
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'updateTireStock',
+        rowNumber: params.rowNumber,
+        tireCode: code,
+        receivedQty,
+        issuedQty,
+        balanceQty,
+        alertText,
+        updateNote,
+      });
+      if (res.ok !== false) {
+        syncedToSheet = true;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // 3. Try Google Sheets REST API v4 if OAuth token is connected
+  if (!syncedToSheet && params.rowNumber >= 2) {
+    const token = await getOrConnectAccessToken(false);
+    if (token) {
+      try {
+        const range1 = encodeURIComponent(`STOCK ยาง!D${params.rowNumber}:F${params.rowNumber}`);
+        const url1 = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range1}?valueInputOption=USER_ENTERED`;
+        const res1 = await fetch(url1, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[receivedQty, issuedQty, balanceQty]],
+          }),
+        });
+
+        const range2 = encodeURIComponent(`STOCK ยาง!N${params.rowNumber}:O${params.rowNumber}`);
+        const url2 = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range2}?valueInputOption=USER_ENTERED`;
+        await fetch(url2, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[alertText, updateNote]],
+          }),
+        });
+
+        if (res1.ok) {
+          syncedToSheet = true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (syncedToSheet) {
+    entry.syncedToSheet = true;
+    writeLocalMutationsStore(localStore);
+  }
+
+  // 4. Sync to backend store & clear server sheetProxyCache
+  try {
+    await fetch('/api/mutations/tire-stock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...entry,
+        syncedToSheet,
+      }),
+    });
+  } catch {
+    // ignore on static hosting
+  }
+
+  return {
+    receivedQty,
+    issuedQty,
+    balanceQty,
+    alertText,
+    updateNote,
+    syncedToSheet,
+  };
+}
+
+let cachedVehiclesAndTrailers: string[] | null = null;
+let cachedVehiclesAndTrailersAt = 0;
+
+export async function fetchVehicleAndTrailerList(): Promise<string[]> {
+  if (
+    cachedVehiclesAndTrailers &&
+    cachedVehiclesAndTrailers.length > 0 &&
+    Date.now() - cachedVehiclesAndTrailersAt < 60_000
+  ) {
+    return cachedVehiclesAndTrailers;
+  }
+
+  const [vehRes, trailerRes] = await Promise.allSettled([
+    queryGviz('378250263', 'select A where A is not null limit 500'),
+    queryGviz('1295975917', 'select A where A is not null limit 500'),
+  ]);
+
+  const set = new Set<string>();
+  if (vehRes.status === 'fulfilled' && vehRes.value?.table?.rows) {
+    for (const r of vehRes.value.table.rows) {
+      const val = formatGvizCellValue(r.c?.[0]).trim();
+      if (val && val !== '-') set.add(val);
+    }
+  }
+  if (trailerRes.status === 'fulfilled' && trailerRes.value?.table?.rows) {
+    for (const r of trailerRes.value.table.rows) {
+      const val = formatGvizCellValue(r.c?.[0]).trim();
+      if (val && val !== '-') set.add(val);
+    }
+  }
+
+  const list = Array.from(set).sort((a, b) => a.localeCompare(b, 'th'));
+  if (list.length > 0) {
+    cachedVehiclesAndTrailers = list;
+    cachedVehiclesAndTrailersAt = Date.now();
+  }
+  return list;
+}
+
 

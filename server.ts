@@ -163,6 +163,19 @@ interface StoredFuelRecord {
   syncedToSheet?: boolean;
 }
 
+interface StoredTireStockEdit {
+  rowNumber: number;
+  tireCode: string;
+  tireName: string;
+  receivedQty: number;
+  issuedQty: number;
+  balanceQty: number;
+  alertText: string;
+  updateNote: string;
+  updatedAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -178,6 +191,7 @@ interface MutationsStore {
   repairReplyEdits: StoredRepairReplyEdit[];
   repairFinancialEdits: StoredRepairFinancialEdit[];
   fuelRecords: StoredFuelRecord[];
+  tireStockEdits: StoredTireStockEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -237,6 +251,7 @@ function readStore(): MutationsStore {
           ? parsed.repairFinancialEdits.filter((f) => isRecentMutation(f.updatedAt))
           : [],
         fuelRecords: Array.isArray(parsed.fuelRecords) ? parsed.fuelRecords : [],
+        tireStockEdits: Array.isArray(parsed.tireStockEdits) ? parsed.tireStockEdits : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -283,6 +298,7 @@ function readStore(): MutationsStore {
     repairReplyEdits: [],
     repairFinancialEdits: [],
     fuelRecords: [],
+    tireStockEdits: [],
     pushSubscriptions: [],
     notifiedRepairKeys: [],
   };
@@ -1555,6 +1571,56 @@ async function startServer() {
 
     writeStore(store);
     res.json({ ok: true, id: recId, rowNumber: rn });
+  });
+
+  app.post('/api/mutations/tire-stock', (req, res) => {
+    const store = readStore();
+    const {
+      rowNumber,
+      tireCode,
+      tireName,
+      receivedQty,
+      issuedQty,
+      balanceQty,
+      alertText,
+      updateNote,
+      syncedToSheet,
+    } = req.body ?? {};
+
+    const code = String(tireCode ?? '').trim();
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+
+    if (!store.tireStockEdits) {
+      store.tireStockEdits = [];
+    }
+
+    const existingIdx = store.tireStockEdits.findIndex(
+      (item) =>
+        (code && item.tireCode.trim() === code) || (rn > 0 && item.rowNumber === rn)
+    );
+
+    const entry: StoredTireStockEdit = {
+      rowNumber: rn,
+      tireCode: code,
+      tireName: String(tireName ?? '').trim(),
+      receivedQty: Number(receivedQty) || 0,
+      issuedQty: Number(issuedQty) || 0,
+      balanceQty: Number(balanceQty) || 0,
+      alertText: String(alertText ?? '').trim(),
+      updateNote: String(updateNote ?? '').trim(),
+      updatedAt: new Date().toISOString(),
+      syncedToSheet: Boolean(syncedToSheet),
+    };
+
+    if (existingIdx >= 0) {
+      store.tireStockEdits[existingIdx] = entry;
+    } else {
+      store.tireStockEdits.push(entry);
+    }
+
+    sheetProxyCache.clear();
+    writeStore(store);
+    res.json({ ok: true, edit: entry });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

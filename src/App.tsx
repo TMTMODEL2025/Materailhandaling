@@ -36,6 +36,11 @@ import {
   Users,
   MapPin,
   BarChart3,
+  AlertTriangle,
+  PackagePlus,
+  PackageMinus,
+  Disc,
+  ChevronsUpDown,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -52,6 +57,9 @@ import {
   isPhotoValue,
   flushPendingMutationsToGoogleSheet,
   completeJobTransferRecord,
+  extractTireSafetyStock,
+  parseTireNumericCell,
+  isTireLowStock,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -67,6 +75,7 @@ import { RepairRequestModal } from './components/RepairRequestModal';
 import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
+import { TireStockModal } from './components/TireStockModal';
 import { FuelCharts } from './components/FuelCharts';
 import { JobTransferStatsView } from './components/JobTransferStatsView';
 import { EmployeeManagementView } from './components/EmployeeManagementView';
@@ -274,6 +283,13 @@ function getRowVehicleShift(row: SheetRow, columns?: SheetColumn[]): string {
   const raw = (shiftCol ? row.values[shiftCol.id] : row.values['L']) ?? row.values['L'] ?? '';
   const trimmed = raw.trim();
   return trimmed ? `กะ: ${trimmed}` : 'ไม่ระบุกะทำงาน';
+}
+
+function getRowTireItemGroup(row: SheetRow, columns?: SheetColumn[]): string {
+  const itemCol = columns?.find((c) => c.label.trim() === 'รายการ' || c.id === 'B');
+  const raw = (itemCol ? row.values[itemCol.id] : row.values['B']) ?? row.values['B'] ?? '';
+  const normalized = raw.trim().replace(/\s+/g, ' ');
+  return normalized || 'ไม่ระบุรายการยาง';
 }
 
 function getRowFuelStatus(row: SheetRow, columns?: SheetColumn[]): string {
@@ -495,6 +511,10 @@ export default function App() {
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
   const [isFuelModalOpen, setIsFuelModalOpen] = useState<boolean>(false);
+  const [isTireModalOpen, setIsTireModalOpen] = useState<boolean>(false);
+  const [tireModalInitType, setTireModalInitType] = useState<'IN' | 'OUT'>('OUT');
+  const [tireModalInitCode, setTireModalInitCode] = useState<string>('');
+  const [tireLowStockOnly, setTireLowStockOnly] = useState<boolean>(false);
   const [isRepairModalOpen, setIsRepairModalOpen] = useState<boolean>(false);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
@@ -917,6 +937,7 @@ function playNotificationChime() {
     setDeepSearchTerm('');
     setSelectedColumnId('ALL');
     setQuickFilterValue('ALL');
+    setTireLowStockOnly(false);
     setStartDateFilter('');
     setEndDateFilter('');
     setSortConfig(null);
@@ -1198,6 +1219,12 @@ function playNotificationChime() {
         }
       }
 
+      if (activeTab.gid === '1031154414' && tireLowStockOnly) {
+        if (!isTireLowStock(row)) {
+          return false;
+        }
+      }
+
       if (!q) return true;
 
       if (selectedColumnId !== 'ALL') {
@@ -1219,6 +1246,8 @@ function playNotificationChime() {
     quickFilterColumn,
     startDateFilter,
     endDateFilter,
+    activeTab.gid,
+    tireLowStockOnly,
   ]);
 
   // Sort filtered rows
@@ -1282,7 +1311,8 @@ function playNotificationChime() {
       activeTab.gid !== '944294225' &&
       activeTab.gid !== '606634465' &&
       activeTab.gid !== '378250263' &&
-      activeTab.gid !== '1733355146'
+      activeTab.gid !== '1733355146' &&
+      activeTab.gid !== '1031154414'
     ) {
       return null;
     }
@@ -1295,6 +1325,8 @@ function playNotificationChime() {
           ? getRowVehicleShift(row, sheetData?.columns)
           : activeTab.gid === '1733355146'
           ? getRowFuelStatus(row, sheetData?.columns)
+          : activeTab.gid === '1031154414'
+          ? getRowTireItemGroup(row, sheetData?.columns)
           : getRowJobTransferStatus(row, sheetData?.columns);
       if (!tempGroups.has(status)) {
         tempGroups.set(status, []);
@@ -1381,7 +1413,9 @@ function playNotificationChime() {
           if (activeTab.gid === '1733355146' && hasDateFilter) {
             next[status] = false; // Auto-expand fuel table groups when date filter is active
           } else if (next[status] === undefined) {
-            next[status] = activeTab.gid === '1733355146'; // collapsed by default for fuel tab, expanded for job transfer/repair
+            // Default to collapsed (true) for fuel tab and STOCK ยาง tab
+            next[status] =
+              activeTab.gid === '1733355146' || activeTab.gid === '1031154414';
           }
         });
         return next;
@@ -1872,6 +1906,68 @@ function playNotificationChime() {
     };
   }, [sheetData, filteredRows, activeTab.gid]);
 
+  // Real-time KPI summary metrics specifically for STOCK ยาง (gid: 1031154414)
+  const tireStockKpiMetrics = useMemo(() => {
+    if (activeTab.gid !== '1031154414') {
+      return {
+        totalItemsCount: 0,
+        uniqueGroupsCount: 0,
+        totalCarryForward: 0,
+        totalReceived: 0,
+        totalIssued: 0,
+        totalBalance: 0,
+        lowStockCount: 0,
+        outOfStockCount: 0,
+        lowOnlyCount: 0,
+      };
+    }
+
+    const itemGroups = new Set<string>();
+    let totalCarryForward = 0;
+    let totalReceived = 0;
+    let totalIssued = 0;
+    let totalBalance = 0;
+    let lowStockCount = 0;
+    let outOfStockCount = 0;
+    let lowOnlyCount = 0;
+
+    filteredRows.forEach((r) => {
+      const groupName = getRowTireItemGroup(r, sheetData?.columns);
+      if (groupName) itemGroups.add(groupName);
+
+      const carryVal = parseTireNumericCell(r, 'C');
+      const recVal = parseTireNumericCell(r, 'D');
+      const issVal = parseTireNumericCell(r, 'E');
+      const balVal = parseTireNumericCell(r, 'F');
+
+      totalCarryForward += carryVal;
+      totalReceived += recVal;
+      totalIssued += issVal;
+      totalBalance += balVal;
+
+      if (isTireLowStock(r)) {
+        lowStockCount += 1;
+        if (balVal <= 0) {
+          outOfStockCount += 1;
+        } else {
+          lowOnlyCount += 1;
+        }
+      }
+    });
+
+    return {
+      totalItemsCount: filteredRows.length,
+      uniqueGroupsCount: itemGroups.size,
+      totalCarryForward,
+      totalReceived,
+      totalIssued,
+      totalBalance,
+      lowStockCount,
+      outOfStockCount,
+      lowOnlyCount,
+    };
+  }, [sheetData, filteredRows, activeTab.gid]);
+
   const handleSort = (colId: string) => {
     setSortConfig((prev) => {
       if (!prev || prev.colId !== colId) {
@@ -1895,6 +1991,7 @@ function playNotificationChime() {
     setSearchQuery('');
     setSelectedColumnId('ALL');
     setQuickFilterValue('ALL');
+    setTireLowStockOnly(false);
     setStartDateFilter('');
     setEndDateFilter('');
     if (deepSearchTerm !== '') {
@@ -2190,6 +2287,28 @@ function playNotificationChime() {
                       </button>
                     </div>
                   )}
+
+                  {/* เมนูย่อยของ STOCK ยาง */}
+                  {tab.gid === '1031154414' && (
+                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSidebarOpen(false);
+                          if (activeTab.gid !== '1031154414') {
+                            handleSelectTab(tab);
+                          }
+                          setTireModalInitType('OUT');
+                          setTireModalInitCode('');
+                          setIsTireModalOpen(true);
+                        }}
+                        className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-emerald-600 shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="truncate">+ บันทึกรับเข้า-เบิกออกยาง</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2309,6 +2428,21 @@ function playNotificationChime() {
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
+              </button>
+            )}
+
+            {activeTab.gid === '1031154414' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTireModalInitType('OUT');
+                  setTireModalInitCode('');
+                  setIsTireModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>+ บันทึกรับเข้า-เบิกออกยาง</span>
               </button>
             )}
 
@@ -3105,6 +3239,175 @@ function playNotificationChime() {
                 </div>
               </div>
             </div>
+          ) : activeTab.gid === '1031154414' ? (
+            <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+                {/* Card 1: รายการยางทั้งหมด */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-sky-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        รายการยางทั้งหมด
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : tireStockKpiMetrics.totalItemsCount.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-sky-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200/70 bg-sky-500/10 text-sky-700 backdrop-blur-sm">
+                      <Disc className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    แบ่งเป็น{' '}
+                    <span className="font-sans font-bold tracking-tight text-sky-700 tabular-nums">
+                      {tireStockKpiMetrics.uniqueGroupsCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    กลุ่มขนาดยาง
+                  </div>
+                </div>
+
+                {/* Card 2: ยอดคงเหลือรวมในคลัง */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ยอดคงเหลือรวมในคลัง
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-emerald-700 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : tireStockKpiMetrics.totalBalance.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
+                          เส้น/ชิ้น
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    ยอดยกมารวม{' '}
+                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
+                      {tireStockKpiMetrics.totalCarryForward.toLocaleString('th-TH')}
+                    </span>{' '}
+                    เส้น/ชิ้น
+                  </div>
+                </div>
+
+                {/* Card 3: ยอดรับเข้า / เบิกออกสะสม */}
+                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md flex flex-col justify-between">
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-indigo-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-slate-600">
+                        ยอดรับเข้า / เบิกออกสะสม
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-baseline gap-2 font-sans tabular-nums">
+                        <span className="text-lg sm:text-xl font-extrabold text-emerald-700">
+                          +{tireStockKpiMetrics.totalReceived.toLocaleString('th-TH')}
+                        </span>
+                        <span className="text-slate-300 font-bold">/</span>
+                        <span className="text-lg sm:text-xl font-extrabold text-amber-700">
+                          -{tireStockKpiMetrics.totalIssued.toLocaleString('th-TH')}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-500">เส้น</span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-200/70 bg-indigo-500/10 text-indigo-700 backdrop-blur-sm">
+                      <Repeat className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
+                    รับเข้า{' '}
+                    <span className="font-bold text-emerald-700 tabular-nums">
+                      {tireStockKpiMetrics.totalReceived.toLocaleString('th-TH')}
+                    </span>{' '}
+                    · เบิกใช้{' '}
+                    <span className="font-bold text-amber-700 tabular-nums">
+                      {tireStockKpiMetrics.totalIssued.toLocaleString('th-TH')}
+                    </span>{' '}
+                    เส้น
+                  </div>
+                </div>
+
+                {/* Card 4: รายการแจ้งเตือนสต็อกต่ำ / หมดสต็อก (คลิกเพื่อกรองได้) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !tireLowStockOnly;
+                    setTireLowStockOnly(nextVal);
+                    if (nextVal && repairGroupedRows) {
+                      const expandedMap: Record<string, boolean> = {};
+                      repairGroupedRows.forEach((_, key) => {
+                        expandedMap[key] = false;
+                      });
+                      setCollapsedGroups(expandedMap);
+                    }
+                  }}
+                  className={`group relative overflow-hidden rounded-2xl border px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm transition-all duration-200 text-left flex flex-col justify-between cursor-pointer ${
+                    tireLowStockOnly
+                      ? 'border-red-500 bg-red-50/95 ring-2 ring-red-500/30 shadow-md'
+                      : tireStockKpiMetrics.lowStockCount > 0
+                      ? 'border-amber-300/80 bg-white/85 hover:bg-amber-50/50 ring-1 ring-amber-200/60 hover:shadow-md'
+                      : 'border-white/60 bg-white/80 ring-1 ring-slate-200/50 hover:bg-white/90 hover:shadow-md'
+                  }`}
+                >
+                  <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-rose-400/15 blur-xl transition-opacity group-hover:opacity-100" />
+                  <div className="flex items-start justify-between gap-2 w-full">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-xs font-semibold text-slate-700">
+                          แจ้งเตือนสต็อกต่ำ / หมดสต็อก
+                        </span>
+                        {tireLowStockOnly && (
+                          <span className="rounded-full bg-red-600 px-1.5 py-0.2 text-[10px] font-bold text-white shrink-0">
+                            กำลังกรอง
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex items-baseline gap-1.5 font-sans text-xl font-extrabold tracking-tight text-rose-700 sm:text-2xl tabular-nums">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : tireStockKpiMetrics.lowStockCount.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-xs font-semibold tracking-normal text-rose-700">
+                          รายการ
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-200/70 bg-rose-500/10 text-rose-700 backdrop-blur-sm">
+                      <AlertTriangle className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-600 w-full">
+                    หมดสต็อก{' '}
+                    <span className="font-bold text-red-600 tabular-nums">
+                      {tireStockKpiMetrics.outOfStockCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    · สต็อกต่ำ{' '}
+                    <span className="font-bold text-amber-700 tabular-nums">
+                      {tireStockKpiMetrics.lowOnlyCount.toLocaleString('th-TH')}
+                    </span>{' '}
+                    <span className="underline decoration-dotted text-slate-500 ml-1">
+                      ({tireLowStockOnly ? 'คลิกแสดงทั้งหมด' : 'คลิกเพื่อกรอง'})
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
               <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
@@ -3249,6 +3552,86 @@ function playNotificationChime() {
 
           {/* Main Data Table Card */}
           <div className="mt-2.5 sm:mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {/* Toolbar on top of STOCK ยาง table */}
+            {activeTab.gid === '1031154414' && (
+              <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 sm:px-4">
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+                  <div className="relative flex-1 min-w-[200px] max-w-sm">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="ค้นหารหัสยาง, รายการขนาดยาง, ยี่ห้อ, ทะเบียนรถ..."
+                      className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none shadow-2xs"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTireLowStockOnly((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors whitespace-nowrap ${
+                      tireLowStockOnly
+                        ? 'border-red-600 bg-red-600 text-white shadow-2xs'
+                        : 'border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100'
+                    }`}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      เฉพาะสต็อกต่ำ/หมด ({tireStockKpiMetrics.lowStockCount})
+                    </span>
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {repairGroupedRows && repairGroupedRows.size > 0 && (() => {
+                    const groupKeys = Array.from(repairGroupedRows.keys());
+                    const areAllExpanded = groupKeys.every(
+                      (k) => collapsedGroups[k] === false
+                    );
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextState: Record<string, boolean> = {};
+                          groupKeys.forEach((k) => {
+                            nextState[k] = areAllExpanded;
+                          });
+                          setCollapsedGroups(nextState);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition-colors whitespace-nowrap"
+                      >
+                        <ChevronsUpDown className="h-3.5 w-3.5 text-slate-500" />
+                        <span>{areAllExpanded ? 'ย่อทั้งหมด' : 'กางทั้งหมด'}</span>
+                      </button>
+                    );
+                  })()}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTireModalInitType('OUT');
+                      setTireModalInitCode('');
+                      setIsTireModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition-colors whitespace-nowrap"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-amber-300" />
+                    <span>+ บันทึกรับเข้า-เบิกออกยาง</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
@@ -3335,6 +3718,11 @@ function playNotificationChime() {
                         เพิ่มเติม
                       </th>
                     )}
+                    {activeTab.gid === '1031154414' && (
+                      <th className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap">
+                        รับเข้า / เบิกออก
+                      </th>
+                    )}
                   </tr>
                 </thead>
 
@@ -3414,19 +3802,24 @@ function playNotificationChime() {
                 ) : (activeTab.gid === '944294225' ||
                     activeTab.gid === '606634465' ||
                     activeTab.gid === '378250263' ||
-                    activeTab.gid === '1733355146') &&
+                    activeTab.gid === '1733355146' ||
+                    activeTab.gid === '1031154414') &&
                   repairGroupedRows ? (
                   Array.from(repairGroupedRows.entries()).map(([status, rows]) => {
                     const isCollapsed = collapsedGroups[status] ?? true;
                     const colSpan =
                       (sheetData?.columns.length ?? 5) +
-                      (activeTab.gid === '378250263'
+                      (activeTab.gid === '378250263' || activeTab.gid === '1031154414'
                         ? 2
                         : activeTab.gid === '944294225' || activeTab.gid === '1733355146'
                         ? 0
                         : 1);
                     const groupPageSize =
-                      activeTab.gid === '378250263' || activeTab.gid === '1733355146' ? 50 : 15;
+                      activeTab.gid === '378250263' ||
+                      activeTab.gid === '1733355146' ||
+                      activeTab.gid === '1031154414'
+                        ? 50
+                        : 15;
                     const currentGroupPage = groupPages[status] ?? 1;
                     const groupTotalPages = Math.max(1, Math.ceil(rows.length / groupPageSize));
                     const paginatedGroupRows = rows.slice(
@@ -3447,6 +3840,30 @@ function playNotificationChime() {
                       rows.length > 0 &&
                       selectedInGroupRows.length === rows.length;
 
+                    const isTireTabGroup = activeTab.gid === '1031154414';
+                    const tireGroupStats = isTireTabGroup
+                      ? rows.reduce(
+                          (acc, r) => {
+                            const rec = parseTireNumericCell(r, 'D');
+                            const iss = parseTireNumericCell(r, 'E');
+                            const bal = parseTireNumericCell(r, 'F');
+                            const low = isTireLowStock(r);
+                            acc.received += rec;
+                            acc.issued += iss;
+                            acc.balance += bal;
+                            if (low) acc.lowCount += 1;
+                            if (bal <= 0) acc.outCount += 1;
+                            return acc;
+                          },
+                          { received: 0, issued: 0, balance: 0, lowCount: 0, outCount: 0 }
+                        )
+                      : null;
+                    const primaryTireRowInGroup = isTireTabGroup ? rows[0] : null;
+                    const primaryTireCode = primaryTireRowInGroup
+                      ? (primaryTireRowInGroup.values['A'] ?? '').trim() ||
+                        `ROW-${primaryTireRowInGroup.rowNumber}`
+                      : '';
+
                     return (
                       <React.Fragment key={status}>
                         <tr
@@ -3456,14 +3873,22 @@ function playNotificationChime() {
                               [status]: !isCollapsed,
                             }))
                           }
-                          className={`cursor-pointer font-semibold transition-all duration-150 select-none ${groupTheme.rowClass}`}
+                          className={`cursor-pointer font-semibold transition-all duration-150 select-none ${
+                            isTireTabGroup && tireGroupStats && tireGroupStats.lowCount > 0
+                              ? 'bg-gradient-to-r from-amber-500/15 via-rose-500/10 to-slate-50 hover:from-amber-500/25 border-y border-amber-300/80'
+                              : groupTheme.rowClass
+                          }`}
                         >
                           <td colSpan={colSpan} className="px-3 py-2.5 sm:px-4 sm:py-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex flex-wrap items-center gap-2.5">
+                              <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
                                 <button
                                   type="button"
-                                  className={`flex h-6 w-6 items-center justify-center rounded-lg transition-transform duration-150 ${groupTheme.chevronClass}`}
+                                  className={`flex h-6 w-6 items-center justify-center rounded-lg transition-transform duration-150 ${
+                                    isTireTabGroup && tireGroupStats && tireGroupStats.lowCount > 0
+                                      ? 'bg-amber-600 text-white shadow-xs'
+                                      : groupTheme.chevronClass
+                                  }`}
                                 >
                                   {isCollapsed ? (
                                     <ChevronRight className="h-4 w-4" />
@@ -3479,8 +3904,42 @@ function playNotificationChime() {
                                 <span
                                   className={`rounded-lg px-2.5 py-0.5 font-sans text-[11px] font-bold tracking-tight tabular-nums ${groupTheme.countClass}`}
                                 >
-                                  {rows.length.toLocaleString('th-TH')} รายการ
+                                  {rows.length.toLocaleString('th-TH')}{' '}
+                                  {isTireTabGroup ? 'รายการย่อย' : 'รายการ'}
                                 </span>
+
+                                {isTireTabGroup && tireGroupStats && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50/90 px-2 py-0.5 font-mono text-[11px] font-bold text-emerald-800 tabular-nums">
+                                      รับเข้า: +{tireGroupStats.received.toLocaleString('th-TH')}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50/90 px-2 py-0.5 font-mono text-[11px] font-bold text-amber-800 tabular-nums">
+                                      เบิก: -{tireGroupStats.issued.toLocaleString('th-TH')}
+                                    </span>
+                                    <span
+                                      className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-0.5 font-mono text-[11px] font-extrabold tabular-nums ${
+                                        tireGroupStats.balance <= 0
+                                          ? 'border-red-300 bg-red-100 text-red-800'
+                                          : tireGroupStats.lowCount > 0
+                                          ? 'border-amber-300 bg-amber-100 text-amber-900'
+                                          : 'border-slate-300 bg-white text-slate-900'
+                                      }`}
+                                    >
+                                      คงเหลือ: {tireGroupStats.balance.toLocaleString('th-TH')} เส้น
+                                    </span>
+
+                                    {tireGroupStats.lowCount > 0 && (
+                                      <span className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-600 px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        <span>
+                                          {tireGroupStats.outCount > 0
+                                            ? 'หมดสต็อก / สต็อกต่ำ'
+                                            : 'สต็อกต่ำ'}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
 
                                 {isJobTransferInTransitGroup && rows.length > 0 && (
                                   <div
@@ -3539,11 +3998,47 @@ function playNotificationChime() {
                                   </div>
                                 )}
                               </div>
-                              <span
-                                className={`text-[11px] font-semibold ${groupTheme.actionClass}`}
-                              >
-                                {isCollapsed ? 'คลิกเพื่อขยาย' : 'คลิกเพื่อย่อ'}
-                              </span>
+
+                              <div className="flex items-center gap-2">
+                                {isTireTabGroup && primaryTireCode && (
+                                  <div
+                                    className="flex items-center gap-1.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTireModalInitType('IN');
+                                        setTireModalInitCode(primaryTireCode);
+                                        setIsTireModalOpen(true);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-2xs transition-colors"
+                                      title="บันทึกรับเข้ายางรายการนี้"
+                                    >
+                                      <PackagePlus className="h-3 w-3" />
+                                      <span>+ รับเข้า</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTireModalInitType('OUT');
+                                        setTireModalInitCode(primaryTireCode);
+                                        setIsTireModalOpen(true);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-amber-600 hover:bg-amber-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-2xs transition-colors"
+                                      title="บันทึกเบิกออกยางรายการนี้"
+                                    >
+                                      <PackageMinus className="h-3 w-3" />
+                                      <span>- เบิกออก</span>
+                                    </button>
+                                  </div>
+                                )}
+                                <span
+                                  className={`text-[11px] font-semibold ${groupTheme.actionClass}`}
+                                >
+                                  {isCollapsed ? 'คลิกเพื่อขยาย' : 'คลิกเพื่อย่อ'}
+                                </span>
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -3905,6 +4400,47 @@ function playNotificationChime() {
                                       <Eye className="h-3.5 w-3.5" />
                                       <span>เพิ่มเติม</span>
                                     </button>
+                                  </td>
+                                )}
+                                {activeTab.gid === '1031154414' && (
+                                  <td
+                                    className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="inline-flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const code =
+                                            (row.values['A'] ?? '').trim() ||
+                                            `ROW-${row.rowNumber}`;
+                                          setTireModalInitType('IN');
+                                          setTireModalInitCode(code);
+                                          setIsTireModalOpen(true);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 px-2 py-1 text-[11px] font-bold text-white shadow-2xs transition-colors"
+                                        title="รับเข้าสต็อก"
+                                      >
+                                        <Plus className="h-3 w-3" />
+                                        <span>รับเข้า</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const code =
+                                            (row.values['A'] ?? '').trim() ||
+                                            `ROW-${row.rowNumber}`;
+                                          setTireModalInitType('OUT');
+                                          setTireModalInitCode(code);
+                                          setIsTireModalOpen(true);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-md bg-amber-600 hover:bg-amber-700 px-2 py-1 text-[11px] font-bold text-white shadow-2xs transition-colors"
+                                        title="เบิกออกตัดสต็อก"
+                                      >
+                                        <PackageMinus className="h-3 w-3" />
+                                        <span>เบิกออก</span>
+                                      </button>
+                                    </div>
                                   </td>
                                 )}
                               </tr>
@@ -4930,6 +5466,22 @@ function playNotificationChime() {
         existingRows={activeTab.gid === '1733355146' ? sheetData?.rows ?? [] : []}
         onSavedSuccess={() => {
           setSaveSuccessMsg('บันทึกข้อมูลน้ำมัน (รับเข้า-เบิกออก) ลงฐานข้อมูลเรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+      />
+
+      {/* Tire Stock Receive/Issue Modal */}
+      <TireStockModal
+        isOpen={isTireModalOpen}
+        onClose={() => setIsTireModalOpen(false)}
+        existingRows={activeTab.gid === '1031154414' ? sheetData?.rows ?? [] : []}
+        initialTransactionType={tireModalInitType}
+        initialTireCode={tireModalInitCode}
+        onSavedSuccess={(msg) => {
+          setSaveSuccessMsg(msg);
           loadData({ silent: true });
           setTimeout(() => {
             setSaveSuccessMsg(null);

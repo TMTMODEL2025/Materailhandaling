@@ -80,11 +80,30 @@ function parseRowDateToYmd(dateStr: string): string | null {
 }
 
 function formatWeight(kg: number): string {
-  const tons = kg / 1000;
-  if (tons >= 1) {
-    return `${tons.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ตัน (${kg.toLocaleString('th-TH')} กก.)`;
+  const safeKg = Number.isFinite(kg) && kg > 0 ? kg : 0;
+  const tons = safeKg / 1000;
+  return `${tons.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ตัน`;
+}
+
+function extractCleanDriverName(rawId: string, rawName: string): string {
+  let candidate = (rawName || rawId || '').trim();
+  if (!candidate) return 'ไม่ระบุพนักงาน';
+
+  // If formatted like "รหัส - ชื่อ" or duplicated "ชื่อ - ชื่อ"
+  if (candidate.includes(' - ')) {
+    const parts = candidate.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      if (parts[0] === parts[1]) {
+        candidate = parts[0];
+      } else if (/^[0-9A-Za-z-]+$/.test(parts[0])) {
+        candidate = parts.slice(1).join(' - ').trim();
+      } else {
+        candidate = parts[parts.length - 1];
+      }
+    }
   }
-  return `${kg.toLocaleString('th-TH')} กก.`;
+
+  return candidate.trim() || 'ไม่ระบุพนักงาน';
 }
 
 export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows, columns }) => {
@@ -180,12 +199,13 @@ export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows
       }
       weightKg += wVal;
 
-      // Driver
+      // Driver: group and sum by trimmed full name only
       const dId = (r.values[driverIdColId] ?? r.values['B'] ?? '').trim();
       const dName = (r.values[driverNameColId] ?? r.values['C'] ?? '').trim();
-      const dKey = dId ? `${dId} - ${dName}` : dName || 'ไม่ระบุพนักงาน';
+      const cleanName = extractCleanDriverName(dId, dName);
+      const dKey = cleanName;
       if (!driverMap.has(dKey)) {
-        driverMap.set(dKey, { name: dName || dId || 'ไม่ระบุ', rounds: 0, weight: 0 });
+        driverMap.set(dKey, { name: cleanName, rounds: 0, weight: 0 });
       }
       const dEntry = driverMap.get(dKey)!;
       dEntry.rounds += 1;
@@ -446,23 +466,23 @@ export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="pb-2.5 font-semibold">#</th>
-                  <th className="pb-2.5 font-semibold">รหัส / ชื่อพนักงาน</th>
-                  <th className="pb-2.5 font-semibold text-right">จำนวนรอบ</th>
-                  <th className="pb-2.5 font-semibold text-right">น้ำหนักรวม</th>
+                  <th className="pb-2.5 pr-2 font-semibold whitespace-nowrap">#</th>
+                  <th className="pb-2.5 pr-3 font-semibold whitespace-nowrap">ชื่อพนักงาน</th>
+                  <th className="pb-2.5 px-2 font-semibold text-right whitespace-nowrap">จำนวนรอบ</th>
+                  <th className="pb-2.5 pl-2 font-semibold text-right whitespace-nowrap">น้ำหนักรวม</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {driverStats.slice(0, 10).map((d, idx) => (
                   <tr key={d.id} className="hover:bg-slate-50">
-                    <td className="py-2.5 font-mono font-bold text-slate-400 tabular-nums">
+                    <td className="py-2 pr-2 font-mono font-bold text-slate-400 tabular-nums whitespace-nowrap">
                       {idx === 0 ? <Award className="h-4 w-4 text-amber-500 inline" /> : idx + 1}
                     </td>
-                    <td className="py-2.5 font-medium text-slate-900">{d.id}</td>
-                    <td className="py-2.5 text-right font-mono font-bold text-blue-700 tabular-nums">
+                    <td className="py-2 pr-3 font-medium text-slate-900 whitespace-nowrap">{d.name}</td>
+                    <td className="py-2 px-2 text-right font-mono font-bold text-blue-700 tabular-nums whitespace-nowrap">
                       {d.rounds.toLocaleString('th-TH')} เที่ยว
                     </td>
-                    <td className="py-2.5 text-right font-mono text-slate-700 tabular-nums">
+                    <td className="py-2 pl-2 text-right font-mono text-slate-700 tabular-nums whitespace-nowrap">
                       {formatWeight(d.totalWeightKg)}
                     </td>
                   </tr>
@@ -497,23 +517,23 @@ export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="pb-2.5 font-semibold">#</th>
-                  <th className="pb-2.5 font-semibold">เบอร์รถ</th>
-                  <th className="pb-2.5 font-semibold text-right">จำนวนรอบ</th>
-                  <th className="pb-2.5 font-semibold text-right">น้ำหนักรวม</th>
+                  <th className="pb-2.5 pr-2 font-semibold whitespace-nowrap">#</th>
+                  <th className="pb-2.5 pr-3 font-semibold whitespace-nowrap">เบอร์รถ</th>
+                  <th className="pb-2.5 px-2 font-semibold text-right whitespace-nowrap">จำนวนรอบ</th>
+                  <th className="pb-2.5 pl-2 font-semibold text-right whitespace-nowrap">น้ำหนักรวม</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {vehicleStats.slice(0, 10).map((v, idx) => (
                   <tr key={v.vehicleNo} className="hover:bg-slate-50">
-                    <td className="py-2.5 font-mono font-bold text-slate-400 tabular-nums">
+                    <td className="py-2 pr-2 font-mono font-bold text-slate-400 tabular-nums whitespace-nowrap">
                       {idx === 0 ? <Award className="h-4 w-4 text-amber-500 inline" /> : idx + 1}
                     </td>
-                    <td className="py-2.5 font-bold text-slate-900">{v.vehicleNo}</td>
-                    <td className="py-2.5 text-right font-mono font-bold text-indigo-700 tabular-nums">
+                    <td className="py-2 pr-3 font-bold text-slate-900 whitespace-nowrap">{v.vehicleNo}</td>
+                    <td className="py-2 px-2 text-right font-mono font-bold text-indigo-700 tabular-nums whitespace-nowrap">
                       {v.rounds.toLocaleString('th-TH')} เที่ยว
                     </td>
-                    <td className="py-2.5 text-right font-mono text-slate-700 tabular-nums">
+                    <td className="py-2 pl-2 text-right font-mono text-slate-700 tabular-nums whitespace-nowrap">
                       {formatWeight(v.totalWeightKg)}
                     </td>
                   </tr>
@@ -551,23 +571,23 @@ export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="pb-2.5 font-semibold">ประเภทสินค้า</th>
-                  <th className="pb-2.5 font-semibold text-right">จำนวนรอบ</th>
-                  <th className="pb-2.5 font-semibold text-right">น้ำหนักรวม</th>
-                  <th className="pb-2.5 font-semibold text-right">สัดส่วน (%)</th>
+                  <th className="pb-2.5 pr-3 font-semibold whitespace-nowrap">ประเภทสินค้า</th>
+                  <th className="pb-2.5 px-2 font-semibold text-right whitespace-nowrap">จำนวนรอบ</th>
+                  <th className="pb-2.5 px-2 font-semibold text-right whitespace-nowrap">น้ำหนักรวม</th>
+                  <th className="pb-2.5 pl-2 font-semibold text-right whitespace-nowrap">สัดส่วน (%)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {productStats.map((p) => (
                   <tr key={p.productType} className="hover:bg-slate-50">
-                    <td className="py-2.5 font-semibold text-slate-900">{p.productType}</td>
-                    <td className="py-2.5 text-right font-mono text-slate-700 tabular-nums">
+                    <td className="py-2 pr-3 font-semibold text-slate-900 whitespace-nowrap">{p.productType}</td>
+                    <td className="py-2 px-2 text-right font-mono text-slate-700 tabular-nums whitespace-nowrap">
                       {p.rounds.toLocaleString('th-TH')} เที่ยว
                     </td>
-                    <td className="py-2.5 text-right font-mono text-slate-700 tabular-nums">
+                    <td className="py-2 px-2 text-right font-mono text-slate-700 tabular-nums whitespace-nowrap">
                       {formatWeight(p.totalWeightKg)}
                     </td>
-                    <td className="py-2.5 text-right font-mono font-bold text-emerald-700 tabular-nums">
+                    <td className="py-2 pl-2 text-right font-mono font-bold text-emerald-700 tabular-nums whitespace-nowrap">
                       {p.percentage.toFixed(1)}%
                     </td>
                   </tr>
@@ -599,9 +619,9 @@ export const JobTransferStatsView: React.FC<JobTransferStatsViewProps> = ({ rows
               const colorClass = colors[i % colors.length];
               return (
                 <div key={p.productType} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-800">{p.productType}</span>
-                    <span className="font-mono font-bold text-slate-700 tabular-nums">
+                  <div className="flex items-center justify-between text-xs gap-2">
+                    <span className="font-semibold text-slate-800 truncate">{p.productType}</span>
+                    <span className="font-mono font-bold text-slate-700 tabular-nums whitespace-nowrap">
                       {p.percentage.toFixed(1)}% ({formatWeight(p.totalWeightKg)})
                     </span>
                   </div>
