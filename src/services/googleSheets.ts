@@ -4693,9 +4693,69 @@ export async function inspectRepairRecord(
   }
 }
 
+export function processHighResImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
+    reader.onload = (e) => {
+      const originalDataUrl = String(e.target?.result || '');
+      const img = new Image();
+      img.onerror = () => reject(new Error('รูปภาพไม่ถูกต้อง'));
+      img.onload = () => {
+        // Preserve 100% original lossless resolution if <= 4096px and file size <= 3.5MB
+        if (
+          file.size <= 3.5 * 1024 * 1024 &&
+          img.width <= 4096 &&
+          img.height <= 4096
+        ) {
+          resolve(originalDataUrl);
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        const maxDim = 3840; // 4K Ultra HD
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(originalDataUrl);
+          return;
+        }
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const isPng = file.type === 'image/png' && file.size <= 4.5 * 1024 * 1024;
+        const highResDataUrl = isPng
+          ? canvas.toDataURL('image/png')
+          : canvas.toDataURL('image/jpeg', 0.94);
+
+        resolve(highResDataUrl);
+      };
+      img.src = originalDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function updateRepairPhotos(
   payload: import('../types').RepairPhotoUpdatePayload
-): Promise<void> {
+): Promise<string[]> {
   const photoCols = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
   // Always normalize to 9 string elements so deleted photo slots are explicitly '' (never undefined)
   const normalizedPhotos: string[] = Array.from({ length: 9 }, (_, idx) =>
@@ -4795,7 +4855,7 @@ export async function updateRepairPhotos(
             syncedToSheet: true,
           }),
         }).catch(() => {});
-        return;
+        return updatedUrls;
       }
     } catch {
       // fall through to Google Sheets REST API v4
@@ -4849,6 +4909,8 @@ export async function updateRepairPhotos(
       // ignore
     }
   }
+
+  return normalizedPhotos;
 }
 
 export async function updateRepairAdditionalDetails(params: {

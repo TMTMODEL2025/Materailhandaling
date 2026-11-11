@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Upload, Trash2, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import { SheetRow } from '../types';
-import { updateRepairPhotos, isPhotoValue } from '../services/googleSheets';
+import { updateRepairPhotos, isPhotoValue, processHighResImageFile } from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
@@ -16,116 +16,7 @@ interface AttachRepairPhotosModalProps {
 const PHOTO_COLS = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
 
 function compressImageFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('รูปภาพไม่ถูกต้อง'));
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_CHARS = 45000;
-        let maxDim = 800;
-        let quality = 0.65;
-        let compressedDataUrl = '';
-
-        while (maxDim >= 320) {
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxDim) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            }
-          } else {
-            if (height > maxDim) {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(e.target?.result as string);
-            return;
-          }
-
-          ctx.clearRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-          compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-
-          if (compressedDataUrl.length <= MAX_CHARS) {
-            break;
-          }
-          maxDim = Math.round(maxDim * 0.78);
-          quality = Math.max(0.45, quality - 0.08);
-        }
-
-        resolve(compressedDataUrl);
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function recompressDataUrlIfOversized(src: string): Promise<string> {
-  const trimmed = (src || '').trim();
-  if (!trimmed.startsWith('data:image/') || trimmed.length <= 45000) {
-    return Promise.resolve(trimmed);
-  }
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onerror = () => resolve(trimmed);
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const MAX_CHARS = 45000;
-      let maxDim = 800;
-      let quality = 0.65;
-      let compressedDataUrl = trimmed;
-
-      while (maxDim >= 280) {
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxDim) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          }
-        } else {
-          if (height > maxDim) {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(trimmed);
-          return;
-        }
-
-        ctx.clearRect(0, 0, width, height);
-        ctx.drawImage(img, 0, 0, width, height);
-        compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-
-        if (compressedDataUrl.length <= MAX_CHARS) {
-          break;
-        }
-        maxDim = Math.round(maxDim * 0.78);
-        quality = Math.max(0.42, quality - 0.08);
-      }
-
-      resolve(compressedDataUrl);
-    };
-    img.src = trimmed;
-  });
+  return processHighResImageFile(file);
 }
 
 export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = ({
@@ -138,9 +29,11 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
 
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (row && isOpen) {
@@ -186,6 +79,25 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
     }
   };
 
+  const handleReplacePhotoFile = async (files: FileList | null) => {
+    if (!files || files.length === 0 || replacingIndex === null) return;
+    setError(null);
+    try {
+      const highResDataUrl = await compressImageFile(files[0]);
+      setPhotos((prev) => {
+        const next = [...prev];
+        if (replacingIndex >= 0 && replacingIndex < next.length) {
+          next[replacingIndex] = highResDataUrl;
+        }
+        return next;
+      });
+    } catch {
+      setError('เกิดข้อผิดพลาดในการอ่านไฟล์รูปภาพความละเอียดสูง');
+    } finally {
+      setReplacingIndex(null);
+    }
+  };
+
   const handleRemovePhoto = (indexToRemove: number) => {
     setPhotos((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
@@ -195,31 +107,32 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
     setError(null);
 
     try {
-      const cleanedPhotos = await Promise.all(
-        photos.slice(0, 9).map((p) => recompressDataUrlIfOversized(p))
-      );
       const paddedPhotos = Array.from({ length: 9 }, (_, idx) =>
-        (cleanedPhotos[idx] || '').trim()
+        (photos[idx] || '').trim()
       );
 
-      await updateRepairPhotos({
+      const savedUrls = await updateRepairPhotos({
         rowNumber: row.rowNumber,
         sequenceNo,
         repairRequestNo,
         photos: paddedPhotos,
       });
 
+      const finalPhotos = Array.from({ length: 9 }, (_, idx) =>
+        (savedUrls[idx] || paddedPhotos[idx] || '').trim()
+      );
+
       // Update row.values directly for immediate responsiveness across all 9 photo columns
       PHOTO_COLS.forEach((col, idx) => {
-        row.values[col] = paddedPhotos[idx] || '';
+        row.values[col] = finalPhotos[idx] || '';
       });
 
       showSuccessToast(
-        'บันทึกรูปถ่ายสำเร็จ!',
-        'ระบบอัปเดตรูปถ่ายในฐานข้อมูลเรียบร้อยแล้ว'
+        'บันทึกรูปถ่ายความละเอียดสูงสำเร็จ!',
+        'ระบบอัปเดตรูปถ่ายความละเอียดสูงลง Google Drive เรียบร้อยแล้ว'
       );
 
-      onPhotosUpdated(paddedPhotos);
+      onPhotosUpdated(finalPhotos);
       onClose();
     } catch (err: unknown) {
       setError(
@@ -330,6 +243,16 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                 if (e.target) e.target.value = '';
               }}
             />
+            <input
+              ref={replaceInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                handleReplacePhotoFile(e.target.files);
+                if (e.target) e.target.value = '';
+              }}
+            />
 
             {/* Upload Action Buttons */}
             {photos.length < 9 && (
@@ -341,7 +264,7 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                   className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 py-2.5 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-100 hover:border-slate-400 transition-colors"
                 >
                   <Camera className="h-4 w-4 text-slate-600" />
-                  <span>ถ่ายรูปจากกล้อง</span>
+                  <span>ถ่ายรูปจากกล้อง (ความละเอียดสูง)</span>
                 </button>
 
                 <button
@@ -351,7 +274,7 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                   className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 py-2.5 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-100 hover:border-slate-400 transition-colors"
                 >
                   <Upload className="h-4 w-4 text-slate-600" />
-                  <span>เลือกรูปจากเครื่อง</span>
+                  <span>เลือกรูปจากเครื่อง (ชัดระดับ 4K)</span>
                 </button>
               </div>
             )}
@@ -373,6 +296,19 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                     <div className="absolute top-1 left-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
                       รูปที่ {idx + 1}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplacingIndex(idx);
+                        replaceInputRef.current?.click();
+                      }}
+                      disabled={isSubmitting}
+                      title="อัปโหลดไฟล์ความละเอียดสูง (HD/4K) แทนที่รูปนี้"
+                      className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-blue-600/95 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs hover:bg-blue-700"
+                    >
+                      <Upload className="h-2.5 w-2.5" />
+                      <span>เปลี่ยนรูปชัด</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleRemovePhoto(idx)}

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { X, AlertCircle, Wrench, Send, Camera, Image as ImageIcon, Trash2 } from 'lucide-react';
 import { SheetRow, RepairRequestPayload } from '../types';
-import { appendRepairRecord } from '../services/googleSheets';
+import { appendRepairRecord, processHighResImageFile } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
 
 interface RepairRequestModalProps {
@@ -28,60 +28,7 @@ function getCurrentTimeString(): string {
 }
 
 function compressImageFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_CHARS = 45000;
-        let maxDim = 800;
-        let quality = 0.65;
-        let dataUrl = '';
-
-        while (maxDim >= 320) {
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxDim) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            }
-          } else {
-            if (height > maxDim) {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(e.target?.result as string);
-            return;
-          }
-
-          ctx.clearRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-          dataUrl = canvas.toDataURL('image/jpeg', quality);
-
-          if (dataUrl.length <= MAX_CHARS) {
-            break;
-          }
-          maxDim = Math.round(maxDim * 0.78);
-          quality = Math.max(0.45, quality - 0.08);
-        }
-
-        resolve(dataUrl);
-      };
-      img.onerror = reject;
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+  return processHighResImageFile(file);
 }
 
 function generateNextRepairRequestNo(existingRows: SheetRow[]): string {

@@ -63,6 +63,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
     subtitle?: string;
     vehicleNo?: string;
     sequenceNo?: string;
+    rowNumber?: number;
+    repairRequestNo?: string;
+    targetRow?: SheetRow;
   }>({
     isOpen: false,
     photos: [],
@@ -76,6 +79,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   ) => {
     const veh = (row.values['D'] ?? '').trim();
     const seq = (row.values['A'] ?? '').trim() || String(row.rowNumber);
+    const reqNo = (row.values['G'] ?? '').trim();
     const sym = (row.values['F'] ?? '').trim();
     const typ = (row.values['E'] ?? '').trim();
     setLightboxState({
@@ -86,6 +90,9 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
       subtitle: `${typ ? `${typ}: ` : ''}${sym || 'ตรวจสอบรอยและอาการเสีย'}`,
       vehicleNo: veh,
       sequenceNo: seq,
+      rowNumber: row.rowNumber,
+      repairRequestNo: reqNo,
+      targetRow: row,
     });
   };
 
@@ -835,6 +842,17 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
         subtitle={lightboxState.subtitle}
         vehicleNo={lightboxState.vehicleNo}
         sequenceNo={lightboxState.sequenceNo}
+        rowNumber={lightboxState.rowNumber}
+        repairRequestNo={lightboxState.repairRequestNo}
+        onPhotosUpdated={(updatedPhotos) => {
+          setLightboxState((prev) => ({ ...prev, photos: updatedPhotos }));
+          if (lightboxState.targetRow) {
+            PHOTO_COLS.forEach((col, i) => {
+              lightboxState.targetRow!.values[col] = updatedPhotos[i] || '';
+            });
+          }
+          onApprovedSuccess();
+        }}
       />
     </div>
   );
