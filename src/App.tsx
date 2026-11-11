@@ -35,6 +35,7 @@ import {
   Bell,
   Users,
   MapPin,
+  BarChart3,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -61,6 +62,7 @@ import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
 import { FuelCharts } from './components/FuelCharts';
+import { JobTransferStatsView } from './components/JobTransferStatsView';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
@@ -284,7 +286,14 @@ function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHead
     s === 'รอพิจารณา' ||
     s.includes('อยู่ระหว่าง') ||
     s.includes('อยู่ระว่าง') ||
+    s.includes('ระหว่าง') ||
+    s.includes('ระว่าง') ||
     s.includes('กำลังส่ง') ||
+    s.includes('กำลังย้าย') ||
+    s.includes('ย้าย') ||
+    s.includes('กำลัง') ||
+    s.includes('ส่ง') ||
+    s.includes('กำลังดำเนินการ') ||
     s.includes('กำลังซ่อม') ||
     s.includes('รอคิว') ||
     s.includes('รออะไหล่')
@@ -355,6 +364,7 @@ function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHead
 export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
+  const [showJobTransferStats, setShowJobTransferStats] = useState<boolean>(false);
   const [repairTabRows, setRepairTabRows] = useState<SheetRow[]>([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -797,6 +807,7 @@ function playNotificationChime() {
 
   const handleSelectTab = (tab: SheetTabConfig) => {
     setIsSidebarOpen(false);
+    setShowJobTransferStats(false);
     if (tab.gid === activeTab.gid) return;
     setActiveTab(tab);
     setRowLimit(tab.defaultLimit ?? 250);
@@ -1198,6 +1209,10 @@ function playNotificationChime() {
           s.includes('ระหว่าง') ||
           s.includes('ระว่าง') ||
           s.includes('กำลังส่ง') ||
+          s.includes('กำลังย้าย') ||
+          s.includes('ย้าย') ||
+          s.includes('กำลัง') ||
+          s.includes('ส่ง') ||
           s.includes('กำลังดำเนินการ')
         ) {
           return 0;
@@ -1227,13 +1242,13 @@ function playNotificationChime() {
         const next = { ...prev };
         repairGroupedRows.forEach((_, status) => {
           if (next[status] === undefined) {
-            next[status] = true; // collapsed by default
+            next[status] = activeTab.gid === '1733355146'; // collapsed for fuel tab, expanded for job transfer/repair
           }
         });
         return next;
       });
     }
-  }, [repairGroupedRows]);
+  }, [repairGroupedRows, activeTab.gid]);
 
   // Contextual real-time summary metric based on actual columns in current sheet
   const contextualMetric = useMemo<{ label: string; value: string; subtext: string }>(() => {
@@ -1862,6 +1877,7 @@ function playNotificationChime() {
           <nav className="space-y-2">
             {SHEET_TABS.map((tab) => {
               const isSelected = activeTab.gid === tab.gid;
+              const isJobTransferTab = tab.gid === '606634465';
               const isRepairTab = tab.gid === '944294225';
               const isFuelTab = tab.gid === '1733355146';
 
@@ -1936,6 +1952,45 @@ function playNotificationChime() {
                       }`}
                     />
                   </button>
+
+                  {/* เมนูย่อยของ บันทึกการย้ายงาน */}
+                  {isJobTransferTab && (
+                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSidebarOpen(false);
+                          if (activeTab.gid !== '606634465' || showJobTransferStats) {
+                            handleSelectTab(tab);
+                          }
+                          setIsJobModalOpen(true);
+                        }}
+                        className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-slate-700 shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="truncate">บันทึกย้ายงาน</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSidebarOpen(false);
+                          if (activeTab.gid !== '606634465') {
+                            handleSelectTab(tab);
+                          }
+                          setShowJobTransferStats(true);
+                        }}
+                        className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
+                          activeTab.gid === '606634465' && showJobTransferStats
+                            ? 'bg-amber-500/15 text-amber-900 font-bold border border-amber-300/60'
+                            : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                        }`}
+                      >
+                        <BarChart3 className="h-3.5 w-3.5 text-amber-600 shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="truncate">สถิติการขนย้าย</span>
+                      </button>
+                    </div>
+                  )}
 
                   {/* เมนูย่อยของ บันทึกงานซ่อม (ขนาดกะทัดรัด เยื้องเข้าด้านใน ไม่แย่งความเด่นเมนูหลัก) */}
                   {isRepairTab && (
@@ -2139,91 +2194,32 @@ function playNotificationChime() {
         </header>
 
         <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
-          {/* Floating Toast Notification when a new repair request pops up */}
-          {newRepairToast && (
-            <div className="fixed bottom-5 right-4 z-[100] max-w-xs sm:max-w-sm rounded-xl border border-amber-300 bg-slate-900/95 p-3.5 sm:p-4 font-sans text-white shadow-2xl backdrop-blur-md">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Wrench className="h-5 w-5 text-amber-400 shrink-0" />
-                  <span className="font-bold text-xs sm:text-sm text-amber-300">
-                    🔔 มีรายการแจ้งซ่อมใหม่!
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setNewRepairToast(null)}
-                  className="rounded p-1 text-slate-400 hover:text-white"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="mt-2 text-xs text-slate-200 space-y-0.5">
-                <div>
-                  <span className="font-semibold text-amber-200">รถ/อุปกรณ์:</span>{' '}
-                  {newRepairToast.vehicle}
-                </div>
-                <div className="truncate">
-                  <span className="font-semibold text-amber-200">อาการ:</span>{' '}
-                  {newRepairToast.symptom}
-                </div>
-                {newRepairToast.reporter && (
-                  <div className="text-slate-400">
-                    ผู้แจ้ง: {newRepairToast.reporter}
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setNewRepairToast(null);
-                  const repairTab = SHEET_TABS.find((t) => t.gid === '944294225');
-                  if (repairTab) handleSelectTab(repairTab);
-                }}
-                className="mt-3 w-full rounded-lg bg-amber-500 py-1.5 text-center text-xs font-bold text-slate-950 hover:bg-amber-400 shadow-xs"
-              >
-                ดูรายการแจ้งซ่อม
-              </button>
-            </div>
+          {activeTab.gid === '606634465' && showJobTransferStats && (
+            <JobTransferStatsView rows={sheetData?.rows ?? []} columns={sheetData?.columns} />
           )}
 
-          {/* Save Success Notification */}
-          {saveSuccessMsg && (
-            <div className="mb-2.5 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs sm:text-sm text-emerald-900">
-              <div className="flex items-center gap-2 min-w-0">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span className="font-medium truncate">{saveSuccessMsg}</span>
+          <div className={activeTab.gid === '606634465' && showJobTransferStats ? 'hidden' : 'block'}>
+
+            {/* Mobile-Only Direct Job Transfer Form (when on บันทึกการย้ายงาน tab) */}
+            {activeTab.gid === '606634465' && (
+              <div className="md:hidden">
+                <JobTransferModal
+                  isOpen={true}
+                  inlineMode={true}
+                  onClose={() => {}}
+                  existingRows={sheetData?.rows ?? []}
+                  onSavedSuccess={() => {
+                    setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานเรียบร้อยแล้ว');
+                    loadData({ silent: true });
+                    setTimeout(() => {
+                      setSaveSuccessMsg(null);
+                    }, 5000);
+                  }}
+                />
               </div>
-              <button
-                type="button"
-                onClick={() => setSaveSuccessMsg(null)}
-                className="ml-2 text-xs font-medium text-emerald-800 hover:underline shrink-0"
-              >
-                ปิด
-              </button>
-            </div>
-          )}
+            )}
 
-          {/* Mobile-Only Direct Job Transfer Form (when on הבันทึกการย้ายงาน tab) */}
-          {activeTab.gid === '606634465' && (
-            <div className="md:hidden">
-              <JobTransferModal
-                isOpen={true}
-                inlineMode={true}
-                onClose={() => {}}
-                existingRows={sheetData?.rows ?? []}
-                onSavedSuccess={() => {
-                  setSaveSuccessMsg('บันทึกข้อมูลการย้ายงานเรียบร้อยแล้ว');
-                  loadData({ silent: true });
-                  setTimeout(() => {
-                    setSaveSuccessMsg(null);
-                  }, 5000);
-                }}
-              />
-            </div>
-          )}
-
-          {/* Dashboard KPI, Search & Table (Hidden on mobile when on บันทึกการย้ายงาน so mobile shows ONLY the form) */}
-          <div className={activeTab.gid === '606634465' ? 'hidden md:block' : 'block'}>
+            <div className={activeTab.gid === '606634465' ? 'hidden md:block' : 'block'}>
           {/* Glassmorphism 4-Card KPI Summary Strip (Unified across all tabs) */}
           {activeTab.gid === '606634465' ? (
             <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
@@ -3993,8 +3989,9 @@ function playNotificationChime() {
               </div>
             </div>
           )}
-        </div>
-        </div>
+          </div>
+          </div>
+          </div>
         </main>
 
         {/* Android-Style Mobile Bottom Navigation Bar */}
