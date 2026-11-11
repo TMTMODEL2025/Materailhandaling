@@ -7,6 +7,7 @@ import {
   VehicleDriverOption,
 } from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
+import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
 
 function compressImageToDataUrl(file: File, maxDim = 800, quality = 0.8): Promise<string> {
@@ -77,11 +78,19 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   const [editValue, setEditValue] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccessColId, setSaveSuccessColId] = useState<string | null>(null);
-  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [inspectorName, setInspectorName] = useState<string>(
     () => localStorage.getItem('gsheets_repair_inspector_name') || 'นายสุรสิทธิ์ นุชจันทร์'
   );
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
+
+  const rowPhotos = React.useMemo(() => {
+    if (!row) return [];
+    return columns
+      .filter((c) => isPhotoValue(row.values[c.id]))
+      .map((c) => (row.values[c.id] || '').trim())
+      .filter(Boolean);
+  }, [row, columns]);
 
   if (!row) return null;
 
@@ -607,7 +616,10 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                           <DrivePhotoImg
                             src={val}
                             alt={col.label}
-                            onClick={() => setPreviewPhoto(val)}
+                            onClick={() => {
+                              const foundIdx = rowPhotos.indexOf(val.trim());
+                              setLightboxIndex(foundIdx >= 0 ? foundIdx : 0);
+                            }}
                             className="max-h-36 max-w-xs cursor-pointer rounded-lg border border-slate-200 object-cover shadow-xs transition-opacity hover:opacity-95"
                           />
                         </div>
@@ -669,29 +681,17 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
         </div>
       </div>
 
-      {previewPhoto && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
-          onClick={(e) => {
-            e.stopPropagation();
-            setPreviewPhoto(null);
-          }}
-        >
-          <div className="relative max-h-[90vh] max-w-[90vw]">
-            <DrivePhotoImg
-              src={previewPhoto}
-              alt="ดูรูปภาพขนาดเต็ม"
-              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => setPreviewPhoto(null)}
-              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 shadow-lg hover:bg-slate-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+      {/* High-Resolution Interactive Zoom & Pan Lightbox Modal */}
+      {lightboxIndex !== null && (
+        <PhotoLightboxModal
+          isOpen={true}
+          onClose={() => setLightboxIndex(null)}
+          photos={rowPhotos.length > 0 ? rowPhotos : []}
+          initialIndex={lightboxIndex}
+          title={`ดูรูปภาพ - ${tabName} (#${row.rowNumber})`}
+          vehicleNo={row.values['D'] || row.values['C'] || undefined}
+          sequenceNo={row.values['A'] || String(row.rowNumber)}
+        />
       )}
     </div>
   );

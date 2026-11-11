@@ -14,6 +14,8 @@ interface DrivePhotoImgProps {
   alt: string;
   className?: string;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+  highRes?: boolean;
+  style?: React.CSSProperties;
 }
 
 export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
@@ -21,10 +23,12 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
   alt,
   className = '',
   onClick,
+  highRes = false,
+  style,
 }) => {
   const trimmed = (src || '').trim();
   const isLegacyPath = isLegacyAppSheetPhotoPath(trimmed);
-  const initialFormatted = formatDriveImageUrl(trimmed);
+  const initialFormatted = formatDriveImageUrl(trimmed, highRes);
   const needsAsyncResolve = isLegacyPath && initialFormatted === trimmed;
 
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(
@@ -43,7 +47,7 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
     setHasError(false);
     setTriedAppsScriptFallback(false);
 
-    const formatted = formatDriveImageUrl(trimmed);
+    const formatted = formatDriveImageUrl(trimmed, highRes);
     const legacy = isLegacyAppSheetPhotoPath(trimmed);
     if (!legacy || formatted !== trimmed) {
       setResolvedSrc(formatted);
@@ -180,7 +184,7 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
       referrerPolicy="no-referrer"
       onClick={onClick as React.MouseEventHandler<HTMLImageElement> | undefined}
       onError={(e) => {
-        const fallback = getDriveThumbnailUrl(trimmed);
+        const fallback = getDriveThumbnailUrl(trimmed, highRes);
         if (
           fallback &&
           fallback !== trimmed &&
@@ -207,6 +211,7 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
         setHasError(true);
       }}
       className={className}
+      style={style}
     />
   );
 };

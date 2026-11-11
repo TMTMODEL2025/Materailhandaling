@@ -3,6 +3,7 @@ import { X, Camera, Upload, Trash2, Check, AlertCircle, Image as ImageIcon } fro
 import { SheetRow } from '../types';
 import { updateRepairPhotos, isPhotoValue } from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
+import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
 
 interface AttachRepairPhotosModalProps {
@@ -136,7 +137,7 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
   const [photos, setPhotos] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -152,7 +153,7 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
       });
       setPhotos(extracted);
       setError(null);
-      setPreviewPhoto(null);
+      setPreviewIndex(null);
     }
   }, [row, isOpen]);
 
@@ -366,7 +367,7 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
                     <DrivePhotoImg
                       src={src}
                       alt={`รูปที่ ${idx + 1}`}
-                      onClick={() => setPreviewPhoto(src)}
+                      onClick={() => setPreviewIndex(idx)}
                       className="h-28 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
                     />
                     <div className="absolute top-1 left-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
@@ -425,27 +426,18 @@ export const AttachRepairPhotosModal: React.FC<AttachRepairPhotosModalProps> = (
         </div>
       </div>
 
-      {/* Enlarged Photo Preview Modal */}
-      {previewPhoto && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setPreviewPhoto(null)}
-        >
-          <div className="relative max-h-[90vh] max-w-[90vw]">
-            <DrivePhotoImg
-              src={previewPhoto}
-              alt="ดูรูปภาพขนาดเต็ม"
-              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => setPreviewPhoto(null)}
-              className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+      {/* High-Resolution Interactive Zoom & Pan Lightbox Modal */}
+      {previewIndex !== null && (
+        <PhotoLightboxModal
+          isOpen={true}
+          onClose={() => setPreviewIndex(null)}
+          photos={photos}
+          initialIndex={previewIndex}
+          title={row ? `รูปถ่ายงานซ่อม เบอร์รถ ${row.values['D'] || '-'} (#${row.values['A'] || row.rowNumber})` : 'ดูรูปถ่ายความละเอียดสูง'}
+          subtitle={row ? `อาการเสีย: ${row.values['F'] || '-'}` : undefined}
+          vehicleNo={row?.values['D']}
+          sequenceNo={row?.values['A'] || String(row?.rowNumber || '')}
+        />
       )}
     </div>
   );

@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, Clock, AlertCircle, HelpCircle, Lock } from 'lucide-react';
+import { X, CheckCircle2, XCircle, Clock, AlertCircle, HelpCircle, Lock, ZoomIn, Sparkles } from 'lucide-react';
 import { SheetRow, RepairApprovalPayload } from '../types';
 import { approveRepairRecord, updateRepairAdditionalDetails, isPhotoValue } from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
+import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
 
 const PHOTO_COLS = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
@@ -54,7 +55,39 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   const [additionalInfo, setAdditionalInfo] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [lightboxState, setLightboxState] = useState<{
+    isOpen: boolean;
+    photos: string[];
+    initialIndex: number;
+    title?: string;
+    subtitle?: string;
+    vehicleNo?: string;
+    sequenceNo?: string;
+  }>({
+    isOpen: false,
+    photos: [],
+    initialIndex: 0,
+  });
+
+  const handleOpenPhotoZoom = (
+    photos: string[],
+    idx: number,
+    row: SheetRow
+  ) => {
+    const veh = (row.values['D'] ?? '').trim();
+    const seq = (row.values['A'] ?? '').trim() || String(row.rowNumber);
+    const sym = (row.values['F'] ?? '').trim();
+    const typ = (row.values['E'] ?? '').trim();
+    setLightboxState({
+      isOpen: true,
+      photos,
+      initialIndex: idx,
+      title: `รูปถ่ายงานซ่อม เบอร์รถ ${veh || '-'} (ลำดับ ${seq})`,
+      subtitle: `${typ ? `${typ}: ` : ''}${sym || 'ตรวจสอบรอยและอาการเสีย'}`,
+      vehicleNo: veh,
+      sequenceNo: seq,
+    });
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -63,7 +96,7 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
       setPinError(null);
       setSelectedRow(null);
       setError(null);
-      setPreviewPhoto(null);
+      setLightboxState({ isOpen: false, photos: [], initialIndex: 0 });
     }
   }, [isOpen]);
 
@@ -435,16 +468,38 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                   if (rowPhotos.length === 0) return null;
                   return (
                     <div className="col-span-2">
-                      <span className="text-slate-500">รูปถ่ายประกอบการซ่อม ({rowPhotos.length} รูป):</span>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-1 pb-1">
+                        <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                          <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                          รูปถ่ายประกอบการซ่อม ({rowPhotos.length} รูป):
+                        </span>
+                        <span className="text-[11px] text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          🔍 คลิกที่รูปเพื่อซูมขยายดูแบบคมชัด (ภาพไม่แตก)
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
                         {rowPhotos.map((pSrc, idx) => (
-                          <DrivePhotoImg
+                          <div
                             key={idx}
-                            src={pSrc}
-                            alt={`รูปถ่ายที่ ${idx + 1}`}
-                            onClick={() => setPreviewPhoto(pSrc)}
-                            className="h-20 w-28 cursor-pointer rounded-lg border border-slate-200 object-cover shadow-2xs transition-opacity hover:opacity-90"
-                          />
+                            onClick={() => handleOpenPhotoZoom(rowPhotos, idx, selectedRow)}
+                            className="group relative cursor-pointer overflow-hidden rounded-xl border-2 border-slate-200 bg-slate-900 shadow-2xs hover:border-blue-500 hover:shadow-md transition-all"
+                            title="คลิกเพื่อซูมดูรูปขนาดเต็มความคมชัดสูง ไม่แตก"
+                          >
+                            <DrivePhotoImg
+                              src={pSrc}
+                              alt={`รูปถ่ายที่ ${idx + 1}`}
+                              className="h-24 w-32 sm:h-28 sm:w-36 object-cover transition-transform duration-200 group-hover:scale-105"
+                            />
+                            <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1 backdrop-blur-[1px]">
+                              <ZoomIn className="h-5 w-5 text-white drop-shadow" />
+                              <span className="text-[10px] font-bold bg-slate-900/80 px-2 py-0.5 rounded-full">
+                                ซูมดูภาพชัด
+                              </span>
+                            </div>
+                            <span className="absolute bottom-1 right-1 rounded bg-slate-950/75 px-1.5 py-0.2 font-mono text-[9px] text-white">
+                              {idx + 1}/{rowPhotos.length}
+                            </span>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -693,16 +748,44 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                           });
                         if (itemPhotos.length === 0) return null;
                         return (
-                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                            {itemPhotos.map((pSrc, pIdx) => (
-                              <DrivePhotoImg
-                                key={pIdx}
-                                src={pSrc}
-                                alt={`รูปงานซ่อม ${pIdx + 1}`}
-                                onClick={() => setPreviewPhoto(pSrc)}
-                                className="h-12 w-16 cursor-pointer rounded-md border border-slate-200 object-cover shadow-2xs transition-opacity hover:opacity-90"
-                              />
-                            ))}
+                          <div className="mt-2.5">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-emerald-600" />
+                                รูปถ่ายงานซ่อม ({itemPhotos.length} รูป):
+                              </span>
+                              <span className="text-[10px] text-blue-700 font-medium bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                🔍 คลิกซูมดูภาพชัด ไม่แตก
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {itemPhotos.map((pSrc, pIdx) => (
+                                <div
+                                  key={pIdx}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenPhotoZoom(itemPhotos, pIdx, r);
+                                  }}
+                                  className="group relative cursor-pointer overflow-hidden rounded-lg border-2 border-slate-200 bg-slate-900 shadow-2xs hover:border-blue-500 hover:shadow-sm transition-all"
+                                  title="คลิกเพื่อซูมดูรูปคมชัดระดับ HD (ภาพไม่แตก)"
+                                >
+                                  <DrivePhotoImg
+                                    src={pSrc}
+                                    alt={`รูปงานซ่อม ${pIdx + 1}`}
+                                    className="h-16 w-24 sm:h-20 sm:w-28 object-cover transition-transform duration-200 group-hover:scale-105"
+                                  />
+                                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white backdrop-blur-[1px]">
+                                    <div className="flex items-center gap-1 rounded-full bg-slate-900/90 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                                      <ZoomIn className="h-3 w-3 text-blue-400" />
+                                      <span>ซูมดูชัด</span>
+                                    </div>
+                                  </div>
+                                  <span className="absolute bottom-1 right-1 rounded bg-slate-950/80 px-1.5 py-0.2 font-mono text-[9px] text-white">
+                                    {pIdx + 1}/{itemPhotos.length}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         );
                       })()}
@@ -742,30 +825,17 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
         </div>
       </div>
 
-      {previewPhoto && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
-          onClick={(e) => {
-            e.stopPropagation();
-            setPreviewPhoto(null);
-          }}
-        >
-          <div className="relative max-h-[90vh] max-w-[90vw]">
-            <DrivePhotoImg
-              src={previewPhoto}
-              alt="ดูรูปภาพขนาดเต็ม"
-              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => setPreviewPhoto(null)}
-              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 shadow-lg hover:bg-slate-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      {/* High-Resolution Interactive Zoom & Pan Lightbox Modal */}
+      <PhotoLightboxModal
+        isOpen={lightboxState.isOpen}
+        onClose={() => setLightboxState((prev) => ({ ...prev, isOpen: false }))}
+        photos={lightboxState.photos}
+        initialIndex={lightboxState.initialIndex}
+        title={lightboxState.title}
+        subtitle={lightboxState.subtitle}
+        vehicleNo={lightboxState.vehicleNo}
+        sequenceNo={lightboxState.sequenceNo}
+      />
     </div>
   );
 };

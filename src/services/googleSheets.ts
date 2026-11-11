@@ -895,37 +895,52 @@ export function isPhotoValue(url: string): boolean {
   );
 }
 
-export function formatDriveImageUrl(url: string): string {
-  if (!url || typeof url !== 'string') return '';
-  const trimmed = url.trim();
-  if (trimmed.startsWith('data:image/')) return trimmed;
-  if (resolvedDriveImageCache.has(trimmed)) {
-    return resolvedDriveImageCache.get(trimmed)!;
-  }
-  const fileId = extractDriveFileId(trimmed);
-  if (fileId) {
-    return `https://lh3.googleusercontent.com/d/${fileId}`;
-  }
-  return trimmed;
-}
-
-export function getDriveThumbnailUrl(url: string): string {
+export function formatDriveImageUrl(url: string, highRes = false): string {
   if (!url || typeof url !== 'string') return '';
   const trimmed = url.trim();
   if (trimmed.startsWith('data:image/')) return trimmed;
   if (resolvedDriveImageCache.has(trimmed)) {
     const cached = resolvedDriveImageCache.get(trimmed)!;
-    const cachedFileId = extractDriveFileId(cached);
-    if (cachedFileId) {
-      return `https://drive.google.com/thumbnail?id=${cachedFileId}&sz=w1000`;
+    if (highRes && cached.includes('lh3.googleusercontent.com/d/')) {
+      return cached.includes('=s') ? cached.replace(/=s\d+/, '=s0') : `${cached}=s0`;
     }
     return cached;
   }
   const fileId = extractDriveFileId(trimmed);
   if (fileId) {
-    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
+    return highRes
+      ? `https://lh3.googleusercontent.com/d/${fileId}=s0`
+      : `https://lh3.googleusercontent.com/d/${fileId}=s1600`;
   }
   return trimmed;
+}
+
+export function getDriveThumbnailUrl(url: string, highRes = false): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('data:image/')) return trimmed;
+  const size = highRes ? 'w3840' : 'w1600';
+  if (resolvedDriveImageCache.has(trimmed)) {
+    const cached = resolvedDriveImageCache.get(trimmed)!;
+    const cachedFileId = extractDriveFileId(cached);
+    if (cachedFileId) {
+      return `https://drive.google.com/thumbnail?id=${cachedFileId}&sz=${size}`;
+    }
+    return cached;
+  }
+  const fileId = extractDriveFileId(trimmed);
+  if (fileId) {
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=${size}`;
+  }
+  return trimmed;
+}
+
+export function getDriveDirectViewUrl(url: string): string | null {
+  const fileId = extractDriveFileId(url);
+  if (fileId) {
+    return `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+  }
+  return null;
 }
 
 // Concurrency limiter for Apps Script photo resolution so mounting 30+ rows doesn't flood Google Apps Script
