@@ -52,17 +52,25 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
     }
 
     setIsLoading(true);
-    void resolveDriveImageSrc(trimmed, retryCount > 0).then((result) => {
-      if (cancelled) return;
-      if (result) {
-        setResolvedSrc(result);
-        setHasError(false);
-      } else {
-        setResolvedSrc(null);
-        setHasError(true);
-      }
-      setIsLoading(false);
-    });
+    void resolveDriveImageSrc(trimmed, retryCount > 0)
+      .then((result) => {
+        if (cancelled) return;
+        if (result) {
+          setResolvedSrc(result);
+          setHasError(false);
+        } else {
+          setResolvedSrc(null);
+          setHasError(true);
+        }
+        setIsLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedSrc(null);
+          setHasError(true);
+          setIsLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -183,13 +191,17 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
         }
         if (!triedAppsScriptFallback && extractDriveFileId(trimmed)) {
           setTriedAppsScriptFallback(true);
-          void resolveDriveImageSrc(trimmed, true).then((base64OrUrl) => {
-            if (base64OrUrl && base64OrUrl !== resolvedSrc) {
-              setResolvedSrc(base64OrUrl);
-            } else {
+          void resolveDriveImageSrc(trimmed, true)
+            .then((base64OrUrl) => {
+              if (base64OrUrl && base64OrUrl !== resolvedSrc) {
+                setResolvedSrc(base64OrUrl);
+              } else {
+                setHasError(true);
+              }
+            })
+            .catch(() => {
               setHasError(true);
-            }
-          });
+            });
           return;
         }
         setHasError(true);

@@ -41,6 +41,9 @@ import {
   PackageMinus,
   Disc,
   ChevronsUpDown,
+  Layers,
+  PlusCircle,
+  FileText,
 } from 'lucide-react';
 import {
   GOOGLE_SHEET_ID,
@@ -85,6 +88,7 @@ import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
 import { TireStockModal } from './components/TireStockModal';
 import { FuelCharts } from './components/FuelCharts';
+import { FuelMonthlySummaryView } from './components/FuelMonthlySummaryView';
 import { JobTransferStatsView } from './components/JobTransferStatsView';
 import { EmployeeManagementView } from './components/EmployeeManagementView';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
@@ -519,6 +523,7 @@ export default function App() {
   const [isJobModalOpen, setIsJobModalOpen] = useState<boolean>(false);
   const [isDeliveryPointModalOpen, setIsDeliveryPointModalOpen] = useState<boolean>(false);
   const [isFuelModalOpen, setIsFuelModalOpen] = useState<boolean>(false);
+  const [fuelViewMode, setFuelViewMode] = useState<'summary' | 'rawTable'>('summary');
   const [isTireModalOpen, setIsTireModalOpen] = useState<boolean>(false);
   const [tireModalInitType, setTireModalInitType] = useState<'IN' | 'OUT'>('OUT');
   const [tireModalInitCode, setTireModalInitCode] = useState<string>('');
@@ -529,6 +534,8 @@ export default function App() {
   const [attachingPhotoRow, setAttachingPhotoRow] = useState<SheetRow | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  // Accordion toggle state for sidebar menus with submenus (hidden by default)
+  const [expandedSidebarSubmenus, setExpandedSidebarSubmenus] = useState<Record<string, boolean>>({});
 
   // Selection & batch completion state for in-transit rows in บันทึกการย้ายงาน (gid: 606634465)
   const [selectedInTransitKeys, setSelectedInTransitKeys] = useState<Set<string>>(new Set());
@@ -903,7 +910,7 @@ function playNotificationChime() {
 
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes
   useEffect(() => {
-    void loadData({ silent: false });
+    void loadData({ silent: false }).catch(() => {});
     return () => {
       abortControllerRef.current?.abort('unmount');
     };
@@ -982,7 +989,7 @@ function playNotificationChime() {
     if (refreshIntervalSec <= 0) return;
     const timer = setInterval(() => {
       if (isFetchingRef.current) return;
-      loadData({ silent: true });
+      void loadData({ silent: true }).catch(() => {});
     }, refreshIntervalSec * 1000);
     return () => clearInterval(timer);
   }, [refreshIntervalSec, loadData]);
@@ -998,6 +1005,7 @@ function playNotificationChime() {
     setDeepSearchTerm('');
     setSelectedColumnId('ALL');
     setQuickFilterValue('ALL');
+    setFuelViewMode('summary');
     setTireLowStockOnly(false);
     setStartDateFilter('');
     setEndDateFilter('');
@@ -2329,12 +2337,26 @@ function playNotificationChime() {
                 }
               };
 
+              const isTireStockTab = tab.gid === '1031154414';
+              const hasSubmenu = isJobTransferTab || isRepairTab || isFuelTab || isTireStockTab;
+              const isSubmenuExpanded = Boolean(expandedSidebarSubmenus[tab.gid]);
+
+              const handleMainMenuClick = () => {
+                if (hasSubmenu) {
+                  setExpandedSidebarSubmenus((prev) => ({
+                    ...prev,
+                    [tab.gid]: !prev[tab.gid],
+                  }));
+                }
+                handleSelectTab(tab);
+              };
+
               return (
                 <div key={tab.gid} className="space-y-1">
                   {/* เมนูหลัก: เด่นชัด มีกรอบไอคอนและตัวอักษรหนา */}
                   <button
                     type="button"
-                    onClick={() => handleSelectTab(tab)}
+                    onClick={handleMainMenuClick}
                     className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
                       isSelected
                         ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
@@ -2368,21 +2390,37 @@ function playNotificationChime() {
                         </div>
                       </div>
                     </div>
-                    <ChevronRight
-                      className={`ml-1.5 h-4 w-4 shrink-0 transition-transform ${
-                        isSelected
-                          ? 'text-amber-300 translate-x-0.5'
-                          : 'text-slate-300 group-hover:text-slate-500'
-                      }`}
-                    />
+                    {hasSubmenu ? (
+                      <ChevronDown
+                        className={`ml-1.5 h-4 w-4 shrink-0 transition-transform duration-200 ${
+                          isSubmenuExpanded
+                            ? 'rotate-180 ' + (isSelected ? 'text-amber-300' : 'text-slate-700')
+                            : isSelected
+                            ? 'text-amber-300'
+                            : 'text-slate-400 group-hover:text-slate-600'
+                        }`}
+                      />
+                    ) : (
+                      <ChevronRight
+                        className={`ml-1.5 h-4 w-4 shrink-0 transition-transform ${
+                          isSelected
+                            ? 'text-amber-300 translate-x-0.5'
+                            : 'text-slate-300 group-hover:text-slate-500'
+                        }`}
+                      />
+                    )}
                   </button>
 
                   {/* เมนูย่อยของ บันทึกการย้ายงาน */}
-                  {isJobTransferTab && (
-                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                  {isJobTransferTab && isSubmenuExpanded && (
+                    <div
+                      className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5 transition-all duration-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           if (activeTab.gid !== '606634465' || showJobTransferStats) {
                             handleSelectTab(tab);
@@ -2397,7 +2435,8 @@ function playNotificationChime() {
 
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           setShowEmployeeManagement(false);
                           if (activeTab.gid !== '606634465') {
@@ -2417,12 +2456,16 @@ function playNotificationChime() {
                     </div>
                   )}
 
-                  {/* เมนูย่อยของ บันทึกงานซ่อม (ขนาดกะทัดรัด เยื้องเข้าด้านใน ไม่แย่งความเด่นเมนูหลัก) */}
-                  {isRepairTab && (
-                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                  {/* เมนูย่อยของ บันทึกงานซ่อม */}
+                  {isRepairTab && isSubmenuExpanded && (
+                    <div
+                      className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5 transition-all duration-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           if (activeTab.gid !== '944294225') {
                             handleSelectTab(tab);
@@ -2437,7 +2480,8 @@ function playNotificationChime() {
 
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           setIsApprovalModalOpen(true);
                         }}
@@ -2456,12 +2500,16 @@ function playNotificationChime() {
                     </div>
                   )}
 
-                  {/* เมนูย่อยของ บันทึกน้ำมัน (ขนาดกะทัดรัด เยื้องเข้าด้านใน) */}
-                  {isFuelTab && (
-                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                  {/* เมนูย่อยของ บันทึกน้ำมัน */}
+                  {isFuelTab && isSubmenuExpanded && (
+                    <div
+                      className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5 transition-all duration-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           if (activeTab.gid !== '1733355146') {
                             handleSelectTab(tab);
@@ -2477,11 +2525,15 @@ function playNotificationChime() {
                   )}
 
                   {/* เมนูย่อยของ STOCK ยาง */}
-                  {tab.gid === '1031154414' && (
-                    <div className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5">
+                  {isTireStockTab && isSubmenuExpanded && (
+                    <div
+                      className="ml-6 pl-3 border-l border-slate-200 space-y-0.5 py-0.5 transition-all duration-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsSidebarOpen(false);
                           if (activeTab.gid !== '1031154414') {
                             handleSelectTab(tab);
@@ -3700,8 +3752,66 @@ function playNotificationChime() {
             </div>
           )}
 
-          {/* Fuel Charts section for tab 1733355146 */}
+          {/* Mode Switcher for Fuel Tab (1733355146) */}
           {activeTab.gid === '1733355146' && (
+            <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-white p-2.5 shadow-2xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFuelViewMode('summary')}
+                  className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-bold transition-all ${
+                    fuelViewMode === 'summary'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <Layers className="h-4 w-4" />
+                  <span>ตารางสรุปรับเข้า-เบิกออก แต่ละเดือน (ดูรายวัน)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFuelViewMode('rawTable')}
+                  className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-bold transition-all ${
+                    fuelViewMode === 'rawTable'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <FileText className="h-4 w-4" />
+                  <span>
+                    ตารางรายการทั้งหมด ({sheetData?.rows.length.toLocaleString('th-TH') ?? 0} แถว)
+                  </span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsFuelModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+              >
+                <PlusCircle className="h-4 w-4" />
+                <span>+ บันทึกรับเข้า-เบิกออกน้ำมัน</span>
+              </button>
+            </div>
+          )}
+
+          {/* Monthly & Daily Summary View for Fuel Tab */}
+          {activeTab.gid === '1733355146' && fuelViewMode === 'summary' && (
+            <div className="mt-3">
+              <FuelMonthlySummaryView
+                rows={sheetData?.rows ?? []}
+                columns={sheetData?.columns}
+                onSelectRow={setSelectedRow}
+                onOpenFuelModal={() => setIsFuelModalOpen(true)}
+                onRefreshData={handleManualSync}
+                isRefreshing={isRefreshing}
+              />
+            </div>
+          )}
+
+          {/* Fuel Charts section for tab 1733355146 (Visible in rawTable mode) */}
+          {activeTab.gid === '1733355146' && fuelViewMode === 'rawTable' && (
             <div className="mt-4">
               <FuelCharts
                 rows={sheetData?.rows ?? []}
@@ -3739,7 +3849,8 @@ function playNotificationChime() {
           )}
 
           {/* Main Data Table Card */}
-          <div className="mt-2.5 sm:mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+          {(activeTab.gid !== '1733355146' || fuelViewMode === 'rawTable') && (
+            <div className="mt-2.5 sm:mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
             {/* Toolbar on top of STOCK ยาง table */}
             {activeTab.gid === '1031154414' && (
               <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 sm:px-4">
@@ -5080,6 +5191,7 @@ function playNotificationChime() {
             </div>
           )}
           </div>
+          )}
           </div>
           </div>
         </main>

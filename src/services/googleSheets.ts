@@ -57,7 +57,9 @@ export function safeBackendFetch(url: string, init?: RequestInit): Promise<Respo
       return res;
     })
     .catch((err) => {
-      // Never permanently disable backend API on AbortError or transient network hiccups
+      if ((err as { name?: string })?.name === 'AbortError' || String(err?.message || err).includes('aborted')) {
+        return new Response(JSON.stringify({ error: 'aborted' }), { status: 499 });
+      }
       throw err;
     });
 }

@@ -6,11 +6,11 @@
     <script>
       (function() {
         try {
-          var currentFetch = window.fetch;
-          var customFetch = currentFetch ? currentFetch.bind(window) : undefined;
+          var originalFetch = window.fetch;
+          var customFetch = originalFetch ? originalFetch.bind(window) : undefined;
           var descriptor = {
             get: function() {
-              return customFetch || window.fetch;
+              return customFetch || originalFetch;
             },
             set: function(fn) {
               customFetch = fn;
@@ -29,6 +29,18 @@
         } catch (e) {
           // ignore
         }
+
+        // Global safeguard: suppress unhandled AbortErrors from background fetches, cancellation, or extension interceptors
+        window.addEventListener('unhandledrejection', function(event) {
+          if (
+            event.reason &&
+            (event.reason.name === 'AbortError' ||
+             String(event.reason.message || event.reason).includes('aborted') ||
+             String(event.reason.message || event.reason).includes('AbortError'))
+          ) {
+            event.preventDefault();
+          }
+        });
       })();
     </script>
     <title>ระบบจัดการข้อมูลการขนส่งและงานซ่อมบำรุง</title>
