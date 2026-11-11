@@ -610,7 +610,10 @@ function playNotificationChime() {
     }
 
     try {
-      const reg = await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+      const existingReg = await navigator.serviceWorker.getRegistration('/');
+      const reg =
+        existingReg ??
+        (await navigator.serviceWorker.register('/push-sw.js', { scope: '/' }));
       await navigator.serviceWorker.ready;
 
       if (!('pushManager' in reg)) {
@@ -766,7 +769,7 @@ function playNotificationChime() {
   const loadData = useCallback(
     async (options?: { silent?: boolean; remoteSearch?: string }) => {
       if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        abortControllerRef.current.abort('superseded');
       }
       if (syncTimeoutRef.current) {
         clearTimeout(syncTimeoutRef.current);
@@ -816,7 +819,10 @@ function playNotificationChime() {
           }
         }
       } catch (err: unknown) {
-        if (controller.signal.aborted) {
+        if (
+          controller.signal.aborted ||
+          (err as { name?: string })?.name === 'AbortError'
+        ) {
           return;
         }
         setError(
@@ -850,9 +856,9 @@ function playNotificationChime() {
 
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes
   useEffect(() => {
-    loadData({ silent: false });
+    void loadData({ silent: false });
     return () => {
-      abortControllerRef.current?.abort();
+      abortControllerRef.current?.abort('unmount');
     };
   }, [loadData]);
 
@@ -870,7 +876,15 @@ function playNotificationChime() {
     }
 
     if ('serviceWorker' in navigator) {
-      void navigator.serviceWorker.register('/push-sw.js', { scope: '/' }).catch(() => {});
+      void navigator.serviceWorker
+        .getRegistration('/')
+        .then((existingReg) => {
+          if (!existingReg) {
+            return navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+          }
+          return existingReg;
+        })
+        .catch(() => {});
 
       if ('Notification' in window && Notification.permission === 'granted') {
         void registerAndSubscribeWebPush();

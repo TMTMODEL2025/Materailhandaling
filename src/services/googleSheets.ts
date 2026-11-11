@@ -46,33 +46,28 @@ const LOCAL_MUTATIONS_STORAGE_KEY = 'gsheets_local_mutations_v3';
 export let isBackendApiAvailable: boolean | null = null;
 
 export function safeBackendFetch(url: string, init?: RequestInit): Promise<Response> | null {
-  if (isBackendApiAvailable === false) return null;
   return fetch(url, init)
     .then((res) => {
-      if (res.status === 404) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.status === 404 && contentType.includes('text/html')) {
         isBackendApiAvailable = false;
+      } else if (res.ok && contentType.includes('application/json')) {
+        isBackendApiAvailable = true;
       }
       return res;
     })
     .catch((err) => {
-      isBackendApiAvailable = false;
+      // Never permanently disable backend API on AbortError or transient network hiccups
       throw err;
     });
 }
 
 export function backendPost(url: string, bodyObj: unknown, method = 'POST'): void {
-  if (isBackendApiAvailable === false) return;
   fetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyObj),
-  })
-    .then((res) => {
-      if (res.status === 404) isBackendApiAvailable = false;
-    })
-    .catch(() => {
-      isBackendApiAvailable = false;
-    });
+  }).catch(() => {});
 }
 
 
@@ -1100,16 +1095,20 @@ async function executeAppsScriptWebhookForUrl(
   error?: string;
   photoUrls?: string[];
 }> {
-  // 1. Primary Attempt: Call Serverless Proxy (/api/webhook-proxy) first to avoid browser CORS limits
-  if (isBackendApiAvailable !== false) {
-    try {
-      const proxyRes = await fetch('/api/webhook-proxy', {
+  // 1. Primary Attempt: Always try Serverless Proxy (/api/webhook-proxy) first to avoid browser CORS limits in production
+  try {
+    const proxyRes = await Promise.race([
+      fetch('/api/webhook-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scriptUrl: targetUrl, payload }),
-      });
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 18000)),
+    ]);
 
-      if (proxyRes.ok) {
+    if (proxyRes && proxyRes.ok) {
+      const contentType = proxyRes.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
         const pData = (await proxyRes.json()) as {
           ok?: boolean;
           rowNumber?: number | null;
@@ -1124,12 +1123,10 @@ async function executeAppsScriptWebhookForUrl(
         if (pData && pData.error) {
           lastWebhookError = pData.error;
         }
-      } else if (proxyRes.status === 404) {
-        isBackendApiAvailable = false;
       }
-    } catch {
-      // proxy unavailable or network error, fall through to direct fetch
     }
+  } catch {
+    // proxy unavailable or network error, fall through to direct fetch
   }
 
   // 2. Secondary Attempt: Direct fetch from browser using simple request (text/plain) & redirect: 'follow'
@@ -1242,54 +1239,59 @@ async function callAppsScriptWebhook(
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
 void (async () => {
-  if (isBackendApiAvailable === false) return;
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1200);
-    const tokenPromise = safeBackendFetch('/api/google-token', { signal: ctrl.signal });
-    const scriptPromise = safeBackendFetch('/api/script-url', { signal: ctrl.signal });
-    if (!tokenPromise || !scriptPromise) {
-      clearTimeout(timer);
-      return;
-    }
-    const [tokenRes, scriptRes] = await Promise.allSettled([tokenPromise, scriptPromise]);
-    clearTimeout(timer);
+    const fetchWithTimeout = (url: string, ms = 4000): Promise<Response | null> =>
+      Promise.race([
+        fetch(url).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+      ]);
 
-    if (tokenRes.status === 'fulfilled' && tokenRes.value.ok) {
-      const data = (await tokenRes.value.json()) as {
-        accessToken?: string | null;
-        expiresAt?: number;
-      };
-      if (
-        data.accessToken &&
-        data.expiresAt &&
-        data.expiresAt > Date.now() + 30000
-      ) {
-        cachedAccessToken = data.accessToken;
-        cachedTokenExpiresAt = data.expiresAt;
+    const [tokenRes, scriptRes] = await Promise.all([
+      fetchWithTimeout('/api/google-token'),
+      fetchWithTimeout('/api/script-url'),
+    ]);
+
+    if (tokenRes && tokenRes.ok) {
+      const contentType = tokenRes.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = (await tokenRes.json()) as {
+          accessToken?: string | null;
+          expiresAt?: number;
+        };
+        if (
+          data.accessToken &&
+          data.expiresAt &&
+          data.expiresAt > Date.now() + 30000
+        ) {
+          cachedAccessToken = data.accessToken;
+          cachedTokenExpiresAt = data.expiresAt;
+        }
       }
     }
 
-    if (scriptRes.status === 'fulfilled' && scriptRes.value.ok) {
-      const sData = (await scriptRes.value.json()) as {
-        scriptUrl?: string | null;
-      };
-      if (
-        sData.scriptUrl &&
-        sData.scriptUrl.startsWith('https://script.google.com/')
-      ) {
-        const norm = normalizeAppsScriptUrl(sData.scriptUrl);
+    if (scriptRes && scriptRes.ok) {
+      const contentType = scriptRes.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const sData = (await scriptRes.json()) as {
+          scriptUrl?: string | null;
+        };
         if (
-          !configuredAppsScriptUrl ||
-          configuredAppsScriptUrl.includes('/dev') ||
-          configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
-          configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
+          sData.scriptUrl &&
+          sData.scriptUrl.startsWith('https://script.google.com/')
         ) {
-          configuredAppsScriptUrl = norm;
-          try {
-            localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, norm);
-          } catch {
-            // ignore
+          const norm = normalizeAppsScriptUrl(sData.scriptUrl);
+          if (
+            !configuredAppsScriptUrl ||
+            configuredAppsScriptUrl.includes('/dev') ||
+            configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
+            configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
+          ) {
+            configuredAppsScriptUrl = norm;
+            try {
+              localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, norm);
+            } catch {
+              // ignore
+            }
           }
         }
       }
@@ -1914,37 +1916,24 @@ function writeLocalMutationsStore(store: MutationsStore): void {
 }
 
 async function fetchCombinedMutationsStore(
-  signal?: AbortSignal
+  _signal?: AbortSignal
 ): Promise<MutationsStore> {
   const local = readLocalMutationsStore();
   if (isBackendApiAvailable === false) {
     return local;
   }
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1200);
-    const combinedSignal = signal
-      ? AbortSignal.any
-        ? AbortSignal.any([signal, ctrl.signal])
-        : ctrl.signal
-      : ctrl.signal;
-    const fetchPromise = safeBackendFetch('/api/mutations', {
-      signal: combinedSignal,
-      headers: { Accept: 'application/json' },
-    });
-    if (!fetchPromise) {
-      clearTimeout(timer);
-      return local;
-    }
-    const res = await fetchPromise;
-    clearTimeout(timer);
-    if (!res.ok || res.status === 404) {
-      isBackendApiAvailable = false;
+    const res = await Promise.race([
+      fetch('/api/mutations', {
+        headers: { Accept: 'application/json' },
+      }).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
+    if (!res || !res.ok) {
       return local;
     }
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      isBackendApiAvailable = false;
       return local;
     }
     const remote = (await res.json()) as Partial<MutationsStore>;
@@ -2695,6 +2684,36 @@ function formatGvizCellValue(cell: GvizCell | null | undefined): string {
 
 const inFlightGvizMap = new Map<string, Promise<GvizResponse>>();
 
+async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<string> {
+  let timerId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const fetchPromise = fetch(url).then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      if (!text.includes('google.visualization.Query.setResponse')) {
+        throw new Error('Invalid Gviz format');
+      }
+      return text;
+    });
+    // Prevent unhandled rejection if timeout wins the race
+    fetchPromise.catch(() => {});
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => {
+        reject(
+          new Error(
+            'การดึงข้อมูลจาก Google Sheets ใช้เวลานานเกินกำหนด กรุณากดซิงค์ข้อมูลอีกครั้ง'
+          )
+        );
+      }, timeoutMs);
+    });
+
+    return await Promise.race([fetchPromise, timeoutPromise]);
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
+}
+
 async function queryGviz(
   gid: string,
   tq: string,
@@ -2720,55 +2739,27 @@ async function queryGviz(
     const directUrl = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
     const proxyUrl = `/api/sheet-proxy?${params.toString()}`;
 
-    sharedPromise = (async () => {
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const rawPromise = (async () => {
+      let rawText = '';
       try {
-        // Race direct fetch with server-side proxy
-        const fetchDirect = async () => {
-          const res = await fetch(directUrl, { signal: timeoutController.signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const text = await res.text();
-          if (!text.includes('google.visualization.Query.setResponse')) {
-            throw new Error('Invalid Gviz format');
-          }
-          return text;
-        };
-
-        const fetchProxy = async () => {
-          const res = await fetch(proxyUrl, { signal: timeoutController.signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const text = await res.text();
-          if (!text.includes('google.visualization.Query.setResponse')) {
-            throw new Error('Invalid Gviz format');
-          }
-          return text;
-        };
-
-        let rawText = '';
+        // 1. Primary: Direct browser fetch to Google Sheets GViz (works in both Dev and Deployed environments)
+        rawText = await fetchTextWithTimeout(directUrl, timeoutMs);
+      } catch (directErr) {
+        // 2. Fallback: Server-side proxy if direct browser fetch failed
         try {
-          rawText = await Promise.any([fetchDirect(), fetchProxy()]);
+          rawText = await fetchTextWithTimeout(proxyUrl, Math.min(timeoutMs, 20000));
         } catch {
-          // If Promise.any failed, wait for either or throw
-          try {
-            rawText = await fetchDirect();
-          } catch {
-            rawText = await fetchProxy();
-          }
+          throw directErr;
         }
-
-        return parseGvizJson(rawText);
-      } catch (err: unknown) {
-        if (timeoutController.signal.aborted) {
-          throw new Error('การดึงข้อมูลจาก Google Sheets ใช้เวลานานเกินกำหนด กรุณากดซิงค์ข้อมูลอีกครั้ง');
-        }
-        throw err;
-      } finally {
-        clearTimeout(timeoutId);
       }
-    })().finally(() => {
+      return parseGvizJson(rawText);
+    })();
+
+    sharedPromise = rawPromise.finally(() => {
       inFlightGvizMap.delete(cacheKey);
     });
+    // Prevent unhandled promise rejection in V8/Chrome if caller aborts early
+    sharedPromise.catch(() => {});
 
     inFlightGvizMap.set(cacheKey, sharedPromise);
   }
@@ -2937,7 +2928,10 @@ export async function fetchSheetTabData(
         );
         isDescendingOrdered = true;
       }
-    } catch {
+    } catch (err) {
+      if (options?.signal?.aborted || (err as { name?: string })?.name === 'AbortError') {
+        throw err;
+      }
       // Fallback to select * limit N
       dataResponse = await queryGviz(
         tab.gid,
@@ -5353,9 +5347,10 @@ export async function fetchEmployeeAccounts(options?: {
 
   const [accountCsvRes, vehicleRes, transferEmpRes] = await Promise.allSettled([
     fetch(
-      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`,
-      { signal: options?.signal }
-    ).then((r) => (r.ok ? r.text() : '')),
+      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
+    )
+      .then((r) => (r.ok ? r.text() : ''))
+      .catch(() => ''),
     queryGviz('378250263', 'select A, C, I, J, K, L, M, O, P limit 500', options?.signal, 15000),
     queryGviz(
       '606634465',
