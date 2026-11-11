@@ -1087,6 +1087,7 @@ async function startServer() {
     }
 
     writeStore(store);
+    sheetProxyCache.clear();
     res.json({ ok: true });
   });
 
@@ -1119,6 +1120,7 @@ async function startServer() {
     }
 
     writeStore(store);
+    sheetProxyCache.clear();
     res.json({ ok: true, entry });
   });
 

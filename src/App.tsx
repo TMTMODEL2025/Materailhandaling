@@ -60,6 +60,14 @@ import {
   extractTireSafetyStock,
   parseTireNumericCell,
   isTireLowStock,
+  fetchEmployeeAccounts,
+  buildVehicleDriverOptions,
+  matchVehicleDriverOption,
+  assignVehicleDriver,
+  EmployeeAccountRecord,
+  VehicleDriverOption,
+  KNOWN_DRIVER_EMP_CODES,
+  normalizeDriverNameKey,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
@@ -536,6 +544,24 @@ export default function App() {
   );
   const [isUpdatingGate, setIsUpdatingGate] = useState<boolean>(false);
 
+  // Employee accounts from Account sheet for "ชื่อพนักงานประจำรถ" Dropdown in ฐานข้อมูลรถ
+  const [employeeAccounts, setEmployeeAccounts] = useState<EmployeeAccountRecord[]>([]);
+  const [updatingDriverRowNumber, setUpdatingDriverRowNumber] = useState<number | null>(null);
+  const vehicleDriverOptions = useMemo<VehicleDriverOption[]>(
+    () => buildVehicleDriverOptions(employeeAccounts),
+    [employeeAccounts]
+  );
+
+  useEffect(() => {
+    void fetchEmployeeAccounts()
+      .then((accounts) => {
+        if (accounts.length > 0) {
+          setEmployeeAccounts(accounts);
+        }
+      })
+      .catch(() => {});
+  }, [activeTab.gid]);
+
 function playNotificationChime() {
   try {
     const AudioCtx =
@@ -802,6 +828,16 @@ function playNotificationChime() {
 
         setSheetData(result);
 
+        if (activeTab.gid === '378250263') {
+          void fetchEmployeeAccounts()
+            .then((accounts) => {
+              if (!controller.signal.aborted && accounts.length > 0) {
+                setEmployeeAccounts(accounts);
+              }
+            })
+            .catch(() => {});
+        }
+
         if (activeTab.gid === '944294225') {
           handleUpdateRepairRows(result.rows);
         } else {
@@ -961,6 +997,133 @@ function playNotificationChime() {
     setEditingGateRowNumber(null);
     setEditingColumnId(null);
     setConfirmingGateRowNumber(null);
+  };
+
+  const handleAssignVehicleDriver = useCallback(
+    async (row: SheetRow, selectedDriverName: string) => {
+      const cleanSelected = selectedDriverName.replace(/\s+/g, ' ').trim();
+      const matched = matchVehicleDriverOption(cleanSelected, vehicleDriverOptions);
+      const finalDriverName = matched ? matched.fullName : cleanSelected;
+      const finalEmpCode = finalDriverName
+        ? matched?.employeeCode ||
+          KNOWN_DRIVER_EMP_CODES[normalizeDriverNameKey(finalDriverName)] ||
+          ''
+        : '';
+      const finalEmpImage = finalDriverName
+        ? matched?.image || undefined
+        : '';
+      const vehicleReg = (row.values['A'] ?? '').trim() || `#${row.rowNumber}`;
+
+      setUpdatingDriverRowNumber(row.rowNumber);
+      setError(null);
+      try {
+        const res = await assignVehicleDriver({
+          rowNumber: row.rowNumber,
+          driverName: finalDriverName,
+          employeeCode: finalEmpCode,
+          employeeImage: finalEmpImage,
+        });
+
+        row.values['I'] = res.driverName;
+        row.rawValues['I'] = res.driverName;
+        row.values['P'] = res.employeeCode;
+        row.rawValues['P'] = res.employeeCode;
+        if (res.employeeImage !== undefined) {
+          row.values['M'] = res.employeeImage;
+          row.rawValues['M'] = res.employeeImage;
+        }
+
+        setSheetData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            rows: prev.rows.map((r) =>
+              r.rowNumber === row.rowNumber
+                ? {
+                    ...r,
+                    values: {
+                      ...r.values,
+                      I: res.driverName,
+                      P: res.employeeCode,
+                      ...(res.employeeImage !== undefined ? { M: res.employeeImage } : {}),
+                    },
+                    rawValues: {
+                      ...r.rawValues,
+                      I: res.driverName,
+                      P: res.employeeCode,
+                      ...(res.employeeImage !== undefined ? { M: res.employeeImage } : {}),
+                    },
+                  }
+                : r
+            ),
+          };
+        });
+
+        const msg = res.driverName
+          ? `ผูกข้อมูลพนักงาน "${res.driverName}"${res.employeeCode ? ` (รหัส ${res.employeeCode})` : ''} กับรถ ${vehicleReg} เรียบร้อยแล้ว`
+          : `ถอดรายชื่อพนักงานประจำรถออกจากรถ ${vehicleReg} เรียบร้อยแล้ว`;
+        setSaveSuccessMsg(msg);
+        showSuccessToast('อัปเดตพนักงานประจำรถสำเร็จ!', msg);
+        void loadData({ silent: true });
+        setTimeout(() => setSaveSuccessMsg(null), 5000);
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'เกิดข้อผิดพลาดในการบันทึกข้อมูลพนักงานประจำรถ'
+        );
+      } finally {
+        setUpdatingDriverRowNumber(null);
+      }
+    },
+    [vehicleDriverOptions, loadData]
+  );
+
+  const renderVehicleDriverSelectCell = (row: SheetRow, rawVal: string) => {
+    const cleanVal = rawVal === '-' ? '' : rawVal.replace(/\s+/g, ' ').trim();
+    const matched = matchVehicleDriverOption(cleanVal, vehicleDriverOptions);
+    const selectVal = matched ? matched.fullName : cleanVal;
+    const currentEmpCode = matched?.employeeCode || (row.values['P'] ?? '').trim();
+    const isRowSaving = updatingDriverRowNumber === row.rowNumber;
+
+    return (
+      <div
+        className="flex items-center gap-1.5 min-w-[210px] sm:min-w-[240px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <select
+          value={selectVal}
+          disabled={isRowSaving}
+          onChange={(e) => {
+            void handleAssignVehicleDriver(row, e.target.value);
+          }}
+          title={
+            selectVal
+              ? `${currentEmpCode && currentEmpCode !== '-' ? `${currentEmpCode} - ` : ''}${selectVal}`
+              : 'เลือกพนักงานประจำรถจากชีต Account'
+          }
+          className={`w-full rounded-md border px-2 py-1 text-xs font-semibold transition-colors focus:border-slate-900 focus:outline-none shadow-2xs ${
+            selectVal
+              ? 'border-slate-300 bg-white text-slate-900 hover:border-slate-400'
+              : 'border-dashed border-slate-300 bg-slate-50/80 text-slate-500 hover:border-slate-400'
+          } ${isRowSaving ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
+        >
+          <option value="">-- ไม่ระบุพนักงาน (ว่าง) --</option>
+          {cleanVal && !matched && (
+            <option value={cleanVal}>
+              {currentEmpCode && currentEmpCode !== '-'
+                ? `${currentEmpCode} - ${cleanVal}`
+                : cleanVal}
+            </option>
+          )}
+          {vehicleDriverOptions.map((opt) => (
+            <option key={opt.normalizedKey || opt.fullName} value={opt.fullName}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
   };
 
   const handleConfirmGateUpdate = async (row: SheetRow) => {
@@ -4356,6 +4519,10 @@ function playNotificationChime() {
                                             </button>
                                           )}
                                         </div>
+                                      ) : activeTab.gid === '378250263' &&
+                                        (col.id === 'I' ||
+                                          col.label.trim() === 'ชื่อพนักงานประจำรถ') ? (
+                                        renderVehicleDriverSelectCell(row, val)
                                       ) : (
                                         renderHighlightedText(val)
                                       )}
@@ -4784,6 +4951,10 @@ function playNotificationChime() {
                               renderJobTransferStatusBadge(
                                 getRowJobTransferStatus(row, sheetData?.columns)
                               )
+                            ) : activeTab.gid === '378250263' &&
+                              (col.id === 'I' ||
+                                col.label.trim() === 'ชื่อพนักงานประจำรถ') ? (
+                              renderVehicleDriverSelectCell(row, val)
                             ) : (
                               renderHighlightedText(val)
                             )}
@@ -5181,7 +5352,13 @@ function playNotificationChime() {
           loadData({ silent: true });
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}
+        driverOptions={vehicleDriverOptions}
+        onAssignVehicleDriver={handleAssignVehicleDriver}
         onUpdateVehicleField={async (row, colId, newValue) => {
+          if (colId === 'I' || colId === 'ชื่อพนักงานประจำรถ') {
+            await handleAssignVehicleDriver(row, newValue);
+            return row.values['I'] ?? newValue;
+          }
           const oldReg = (row.values['A'] ?? '').trim();
           const drvName = (row.values['I'] ?? '').trim();
           const shf = (row.values['L'] ?? '').trim();

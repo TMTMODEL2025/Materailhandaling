@@ -453,6 +453,72 @@ app.post('/api/mutations/tire-stock', (req, res) => {
   res.json({ ok: true, edit: entry });
 });
 
+app.put('/api/mutations/vehicle-registration', (req, res) => {
+  const store = readStore();
+  const { oldRegistration, newRegistration, driverName, shift } = req.body ?? {};
+  const oldReg = String(oldRegistration ?? '').trim();
+  const newReg = String(newRegistration ?? '').trim();
+  if (!oldReg || !newReg) {
+    res.status(400).json({ error: 'กรุณาระบุทะเบียนรถ' });
+    return;
+  }
+  if (!Array.isArray(store.vehicleRegEdits)) store.vehicleRegEdits = [];
+  const existingIdx = store.vehicleRegEdits.findIndex(
+    (e: any) =>
+      e.oldRegistration === oldReg &&
+      (!driverName || e.driverName === String(driverName).trim())
+  );
+  const entry = {
+    oldRegistration: oldReg,
+    newRegistration: newReg,
+    driverName: String(driverName ?? '').trim(),
+    shift: String(shift ?? '').trim(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (existingIdx >= 0) {
+    store.vehicleRegEdits[existingIdx] = entry;
+  } else {
+    store.vehicleRegEdits.push(entry);
+  }
+  writeStore(store);
+  sheetProxyCache.clear();
+  res.json({ ok: true });
+});
+
+app.put('/api/mutations/vehicle-field', (req, res) => {
+  const store = readStore();
+  const { rowNumber, colId, newValue } = req.body ?? {};
+  const rn = typeof rowNumber === 'number' ? rowNumber : Number(rowNumber) || 0;
+  const cid = String(colId ?? '').trim().toUpperCase();
+  const val = String(newValue ?? '').trim();
+
+  if (rn <= 0 || !cid) {
+    res.status(400).json({ error: 'ข้อมูลแถวหรือคอลัมน์ไม่ครบถ้วน' });
+    return;
+  }
+
+  if (!Array.isArray(store.vehicleFieldEdits)) store.vehicleFieldEdits = [];
+  const existingIdx = store.vehicleFieldEdits.findIndex(
+    (e: any) => e.rowNumber === rn && e.colId === cid
+  );
+  const entry = {
+    rowNumber: rn,
+    colId: cid,
+    value: val,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    store.vehicleFieldEdits[existingIdx] = entry;
+  } else {
+    store.vehicleFieldEdits.push(entry);
+  }
+
+  writeStore(store);
+  sheetProxyCache.clear();
+  res.json({ ok: true, entry });
+});
+
 app.all('*', (_req, res) => {
   res.json({ ok: true });
 });

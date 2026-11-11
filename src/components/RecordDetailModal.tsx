@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { X, Check, Camera, Pencil, Upload } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
-import { isPhotoValue } from '../services/googleSheets';
+import {
+  isPhotoValue,
+  matchVehicleDriverOption,
+  VehicleDriverOption,
+} from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { showSuccessToast } from '../utils/swal';
 
@@ -50,6 +54,8 @@ interface RecordDetailModalProps {
   onUpdateReplyDetails?: (row: SheetRow, newReply: string) => Promise<void>;
   onUpdateFinancialDetails?: (row: SheetRow, spareParts: string, labor: string) => Promise<void>;
   onUpdateVehicleField?: (row: SheetRow, colId: string, newValue: string) => Promise<string | void>;
+  onAssignVehicleDriver?: (row: SheetRow, selectedDriverName: string) => Promise<void>;
+  driverOptions?: VehicleDriverOption[];
   onInspectRepair?: (row: SheetRow, inspectorName: string) => Promise<void>;
 }
 
@@ -63,6 +69,8 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   onUpdateReplyDetails,
   onUpdateFinancialDetails,
   onUpdateVehicleField,
+  onAssignVehicleDriver,
+  driverOptions = [],
   onInspectRepair,
 }) => {
   const [editingColId, setEditingColId] = useState<string | null>(null);
@@ -113,7 +121,13 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
 
   const startEditing = (colId: string, currentVal: string) => {
     setEditingColId(colId);
-    setEditValue(currentVal === '-' ? '' : currentVal);
+    if (isVehicleTab && (colId === 'I' || colId === 'ชื่อพนักงานประจำรถ')) {
+      const cleanCurr = currentVal === '-' ? '' : currentVal.replace(/\s+/g, ' ').trim();
+      const matched = matchVehicleDriverOption(cleanCurr, driverOptions);
+      setEditValue(matched ? matched.fullName : cleanCurr);
+    } else {
+      setEditValue(currentVal === '-' ? '' : currentVal);
+    }
     setSaveSuccessColId(null);
   };
 
@@ -123,6 +137,18 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
     try {
       const cleanVal = editValue.trim();
       const targetCol = columns.find((c) => c.id === colId);
+
+      if (
+        isVehicleTab &&
+        (colId === 'I' || targetCol?.label.trim() === 'ชื่อพนักงานประจำรถ') &&
+        onAssignVehicleDriver
+      ) {
+        await onAssignVehicleDriver(row, cleanVal);
+        setEditingColId(null);
+        setSaveSuccessColId(colId);
+        setTimeout(() => setSaveSuccessColId(null), 3000);
+        return;
+      }
 
       if (isVehicleTab && onUpdateVehicleField) {
         const savedVal = await onUpdateVehicleField(row, colId, cleanVal);
@@ -401,6 +427,63 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                         placeholder={`พิมพ์${col.label}...`}
                         className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs sm:text-sm font-mono text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
                       />
+                    ) : isVehicleTab &&
+                      (col.id === 'I' || col.label.trim() === 'ชื่อพนักงานประจำรถ') ? (
+                      (() => {
+                        const cleanCurrent = rawVal === '-' ? '' : rawVal.replace(/\s+/g, ' ').trim();
+                        const matchedCurrent = matchVehicleDriverOption(cleanCurrent, driverOptions);
+                        const selectedPreview = matchVehicleDriverOption(editValue, driverOptions);
+                        const currentEmpCode = (row.values['P'] ?? '').trim();
+                        return (
+                          <div className="space-y-2">
+                            <select
+                              autoFocus
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs sm:text-sm font-medium text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
+                            >
+                              <option value="">-- ไม่ระบุพนักงาน (ว่าง) --</option>
+                              {cleanCurrent && !matchedCurrent && (
+                                <option value={cleanCurrent}>
+                                  {currentEmpCode && currentEmpCode !== '-'
+                                    ? `${currentEmpCode} - ${cleanCurrent}`
+                                    : cleanCurrent}
+                                </option>
+                              )}
+                              {driverOptions.map((opt) => (
+                                <option
+                                  key={opt.normalizedKey || opt.fullName}
+                                  value={opt.fullName}
+                                >
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                            {selectedPreview && (
+                              <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700">
+                                {selectedPreview.image && (
+                                  <DrivePhotoImg
+                                    src={selectedPreview.image}
+                                    alt={selectedPreview.fullName}
+                                    className="h-9 w-9 rounded-md border border-slate-200 object-cover shrink-0"
+                                  />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-bold text-slate-900 truncate">
+                                    {selectedPreview.fullName}
+                                  </div>
+                                  <div className="text-[11px] font-mono text-slate-500">
+                                    รหัสพนักงาน:{' '}
+                                    <span className="font-semibold text-slate-800">
+                                      {selectedPreview.employeeCode || '-'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : isVehicleTab && col.id !== 'H' ? (
                       <input
                         type="text"
@@ -450,6 +533,10 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                 );
               }
 
+              const isVehicleDriverCol =
+                isVehicleTab &&
+                (col.id === 'I' || col.label.trim() === 'ชื่อพนักงานประจำรถ');
+
               return (
                 <div
                   key={col.id}
@@ -460,7 +547,62 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                   </div>
                   <div className="flex min-w-0 flex-col items-end gap-1 text-right">
                     <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                      {hasValidPhoto && isPhotoColumn ? (
+                      {isVehicleDriverCol ? (
+                        (() => {
+                          const cleanCurrent =
+                            rawVal === '-' ? '' : rawVal.replace(/\s+/g, ' ').trim();
+                          const matchedCurrent = matchVehicleDriverOption(
+                            cleanCurrent,
+                            driverOptions
+                          );
+                          const selectVal = matchedCurrent
+                            ? matchedCurrent.fullName
+                            : cleanCurrent;
+                          const currentEmpCode =
+                            matchedCurrent?.employeeCode ||
+                            (row.values['P'] ?? '').trim();
+
+                          return (
+                            <select
+                              value={selectVal}
+                              disabled={isSaving}
+                              onChange={async (e) => {
+                                const nextDriver = e.target.value;
+                                if (!onAssignVehicleDriver) {
+                                  startEditing(col.id, nextDriver);
+                                  return;
+                                }
+                                setIsSaving(true);
+                                try {
+                                  await onAssignVehicleDriver(row, nextDriver);
+                                  setSaveSuccessColId(col.id);
+                                  setTimeout(() => setSaveSuccessColId(null), 3000);
+                                } finally {
+                                  setIsSaving(false);
+                                }
+                              }}
+                              className="max-w-[230px] sm:max-w-[260px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-900 shadow-2xs transition-colors hover:border-slate-400 focus:border-slate-900 focus:outline-none disabled:opacity-50"
+                            >
+                              <option value="">-- ไม่ระบุพนักงาน (ว่าง) --</option>
+                              {cleanCurrent && !matchedCurrent && (
+                                <option value={cleanCurrent}>
+                                  {currentEmpCode && currentEmpCode !== '-'
+                                    ? `${currentEmpCode} - ${cleanCurrent}`
+                                    : cleanCurrent}
+                                </option>
+                              )}
+                              {driverOptions.map((opt) => (
+                                <option
+                                  key={opt.normalizedKey || opt.fullName}
+                                  value={opt.fullName}
+                                >
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()
+                      ) : hasValidPhoto && isPhotoColumn ? (
                         <div className="flex flex-col items-end gap-1">
                           <DrivePhotoImg
                             src={val}

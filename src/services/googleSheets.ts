@@ -3031,6 +3031,15 @@ export async function fetchSheetTabData(
   if (tab.gid === '378250263') {
     const orderedActiveIds = ['B', 'M', 'I', 'A', 'J', 'L', 'O'];
     const colMap = new Map(allColumns.map((c) => [c.id, c]));
+    if (!colMap.has('P')) {
+      const colP: SheetColumn = {
+        id: 'P',
+        label: 'รหัสพนักงาน',
+        type: 'string',
+      };
+      colMap.set('P', colP);
+      allColumns.push(colP);
+    }
     activeColumns.length = 0;
     orderedActiveIds.forEach((id) => {
       const col = colMap.get(id);
@@ -3263,6 +3272,40 @@ export async function fetchSheetTabData(
       if (target && fieldEdit.colId) {
         target.values[fieldEdit.colId] = fieldEdit.value;
         target.rawValues[fieldEdit.colId] = fieldEdit.value;
+      }
+    }
+    const accountOptions = cachedEmployeeAccounts
+      ? buildVehicleDriverOptions(cachedEmployeeAccounts)
+      : [];
+    for (const r of parsedRows) {
+      const rawDrv = (r.values['I'] ?? '').replace(/\s+/g, ' ').trim();
+      if (!rawDrv || rawDrv === '-') {
+        r.values['I'] = '';
+        continue;
+      }
+      const matched =
+        accountOptions.length > 0
+          ? matchVehicleDriverOption(rawDrv, accountOptions)
+          : undefined;
+      if (matched) {
+        r.values['I'] = matched.fullName;
+        r.rawValues['I'] = matched.fullName;
+        if (!(r.values['P'] ?? '').trim() && matched.employeeCode) {
+          r.values['P'] = matched.employeeCode;
+          r.rawValues['P'] = matched.employeeCode;
+        }
+        if (!(r.values['M'] ?? '').trim() && matched.image) {
+          r.values['M'] = matched.image;
+          r.rawValues['M'] = matched.image;
+        }
+      } else {
+        r.values['I'] = rawDrv;
+        r.rawValues['I'] = rawDrv;
+        const fallbackCode = KNOWN_DRIVER_EMP_CODES[normalizeDriverNameKey(rawDrv)];
+        if (!(r.values['P'] ?? '').trim() && fallbackCode) {
+          r.values['P'] = fallbackCode;
+          r.rawValues['P'] = fallbackCode;
+        }
       }
     }
   } else if (tab.gid === '944294225') {
@@ -4012,6 +4055,8 @@ export async function updateVehicleField(params: {
     }).catch(() => {});
   }
 
+  cachedEmployeeAccounts = null;
+
   const scriptUrl = getConfiguredAppsScriptUrl();
   if (scriptUrl) {
     try {
@@ -4024,7 +4069,16 @@ export async function updateVehicleField(params: {
       if (resp && typeof resp.value === 'string' && resp.value.trim()) {
         cleanValue = resp.value.trim();
         entry.value = cleanValue;
-        writeLocalMutationsStore(localStore);
+        const latestStore = readLocalMutationsStore();
+        const latestIdx = latestStore.vehicleFieldEdits.findIndex(
+          (e) => e.rowNumber === params.rowNumber && e.colId === cleanColId
+        );
+        if (latestIdx >= 0) {
+          latestStore.vehicleFieldEdits[latestIdx] = entry;
+        } else {
+          latestStore.vehicleFieldEdits.push(entry);
+        }
+        writeLocalMutationsStore(latestStore);
         void fetch('/api/mutations/vehicle-field', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -5451,7 +5505,7 @@ export async function fetchEmployeeAccounts(options?: {
         const cols = parseSimpleCsvLine(lines[i]);
         const id = (cols[idxId] || '').trim();
         const username = (cols[idxUsername] || '').trim();
-        const fullName = (cols[idxFullName] || '').trim();
+        const fullName = (cols[idxFullName] || '').replace(/\s+/g, ' ').trim();
         const rawEmpCode = (cols[idxEmpCode] || '').trim();
         const rawImage = (cols[idxImage] || '').trim();
         const rawPosition = (cols[idxPosition] || '').trim();
@@ -5516,6 +5570,153 @@ export async function fetchEmployeeAccounts(options?: {
   }
 
   return records;
+}
+
+export interface VehicleDriverOption {
+  fullName: string;
+  employeeCode: string;
+  image: string;
+  phone: string;
+  label: string;
+  normalizedKey: string;
+}
+
+export function buildVehicleDriverOptions(
+  accounts: EmployeeAccountRecord[]
+): VehicleDriverOption[] {
+  const byKey = new Map<string, VehicleDriverOption>();
+
+  for (const emp of accounts) {
+    const fullName = String(emp.fullName || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!fullName || fullName === '-') continue;
+
+    const normalizedKey = normalizeDriverNameKey(fullName) || fullName;
+    const rawCode = String(emp.employeeCode || '').trim();
+    const employeeCode =
+      rawCode && rawCode !== '-' && rawCode !== fullName
+        ? rawCode
+        : KNOWN_DRIVER_EMP_CODES[normalizedKey] || '';
+    const image =
+      emp.image && emp.image.trim() !== '-' ? emp.image.trim() : '';
+    const phone =
+      emp.phone && emp.phone.trim() !== '-' ? emp.phone.trim() : '';
+
+    const existing = byKey.get(normalizedKey);
+    if (existing) {
+      const mergedName =
+        /^(นาย|นางสาว|นาง)/.test(fullName) &&
+        !/^(นาย|นางสาว|นาง)/.test(existing.fullName)
+          ? fullName
+          : existing.fullName;
+      const mergedCode = existing.employeeCode || employeeCode;
+      const mergedImage = existing.image || image;
+      const mergedPhone = existing.phone || phone;
+      byKey.set(normalizedKey, {
+        fullName: mergedName,
+        employeeCode: mergedCode,
+        image: mergedImage,
+        phone: mergedPhone,
+        label: mergedCode ? `${mergedCode} - ${mergedName}` : mergedName,
+        normalizedKey,
+      });
+    } else {
+      byKey.set(normalizedKey, {
+        fullName,
+        employeeCode,
+        image,
+        phone,
+        label: employeeCode ? `${employeeCode} - ${fullName}` : fullName,
+        normalizedKey,
+      });
+    }
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => {
+    if (a.employeeCode && b.employeeCode) {
+      const cmp = a.employeeCode.localeCompare(b.employeeCode, 'th', {
+        numeric: true,
+      });
+      if (cmp !== 0) return cmp;
+    } else if (a.employeeCode && !b.employeeCode) {
+      return -1;
+    } else if (!a.employeeCode && b.employeeCode) {
+      return 1;
+    }
+    return a.fullName.localeCompare(b.fullName, 'th');
+  });
+}
+
+export function matchVehicleDriverOption(
+  currentDriverName: string,
+  options: VehicleDriverOption[]
+): VehicleDriverOption | undefined {
+  const clean = String(currentDriverName || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean || clean === '-') return undefined;
+
+  const exact = options.find((o) => o.fullName === clean);
+  if (exact) return exact;
+
+  const key = normalizeDriverNameKey(clean);
+  if (!key) return undefined;
+  return options.find((o) => o.normalizedKey === key);
+}
+
+export async function assignVehicleDriver(params: {
+  rowNumber: number;
+  driverName: string;
+  employeeCode: string;
+  employeeImage?: string;
+}): Promise<{
+  driverName: string;
+  employeeCode: string;
+  employeeImage?: string;
+}> {
+  const cleanName = String(params.driverName || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cleanCode = cleanName ? String(params.employeeCode || '').trim() : '';
+  const shouldUpdateImage =
+    !cleanName ||
+    Boolean(params.employeeImage && params.employeeImage.trim() && params.employeeImage.trim() !== '-');
+  const cleanImage = !cleanName
+    ? ''
+    : shouldUpdateImage
+    ? String(params.employeeImage || '').trim()
+    : undefined;
+
+  const tasks: Promise<string>[] = [
+    updateVehicleField({
+      rowNumber: params.rowNumber,
+      colId: 'I',
+      newValue: cleanName,
+    }),
+    updateVehicleField({
+      rowNumber: params.rowNumber,
+      colId: 'P',
+      newValue: cleanCode,
+    }),
+  ];
+
+  if (cleanImage !== undefined) {
+    tasks.push(
+      updateVehicleField({
+        rowNumber: params.rowNumber,
+        colId: 'M',
+        newValue: cleanImage,
+      })
+    );
+  }
+
+  await Promise.all(tasks);
+  return {
+    driverName: cleanName,
+    employeeCode: cleanCode,
+    employeeImage: cleanImage,
+  };
 }
 
 export async function appendTrailerRecord(trailerNumber: string): Promise<void> {
