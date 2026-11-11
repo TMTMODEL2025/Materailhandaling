@@ -502,8 +502,8 @@ export default function App() {
   const [rowLimit, setRowLimit] = useState<number>(SHEET_TABS[0].defaultLimit ?? 250);
   const [deepSearchTerm, setDeepSearchTerm] = useState<string>('');
 
-  // Auto-refresh interval in seconds (0 = off)
-  const [refreshIntervalSec, setRefreshIntervalSec] = useState<number>(30);
+  // Auto-refresh interval in seconds (0 = off, default 90s to avoid 429 rate limit)
+  const [refreshIntervalSec, setRefreshIntervalSec] = useState<number>(90);
 
   // Sorting & Pagination
   const [sortConfig, setSortConfig] = useState<{
@@ -841,17 +841,21 @@ function playNotificationChime() {
         if (activeTab.gid === '944294225') {
           handleUpdateRepairRows(result.rows);
         } else {
+          // Stagger background repair fetch by 800ms so active tab renders first without concurrent load
           const repairTabConfig = SHEET_TABS.find((t) => t.gid === '944294225');
           if (repairTabConfig) {
-            void fetchSheetTabData(repairTabConfig, {
-              limit: 250,
-            })
-              .then((repairRes) => {
-                if (!controller.signal.aborted) {
-                  handleUpdateRepairRows(repairRes.rows);
-                }
+            setTimeout(() => {
+              if (controller.signal.aborted) return;
+              void fetchSheetTabData(repairTabConfig, {
+                limit: 250,
               })
-              .catch(() => {});
+                .then((repairRes) => {
+                  if (!controller.signal.aborted) {
+                    handleUpdateRepairRows(repairRes.rows);
+                  }
+                })
+                .catch(() => {});
+            }, 800);
           }
         }
       } catch (err: unknown) {
@@ -882,12 +886,19 @@ function playNotificationChime() {
   const handleManualSync = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await flushPendingMutationsToGoogleSheet();
+      try {
+        await flushPendingMutationsToGoogleSheet();
+      } catch {
+        // ignore
+      }
+      await loadData({ silent: true });
+      showSuccessToast('ซิงค์ข้อมูลสำเร็จ!', 'ดึงข้อมูลล่าสุดจาก Google Sheets เรียบร้อยแล้ว');
     } catch {
       // ignore
+    } finally {
+      setIsRefreshing(false);
+      setIsLoading(false);
     }
-    await loadData({ silent: true });
-    showSuccessToast('ซิงค์ข้อมูลสำเร็จ!', 'ดึงข้อมูลล่าสุดจาก Google Sheets เรียบร้อยแล้ว');
   }, [loadData]);
 
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes

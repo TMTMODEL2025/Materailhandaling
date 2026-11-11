@@ -2683,12 +2683,51 @@ function formatGvizCellValue(cell: GvizCell | null | undefined): string {
 }
 
 const inFlightGvizMap = new Map<string, Promise<GvizResponse>>();
+const localGvizCacheMap = new Map<string, { data: GvizResponse; timestamp: number }>();
+let global429CooldownUntil = 0;
+
+function getCachedGvizResponse(cacheKey: string): GvizResponse | null {
+  const mem = localGvizCacheMap.get(cacheKey);
+  if (mem && Date.now() - mem.timestamp < 300000) { // 5-minute memory cache
+    return mem.data;
+  }
+  try {
+    const raw = localStorage.getItem(`gviz_cache_${cacheKey}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.data) {
+        return parsed.data as GvizResponse;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return mem?.data ?? null;
+}
+
+function setCachedGvizResponse(cacheKey: string, data: GvizResponse): void {
+  try {
+    localGvizCacheMap.set(cacheKey, { data, timestamp: Date.now() });
+    localStorage.setItem(
+      `gviz_cache_${cacheKey}`,
+      JSON.stringify({ data, timestamp: Date.now() })
+    );
+  } catch {
+    // ignore storage quota errors
+  }
+}
 
 async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<string> {
   let timerId: ReturnType<typeof setTimeout> | null = null;
   try {
     const fetchPromise = fetch(url).then(async (res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 429) {
+          global429CooldownUntil = Math.max(global429CooldownUntil, Date.now() + 6000);
+          throw new Error('HTTP 429: Too Many Requests (ติดโควตาการเรียกชั่วคราว กรุณารอสักครู่)');
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const text = await res.text();
       if (!text.includes('google.visualization.Query.setResponse')) {
         throw new Error('Invalid Gviz format');
@@ -2727,6 +2766,19 @@ async function queryGviz(
   }
 
   const cacheKey = `${gid}::${tq}`;
+  const now = Date.now();
+
+  // If in 429 cooldown, use cached response if available
+  if (now < global429CooldownUntil) {
+    const fallbackCached = getCachedGvizResponse(cacheKey);
+    if (fallbackCached) {
+      return fallbackCached;
+    }
+    // If no cache, wait until cooldown passes (staggered delay up to 3.5s)
+    const waitMs = Math.min(global429CooldownUntil - now, 3500);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
   let sharedPromise = inFlightGvizMap.get(cacheKey);
 
   if (!sharedPromise) {
@@ -2741,18 +2793,36 @@ async function queryGviz(
 
     const rawPromise = (async () => {
       let rawText = '';
+      let is429Error = false;
       try {
-        // 1. Primary: Direct browser fetch to Google Sheets GViz (works in both Dev and Deployed environments)
+        // 1. Primary: Direct browser fetch to Google Sheets GViz
         rawText = await fetchTextWithTimeout(directUrl, timeoutMs);
-      } catch (directErr) {
+      } catch (directErr: any) {
+        if (directErr?.message?.includes('429')) {
+          is429Error = true;
+          global429CooldownUntil = Math.max(global429CooldownUntil, Date.now() + 6000);
+          // Check local cache first before proxying
+          const cached = getCachedGvizResponse(cacheKey);
+          if (cached) return cached;
+          // Wait 2 seconds backoff before trying fallback
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+
         // 2. Fallback: Server-side proxy if direct browser fetch failed
         try {
           rawText = await fetchTextWithTimeout(proxyUrl, Math.min(timeoutMs, 20000));
-        } catch {
-          throw directErr;
+        } catch (proxyErr: any) {
+          if (proxyErr?.message?.includes('429')) {
+            global429CooldownUntil = Math.max(global429CooldownUntil, Date.now() + 8000);
+          }
+          const cached = getCachedGvizResponse(cacheKey);
+          if (cached) return cached;
+          throw is429Error ? directErr : proxyErr;
         }
       }
-      return parseGvizJson(rawText);
+      const parsed = parseGvizJson(rawText);
+      setCachedGvizResponse(cacheKey, parsed);
+      return parsed;
     })();
 
     sharedPromise = rawPromise.finally(() => {
@@ -2881,17 +2951,23 @@ export async function fetchSheetTabData(
         : `select * order by A desc limit ${limit}`;
     try {
       if (tab.gid === '606634465') {
-        const [mainRes, activeRes] = await Promise.all([
-          queryGviz(tab.gid, orderQuery, options?.signal, 35000),
-          queryGviz(
+        const mainRes = await queryGviz(tab.gid, orderQuery, options?.signal, 35000);
+        dataResponse = mainRes;
+        isDescendingOrdered = true;
+
+        // Fetch active/in-transit records sequentially with a small delay to avoid 429
+        await new Promise((r) => setTimeout(r, 200));
+        let activeRes: GvizResponse | null = null;
+        try {
+          activeRes = await queryGviz(
             tab.gid,
             "select * where A is not null and (M != 'ส่งสินค้าเรียบร้อยแล้ว' or M is null) order by A desc, I desc limit 500",
             options?.signal,
             25000
-          ).catch(() => null),
-        ]);
-        dataResponse = mainRes;
-        isDescendingOrdered = true;
+          );
+        } catch {
+          activeRes = null;
+        }
 
         if (activeRes?.table?.rows && activeRes.table.rows.length > 0 && dataResponse.table) {
           const existingRows = dataResponse.table.rows ?? [];
@@ -5309,42 +5385,20 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
   if (
     cachedAccountEmployeeMap &&
     cachedAccountEmployeeMap.size > 0 &&
-    Date.now() - cachedAccountEmployeeMapAt < 60_000
+    Date.now() - cachedAccountEmployeeMapAt < 300_000
   ) {
     return cachedAccountEmployeeMap;
   }
 
   const map = new Map<string, string>(Object.entries(KNOWN_DRIVER_EMP_CODES));
 
-  const [accountCsvRes, transferEmpRes] = await Promise.allSettled([
-    fetch(
-      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
-    ).then((r) => (r.ok ? r.text() : '')),
-    queryGviz(
-      '606634465',
-      'select B, C, count(A) where B is not null and C is not null group by B, C limit 500'
-    ),
-  ]);
+  const accountCsvText = await fetch(
+    `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
+  )
+    .then((r) => (r.ok ? r.text() : ''))
+    .catch(() => '');
 
-  if (
-    transferEmpRes.status === 'fulfilled' &&
-    transferEmpRes.value?.table?.rows
-  ) {
-    const bestCountByKey = new Map<string, number>();
-    for (const r of transferEmpRes.value.table.rows) {
-      const empCode = formatGvizCellValue(r.c?.[0]).trim();
-      const drvName = formatGvizCellValue(r.c?.[1]).trim();
-      const cnt = Number(r.c?.[2]?.v ?? 0);
-      const key = normalizeDriverNameKey(drvName);
-      if (key && empCode && empCode !== drvName && isValidEmployeeCode(empCode)) {
-        const prevCount = bestCountByKey.get(key) ?? -1;
-        if (cnt > prevCount) {
-          bestCountByKey.set(key, cnt);
-          map.set(key, empCode);
-        }
-      }
-    }
-  }
+  const accountCsvRes = { status: 'fulfilled' as const, value: accountCsvText };
 
   if (accountCsvRes.status === 'fulfilled' && accountCsvRes.value) {
     const lines = accountCsvRes.value.split(/\r?\n/).filter((l) => l.trim());
@@ -5394,25 +5448,26 @@ export async function fetchEmployeeAccounts(options?: {
     !options?.forceRefresh &&
     cachedEmployeeAccounts &&
     cachedEmployeeAccounts.length > 0 &&
-    Date.now() - cachedEmployeeAccountsAt < 45_000
+    Date.now() - cachedEmployeeAccountsAt < 180_000
   ) {
     return cachedEmployeeAccounts;
   }
 
-  const [accountCsvRes, vehicleRes, transferEmpRes] = await Promise.allSettled([
-    fetch(
-      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
-    )
-      .then((r) => (r.ok ? r.text() : ''))
-      .catch(() => ''),
-    queryGviz('378250263', 'select A, C, I, J, K, L, M, O, P limit 500', options?.signal, 15000),
-    queryGviz(
-      '606634465',
-      'select B, C, count(A) where B is not null and C is not null group by B, C limit 500',
-      options?.signal,
-      15000
-    ),
-  ]);
+  // Stagger requests to prevent 429 rate limit
+  const accountCsvRes = await fetch(
+    `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
+  )
+    .then(async (r) => (r.ok ? { status: 'fulfilled' as const, value: await r.text() } : { status: 'rejected' as const, reason: 'failed' }))
+    .catch((err) => ({ status: 'rejected' as const, reason: err }));
+
+  await new Promise((r) => setTimeout(r, 300));
+
+  const vehicleRes = await queryGviz('378250263', 'select A, C, I, J, K, L, M, O, P limit 500', options?.signal, 15000)
+    .then((val) => ({ status: 'fulfilled' as const, value: val }))
+    .catch((err) => ({ status: 'rejected' as const, reason: err }));
+
+  // Skip transferEmpRes if we already have KNOWN_DRIVER_EMP_CODES or if vehicleRes already resolved
+  const transferEmpRes = { status: 'rejected' as const, reason: 'skipped' };
 
   // Build lookup map from ฐานข้อมูลรถ (gid: 378250263) by normalized driver name
   const vehicleInfoMap = new Map<
@@ -5459,24 +5514,8 @@ export async function fetchEmployeeAccounts(options?: {
     }
   }
 
-  // Build fallback employee code map from הבันทึกการย้ายงาน
+  // Build fallback employee code map from KNOWN_DRIVER_EMP_CODES
   const transferCodeMap = new Map<string, string>(Object.entries(KNOWN_DRIVER_EMP_CODES));
-  if (transferEmpRes.status === 'fulfilled' && transferEmpRes.value?.table?.rows) {
-    const bestCountByKey = new Map<string, number>();
-    for (const r of transferEmpRes.value.table.rows) {
-      const code = formatGvizCellValue(r.c?.[0]).trim();
-      const drvName = formatGvizCellValue(r.c?.[1]).trim();
-      const cnt = Number(r.c?.[2]?.v ?? 0);
-      const key = normalizeDriverNameKey(drvName);
-      if (key && code && code !== drvName && isValidEmployeeCode(code)) {
-        const prevCount = bestCountByKey.get(key) ?? -1;
-        if (cnt > prevCount) {
-          bestCountByKey.set(key, cnt);
-          transferCodeMap.set(key, code);
-        }
-      }
-    }
-  }
 
   const records: EmployeeAccountRecord[] = [];
 

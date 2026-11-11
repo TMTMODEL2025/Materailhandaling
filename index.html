@@ -6,15 +6,26 @@
     <script>
       (function() {
         try {
-          var origFetch = window.fetch;
-          if (typeof origFetch === 'function') {
-            Object.defineProperty(window, 'fetch', {
-              value: origFetch.bind(window),
-              writable: true,
-              configurable: true,
-              enumerable: true
-            });
-          }
+          var currentFetch = window.fetch;
+          var customFetch = currentFetch ? currentFetch.bind(window) : undefined;
+          var descriptor = {
+            get: function() {
+              return customFetch || window.fetch;
+            },
+            set: function(fn) {
+              customFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          };
+          try {
+            Object.defineProperty(window, 'fetch', descriptor);
+          } catch (_) {}
+          try {
+            if (typeof Window !== 'undefined' && Window.prototype) {
+              Object.defineProperty(Window.prototype, 'fetch', descriptor);
+            }
+          } catch (_) {}
         } catch (e) {
           // ignore
         }

@@ -147,17 +147,30 @@ app.get('/api/sheet-proxy', async (req, res) => {
     const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?${params.toString()}`;
     const response = await fetch(url);
     if (!response.ok) {
+      // If rate limited (429) and we have any cached data (even slightly stale), return it gracefully
+      if (response.status === 429 && cached?.data) {
+        res.setHeader('Content-Type', 'application/json;charset=utf-8');
+        res.send(cached.data);
+        return;
+      }
       res.status(response.status).json({ error: `Google Sheets HTTP ${response.status}` });
       return;
     }
     const text = await response.text();
     sheetProxyCache.set(cacheKey, {
       data: text,
-      expiresAt: now + 60000,
+      expiresAt: now + 120000, // 2-min cache
     });
     res.setHeader('Content-Type', 'application/json;charset=utf-8');
     res.send(text);
   } catch (err) {
+    const cacheKey = `${String(req.query.gid ?? '')}::${String(req.query.tq ?? '')}`;
+    const cached = sheetProxyCache.get(cacheKey);
+    if (cached?.data) {
+      res.setHeader('Content-Type', 'application/json;charset=utf-8');
+      res.send(cached.data);
+      return;
+    }
     res.status(504).json({ error: String(err) });
   }
 });

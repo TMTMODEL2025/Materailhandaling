@@ -698,13 +698,18 @@ async function startServer() {
       try {
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) {
+          if (response.status === 429 && cached?.data) {
+            res.setHeader('Content-Type', 'application/json;charset=utf-8');
+            res.send(cached.data);
+            return;
+          }
           res.status(response.status).json({ error: `Google Sheets HTTP ${response.status}` });
           return;
         }
         const text = await response.text();
         sheetProxyCache.set(cacheKey, {
           data: text,
-          expiresAt: now + 60000, // 60 sec cache
+          expiresAt: now + 120000, // 2-min cache
         });
         res.setHeader('Content-Type', 'application/json;charset=utf-8');
         res.send(text);
@@ -712,6 +717,13 @@ async function startServer() {
         clearTimeout(timeout);
       }
     } catch (err: unknown) {
+      const cacheKey = `${String(req.query.gid ?? '')}::${String(req.query.tq ?? '')}`;
+      const cached = sheetProxyCache.get(cacheKey);
+      if (cached?.data) {
+        res.setHeader('Content-Type', 'application/json;charset=utf-8');
+        res.send(cached.data);
+        return;
+      }
       res.status(504).json({ error: String(err) });
     }
   });
