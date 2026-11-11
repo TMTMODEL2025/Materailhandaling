@@ -51,10 +51,16 @@ import {
   inspectRepairRecord,
   isPhotoValue,
   flushPendingMutationsToGoogleSheet,
+  completeJobTransferRecord,
 } from './services/googleSheets';
 import { SheetColumn, SheetDataResult, SheetRow, SheetTabConfig } from './types';
 import { RecordDetailModal } from './components/RecordDetailModal';
-import { JobTransferModal } from './components/JobTransferModal';
+import {
+  JobTransferModal,
+  removeStoredActiveJobsByMatches,
+  getCurrentTimeString,
+  calculateDurationString,
+} from './components/JobTransferModal';
 import { DeliveryPointModal } from './components/DeliveryPointModal';
 import { SheetWebhookModal } from './components/SheetWebhookModal';
 import { RepairRequestModal } from './components/RepairRequestModal';
@@ -63,6 +69,7 @@ import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
 import { FuelCharts } from './components/FuelCharts';
 import { JobTransferStatsView } from './components/JobTransferStatsView';
+import { EmployeeManagementView } from './components/EmployeeManagementView';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
@@ -87,18 +94,42 @@ function isDurationExceeding20Minutes(val: string): boolean {
 }
 
 function parseThaiDateToTimestamp(val: string): number | null {
-  const trimmed = val.trim();
+  const trimmed = String(val ?? '').trim();
   if (!trimmed) return null;
-  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (!match) return null;
-  const day = parseInt(match[1], 10);
-  const month = parseInt(match[2], 10);
-  let year = parseInt(match[3], 10);
-  // Convert Buddhist Era (พ.ศ.) to Common Era (ค.ศ.)
-  if (year > 2400) {
-    year -= 543;
+
+  // 1. Check Date(YYYY, M, D) gviz format
+  const dateObjMatch = trimmed.match(/^Date\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (dateObjMatch) {
+    let year = parseInt(dateObjMatch[1], 10);
+    const month = parseInt(dateObjMatch[2], 10) + 1;
+    const day = parseInt(dateObjMatch[3], 10);
+    if (year > 2400) year -= 543;
+    if (year < 100) year += 2000;
+    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
   }
-  return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
+
+  // 2. Check DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY (with optional time)
+  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (match) {
+    const day = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    let year = parseInt(match[3], 10);
+    if (year < 100) year += 2000;
+    if (year > 2400) year -= 543;
+    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
+  }
+
+  // 3. Check YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (isoMatch) {
+    let year = parseInt(isoMatch[1], 10);
+    if (year > 2400) year -= 543;
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
+  }
+
+  return null;
 }
 
 function parseIsoInputDateToTimestamp(isoDate: string): number | null {
@@ -166,10 +197,74 @@ function getRowApprovalStatus(row: SheetRow): string {
 }
 
 function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string {
-  const statusCol = columns?.find((c) => c.label.trim() === 'สถานะ');
-  const raw = (statusCol ? row.values[statusCol.id] : row.values['M']) ?? row.values['M'] ?? '';
+  const statusCol = columns?.find(
+    (c) =>
+      c.label.trim() === 'สถานะ' ||
+      c.label.trim().toUpperCase() === 'STATUS' ||
+      c.id === 'M'
+  );
+  const raw =
+    (statusCol ? row.values[statusCol.id] : row.values['M']) ??
+    row.values['M'] ??
+    row.values['STATUS'] ??
+    row.values['สถานะ'] ??
+    '';
   const trimmed = raw.trim();
-  return trimmed || 'ไม่ระบุสถานะ';
+  if (trimmed) {
+    return trimmed;
+  }
+  const hasStartData = Boolean(
+    (row.values['A'] ?? '').trim() ||
+      (row.values['C'] ?? '').trim() ||
+      (row.values['D'] ?? '').trim() ||
+      (row.values['I'] ?? '').trim()
+  );
+  if (hasStartData) {
+    return 'อยู่ระว่างการส่ง';
+  }
+  return 'ไม่ระบุสถานะ';
+}
+
+function isJobTransferInTransitStatus(statusText: string): boolean {
+  const s = statusText.trim();
+  return (
+    s.includes('อยู่ระว่าง') ||
+    s.includes('อยู่ระหว่าง') ||
+    s.includes('ระว่าง') ||
+    s.includes('ระหว่าง') ||
+    s.includes('กำลัง')
+  );
+}
+
+function getJobTransferRowKey(row: SheetRow): string {
+  const recId = (row.values['Q'] ?? '').trim();
+  if (recId) return `rec:${recId}`;
+  return `row:${row.rowNumber}|${(row.values['A'] ?? '').trim()}|${(row.values['C'] ?? '').trim()}|${(row.values['D'] ?? '').trim()}|${(row.values['I'] ?? '').trim()}|${(row.values['F'] ?? '').trim()}|${(row.values['H'] ?? '').trim()}`;
+}
+
+function renderJobTransferStatusBadge(statusText: string): React.ReactNode {
+  const s = statusText.trim();
+  if (isJobTransferInTransitStatus(s)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/90 px-2.5 py-0.5 text-xs font-bold text-amber-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  if (s.includes('เรียบร้อย') || s.includes('สำเร็จ')) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-2.5 py-0.5 text-xs font-bold text-emerald-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-emerald-600" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 whitespace-nowrap">
+      <span>{s || '-'}</span>
+    </span>
+  );
 }
 
 function getRowVehicleShift(row: SheetRow, columns?: SheetColumn[]): string {
@@ -365,6 +460,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<SheetTabConfig>(SHEET_TABS[0]);
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
   const [showJobTransferStats, setShowJobTransferStats] = useState<boolean>(false);
+  const [showEmployeeManagement, setShowEmployeeManagement] = useState<boolean>(false);
   const [repairTabRows, setRepairTabRows] = useState<SheetRow[]>([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -405,6 +501,11 @@ export default function App() {
   const [attachingPhotoRow, setAttachingPhotoRow] = useState<SheetRow | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  // Selection & batch completion state for in-transit rows in บันทึกการย้ายงาน (gid: 606634465)
+  const [selectedInTransitKeys, setSelectedInTransitKeys] = useState<Set<string>>(new Set());
+  const [batchFinishConfirmRows, setBatchFinishConfirmRows] = useState<SheetRow[] | null>(null);
+  const [isBatchFinishingTable, setIsBatchFinishingTable] = useState<boolean>(false);
 
   // Inline editing state for จุดส่งสินค้า -> คอลัมน์ ประตู, ฐานข้อมูลรถ -> คอลัมน์ ทะเบียนรถ, และ บันทึกงานซ่อม -> คอลัมน์ รายละเอียดเพิ่มเติม / ตอบกลับข้อมูลเพิ่มเติม
   const [editingGateRowNumber, setEditingGateRowNumber] = useState<number | null>(null);
@@ -808,6 +909,7 @@ function playNotificationChime() {
   const handleSelectTab = (tab: SheetTabConfig) => {
     setIsSidebarOpen(false);
     setShowJobTransferStats(false);
+    setShowEmployeeManagement(false);
     if (tab.gid === activeTab.gid) return;
     setActiveTab(tab);
     setRowLimit(tab.defaultLimit ?? 250);
@@ -1005,11 +1107,32 @@ function playNotificationChime() {
     if (!sheetData || !quickFilterColumn) return [];
     const counts = new Map<string, number>();
     sheetData.rows.forEach((row) => {
-      const val = row.values[quickFilterColumn.id]?.trim();
+      const val =
+        activeTab.gid === '606634465'
+          ? getRowJobTransferStatus(row, sheetData.columns).trim()
+          : row.values[quickFilterColumn.id]?.trim();
       if (val) {
         counts.set(val, (counts.get(val) ?? 0) + 1);
       }
     });
+    if (activeTab.gid === '606634465') {
+      if (!counts.has('อยู่ระว่างการส่ง')) {
+        counts.set('อยู่ระว่างการส่ง', 0);
+      }
+      if (!counts.has('ส่งสินค้าเรียบร้อยแล้ว')) {
+        counts.set('ส่งสินค้าเรียบร้อยแล้ว', 0);
+      }
+      const priorityOrder = ['อยู่ระว่างการส่ง', 'ส่งสินค้าเรียบร้อยแล้ว'];
+      const sorted = Array.from(counts.keys()).sort((a, b) => {
+        const idxA = priorityOrder.indexOf(a);
+        const idxB = priorityOrder.indexOf(b);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
+      });
+      return sorted.slice(0, 7);
+    }
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 7)
@@ -1023,20 +1146,27 @@ function playNotificationChime() {
     const startTs = parseIsoInputDateToTimestamp(startDateFilter);
     const endTs = parseIsoInputDateToTimestamp(endDateFilter);
 
-    // Identify primary date column (Col A for บันทึกการย้ายงาน or any column with 'วัน' or 'date')
+    // Identify primary date column (Col B for הבันทึกน้ำมัน, Col A for บันทึกการย้ายงาน or any column with 'วัน' or 'date')
     const dateCol =
+      (activeTab.gid === '1733355146'
+        ? (sheetData.allColumns ?? sheetData.columns).find(
+            (c) => c.id === 'B' || c.label.includes('วันที่')
+          )
+        : undefined) ||
       sheetData.columns.find((c) => c.id === 'A' && (c.type === 'date' || c.label.includes('วัน'))) ||
       sheetData.columns.find((c) => c.label.includes('วันที่') || c.type === 'date');
 
     return sheetData.rows.filter((row) => {
       // Date range filtering
       if (startTs !== null || endTs !== null) {
-        const rawDateStr = dateCol ? (row.values[dateCol.id] ?? '') : (row.values['A'] ?? '');
+        const fallbackDateColId = activeTab.gid === '1733355146' ? 'B' : 'A';
+        const rawDateStr = dateCol
+          ? (row.values[dateCol.id] ?? row.values[fallbackDateColId] ?? '')
+          : (row.values[fallbackDateColId] ?? '');
         const rowTs = parseThaiDateToTimestamp(rawDateStr);
-        if (rowTs !== null) {
-          if (startTs !== null && rowTs < startTs) return false;
-          if (endTs !== null && rowTs > endTs) return false;
-        }
+        if (rowTs === null) return false;
+        if (startTs !== null && rowTs < startTs) return false;
+        if (endTs !== null && rowTs > endTs) return false;
       }
 
       if (quickFilterValue !== 'ALL') {
@@ -1055,9 +1185,14 @@ function playNotificationChime() {
           } else {
             if (!statusVal.includes(quickFilterValue) && !appVal.includes(quickFilterValue)) return false;
           }
+        } else if (activeTab.gid === '606634465') {
+          const rowJobStatus = getRowJobTransferStatus(row, sheetData.columns).trim();
+          if (rowJobStatus !== quickFilterValue.trim()) {
+            return false;
+          }
         } else if (
           quickFilterColumn &&
-          row.values[quickFilterColumn.id]?.trim() !== quickFilterValue
+          row.values[quickFilterColumn.id]?.trim() !== quickFilterValue.trim()
         ) {
           return false;
         }
@@ -1125,6 +1260,7 @@ function playNotificationChime() {
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
+    setGroupPages({});
   }, [
     searchQuery,
     selectedColumnId,
@@ -1238,17 +1374,20 @@ function playNotificationChime() {
 
   useEffect(() => {
     if (repairGroupedRows) {
+      const hasDateFilter = Boolean(startDateFilter || endDateFilter);
       setCollapsedGroups((prev) => {
         const next = { ...prev };
         repairGroupedRows.forEach((_, status) => {
-          if (next[status] === undefined) {
-            next[status] = activeTab.gid === '1733355146'; // collapsed for fuel tab, expanded for job transfer/repair
+          if (activeTab.gid === '1733355146' && hasDateFilter) {
+            next[status] = false; // Auto-expand fuel table groups when date filter is active
+          } else if (next[status] === undefined) {
+            next[status] = activeTab.gid === '1733355146'; // collapsed by default for fuel tab, expanded for job transfer/repair
           }
         });
         return next;
       });
     }
-  }, [repairGroupedRows, activeTab.gid]);
+  }, [repairGroupedRows, activeTab.gid, startDateFilter, endDateFilter]);
 
   // Contextual real-time summary metric based on actual columns in current sheet
   const contextualMetric = useMemo<{ label: string; value: string; subtext: string }>(() => {
@@ -1876,7 +2015,7 @@ function playNotificationChime() {
           </div>
           <nav className="space-y-2">
             {SHEET_TABS.map((tab) => {
-              const isSelected = activeTab.gid === tab.gid;
+              const isSelected = activeTab.gid === tab.gid && !showEmployeeManagement;
               const isJobTransferTab = tab.gid === '606634465';
               const isRepairTab = tab.gid === '944294225';
               const isFuelTab = tab.gid === '1733355146';
@@ -1975,13 +2114,14 @@ function playNotificationChime() {
                         type="button"
                         onClick={() => {
                           setIsSidebarOpen(false);
+                          setShowEmployeeManagement(false);
                           if (activeTab.gid !== '606634465') {
                             handleSelectTab(tab);
                           }
                           setShowJobTransferStats(true);
                         }}
                         className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
-                          activeTab.gid === '606634465' && showJobTransferStats
+                          activeTab.gid === '606634465' && showJobTransferStats && !showEmployeeManagement
                             ? 'bg-amber-500/15 text-amber-900 font-bold border border-amber-300/60'
                             : 'text-slate-600 hover:bg-white hover:text-slate-900'
                         }`}
@@ -2053,6 +2193,58 @@ function playNotificationChime() {
                 </div>
               );
             })}
+
+            {/* เมนูจัดการพนักงาน (Employee Account Management - ดึงจากชีต Account) */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setShowJobTransferStats(false);
+                  setShowEmployeeManagement(true);
+                }}
+                className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
+                  showEmployeeManagement
+                    ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
+                    : 'bg-white text-slate-800 border border-slate-200/80 shadow-2xs hover:border-slate-300 hover:bg-slate-100/70 hover:text-slate-950'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                      showEmployeeManagement
+                        ? 'bg-white/15 text-amber-300'
+                        : 'bg-slate-100 text-slate-700 group-hover:bg-slate-200/80 group-hover:text-slate-900'
+                    }`}
+                  >
+                    <Users className="h-4 w-4 shrink-0" />
+                  </span>
+                  <div className="min-w-0">
+                    <div
+                      className={`truncate text-sm font-bold leading-snug ${
+                        showEmployeeManagement ? 'text-white' : 'text-slate-900'
+                      }`}
+                    >
+                      จัดการพนักงาน
+                    </div>
+                    <div
+                      className={`truncate text-[11px] leading-tight ${
+                        showEmployeeManagement ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      ข้อมูลพนักงาน (Account)
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight
+                  className={`ml-1.5 h-4 w-4 shrink-0 transition-transform ${
+                    showEmployeeManagement
+                      ? 'text-amber-300 translate-x-0.5'
+                      : 'text-slate-300 group-hover:text-slate-500'
+                  }`}
+                />
+              </button>
+            </div>
           </nav>
         </div>
 
@@ -2078,7 +2270,11 @@ function playNotificationChime() {
               <Menu className="h-4 w-4" />
             </button>
             <h1 className="text-sm font-bold text-slate-900 sm:text-base truncate">
-              {activeTab.name}
+              {showEmployeeManagement
+                ? 'จัดการพนักงาน (Account)'
+                : activeTab.gid === '606634465' && showJobTransferStats
+                  ? 'สถิติการขนย้าย'
+                  : activeTab.name}
             </h1>
           </div>
 
@@ -2194,11 +2390,19 @@ function playNotificationChime() {
         </header>
 
         <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
-          {activeTab.gid === '606634465' && showJobTransferStats && (
+          {showEmployeeManagement && <EmployeeManagementView />}
+
+          {!showEmployeeManagement && activeTab.gid === '606634465' && showJobTransferStats && (
             <JobTransferStatsView rows={sheetData?.rows ?? []} columns={sheetData?.columns} />
           )}
 
-          <div className={activeTab.gid === '606634465' && showJobTransferStats ? 'hidden' : 'block'}>
+          <div
+            className={
+              showEmployeeManagement || (activeTab.gid === '606634465' && showJobTransferStats)
+                ? 'hidden'
+                : 'block'
+            }
+          >
 
             {/* Mobile-Only Direct Job Transfer Form (when on บันทึกการย้ายงาน tab) */}
             {activeTab.gid === '606634465' && (
@@ -3011,6 +3215,14 @@ function playNotificationChime() {
               <FuelCharts
                 rows={sheetData?.rows ?? []}
                 columns={sheetData?.columns}
+                startDate={startDateFilter}
+                endDate={endDateFilter}
+                onStartDateChange={setStartDateFilter}
+                onEndDateChange={setEndDateFilter}
+                onClearDateFilter={() => {
+                  setStartDateFilter('');
+                  setEndDateFilter('');
+                }}
               />
             </div>
           )}
@@ -3172,6 +3384,8 @@ function playNotificationChime() {
                           {(searchQuery !== '' ||
                             selectedColumnId !== 'ALL' ||
                             quickFilterValue !== 'ALL' ||
+                            startDateFilter !== '' ||
+                            endDateFilter !== '' ||
                             deepSearchTerm !== '') && (
                             <button
                               type="button"
@@ -3220,6 +3434,19 @@ function playNotificationChime() {
                       currentGroupPage * groupPageSize
                     );
                     const groupTheme = getStatusGroupHeaderTheme(status, activeTab.gid);
+                    const isJobTransferInTransitGroup =
+                      activeTab.gid === '606634465' && isJobTransferInTransitStatus(status);
+                    const groupRowKeys = isJobTransferInTransitGroup
+                      ? rows.map((r) => getJobTransferRowKey(r))
+                      : [];
+                    const selectedInGroupRows = isJobTransferInTransitGroup
+                      ? rows.filter((r) => selectedInTransitKeys.has(getJobTransferRowKey(r)))
+                      : [];
+                    const isAllGroupSelected =
+                      isJobTransferInTransitGroup &&
+                      rows.length > 0 &&
+                      selectedInGroupRows.length === rows.length;
+
                     return (
                       <React.Fragment key={status}>
                         <tr
@@ -3232,8 +3459,8 @@ function playNotificationChime() {
                           className={`cursor-pointer font-semibold transition-all duration-150 select-none ${groupTheme.rowClass}`}
                         >
                           <td colSpan={colSpan} className="px-3 py-2.5 sm:px-4 sm:py-3">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2.5">
                                 <button
                                   type="button"
                                   className={`flex h-6 w-6 items-center justify-center rounded-lg transition-transform duration-150 ${groupTheme.chevronClass}`}
@@ -3254,6 +3481,63 @@ function playNotificationChime() {
                                 >
                                   {rows.length.toLocaleString('th-TH')} รายการ
                                 </span>
+
+                                {isJobTransferInTransitGroup && rows.length > 0 && (
+                                  <div
+                                    className="flex flex-wrap items-center gap-1.5 ml-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedInTransitKeys((prev) => {
+                                          const next = new Set(prev);
+                                          if (isAllGroupSelected) {
+                                            groupRowKeys.forEach((k) => next.delete(k));
+                                          } else {
+                                            groupRowKeys.forEach((k) => next.add(k));
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white/90 hover:bg-white px-2.5 py-1 text-[11px] font-bold text-amber-900 shadow-2xs transition-colors"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isAllGroupSelected}
+                                        readOnly
+                                        className="h-3.5 w-3.5 rounded border-amber-400 text-emerald-600 focus:ring-0 pointer-events-none"
+                                      />
+                                      <span>
+                                        {isAllGroupSelected ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}
+                                      </span>
+                                    </button>
+
+                                    {selectedInGroupRows.length > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setBatchFinishConfirmRows(selectedInGroupRows)}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-[11px] font-bold text-white shadow-xs transition-colors"
+                                      >
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        <span>
+                                          จบงานพร้อมกัน ({selectedInGroupRows.length} รายการ)
+                                        </span>
+                                      </button>
+                                    )}
+
+                                    {selectedInGroupRows.length === 0 && rows.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setBatchFinishConfirmRows(rows)}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-2xs transition-colors"
+                                      >
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        <span>จบงานทั้งหมด ({rows.length})</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <span
                                 className={`text-[11px] font-semibold ${groupTheme.actionClass}`}
@@ -3265,15 +3549,58 @@ function playNotificationChime() {
                         </tr>
                         {!isCollapsed && (
                           <>
-                            {paginatedGroupRows.map((row) => (
+                            {paginatedGroupRows.map((row) => {
+                              const rowKey = getJobTransferRowKey(row);
+                              const isRowInTransit =
+                                activeTab.gid === '606634465' &&
+                                isJobTransferInTransitStatus(
+                                  getRowJobTransferStatus(row, sheetData?.columns)
+                                );
+                              const isRowSelected =
+                                isRowInTransit && selectedInTransitKeys.has(rowKey);
+
+                              return (
                               <tr
                                 key={row.rowNumber}
                                 onClick={() => setSelectedRow(row)}
-                                className="cursor-pointer transition-colors hover:bg-slate-50"
+                                className={`cursor-pointer transition-colors ${
+                                  isRowSelected
+                                    ? 'bg-emerald-50/70 hover:bg-emerald-50'
+                                    : 'hover:bg-slate-50'
+                                }`}
                               >
                                 {activeTab.gid !== '944294225' && activeTab.gid !== '1733355146' && (
-                                  <td className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                                    <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
+                                  <td
+                                    className="px-2.5 py-2 sm:px-4 sm:py-2.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap"
+                                    onClick={
+                                      isRowInTransit
+                                        ? (e) => {
+                                            e.stopPropagation();
+                                            setSelectedInTransitKeys((prev) => {
+                                              const next = new Set(prev);
+                                              if (next.has(rowKey)) {
+                                                next.delete(rowKey);
+                                              } else {
+                                                next.add(rowKey);
+                                              }
+                                              return next;
+                                            });
+                                          }
+                                        : undefined
+                                    }
+                                  >
+                                    <div className="inline-flex items-center gap-2">
+                                      {isRowInTransit && (
+                                        <input
+                                          type="checkbox"
+                                          checked={isRowSelected}
+                                          onChange={() => {}}
+                                          className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                          title="เลือกรายการเพื่อกดจบงานพร้อมกัน"
+                                        />
+                                      )}
+                                      <span>#{row.rowNumber.toLocaleString('th-TH')}</span>
+                                    </div>
                                   </td>
                                 )}
                                 {sheetData?.columns.map((col) => {
@@ -3497,6 +3824,29 @@ function playNotificationChime() {
                                           alt={col.label}
                                           className="h-9 w-12 rounded border border-slate-200 object-cover"
                                         />
+                                      ) : activeTab.gid === '606634465' &&
+                                        (col.id === 'M' ||
+                                          col.label.trim() === 'สถานะ' ||
+                                          col.label.trim().toUpperCase() === 'STATUS') ? (
+                                        <div className="inline-flex items-center gap-1.5">
+                                          {renderJobTransferStatusBadge(
+                                            getRowJobTransferStatus(row, sheetData?.columns)
+                                          )}
+                                          {isRowInTransit && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setBatchFinishConfirmRows([row]);
+                                              }}
+                                              className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-2xs transition-colors whitespace-nowrap"
+                                              title="กดจบงานรายการนี้"
+                                            >
+                                              <CheckCircle2 className="h-3 w-3" />
+                                              <span>จบงาน</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       ) : (
                                         renderHighlightedText(val)
                                       )}
@@ -3558,7 +3908,8 @@ function playNotificationChime() {
                                   </td>
                                 )}
                               </tr>
-                            ))}
+                            );
+                            })}
                             {groupTotalPages > 1 && (
                               <tr className="bg-slate-50/80">
                                 <td colSpan={colSpan} className="px-3 py-2 sm:px-4 sm:py-2.5">
@@ -3876,6 +4227,13 @@ function playNotificationChime() {
                                 alt={col.label}
                                 className="h-9 w-12 rounded border border-slate-200 object-cover"
                               />
+                            ) : activeTab.gid === '606634465' &&
+                              (col.id === 'M' ||
+                                col.label.trim() === 'สถานะ' ||
+                                col.label.trim().toUpperCase() === 'STATUS') ? (
+                              renderJobTransferStatusBadge(
+                                getRowJobTransferStatus(row, sheetData?.columns)
+                              )
                             ) : (
                               renderHighlightedText(val)
                             )}
@@ -4368,6 +4726,188 @@ function playNotificationChime() {
           }, 5000);
         }}
       />
+
+      {/* Batch Finish Job Transfer Confirmation Modal (from Table) */}
+      {batchFinishConfirmRows && batchFinishConfirmRows.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+          onClick={() => {
+            if (!isBatchFinishingTable) setBatchFinishConfirmRows(null);
+          }}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 shrink-0">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    ยืนยันการจบงาน ({batchFinishConfirmRows.length} รายการ)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    ระบบจะบันทึกเวลาส่งเสร็จ เวลาที่ใช้ และเปลี่ยนสถานะเป็น &ldquo;ส่งสินค้าเรียบร้อย&rdquo;
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isBatchFinishingTable}
+                onClick={() => setBatchFinishConfirmRows(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="my-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {batchFinishConfirmRows.map((r, idx) => {
+                const startT = (r.values['I'] ?? '').trim();
+                const previewFinishT = getCurrentTimeString();
+                const previewDuration = startT
+                  ? calculateDurationString(startT, previewFinishT)
+                  : '-';
+                return (
+                  <div
+                    key={getJobTransferRowKey(r)}
+                    className="rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between font-bold text-slate-900">
+                      <span>
+                        รายการที่ {idx + 1}: #{r.rowNumber.toLocaleString('th-TH')} •{' '}
+                        {r.values['H'] || '-'} → {r.values['J'] || '-'}
+                      </span>
+                      <span className="font-mono text-[11px] text-emerald-700">
+                        ใช้เวลา ~{previewDuration}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
+                      <span>พนักงาน: {r.values['C'] || '-'}</span>
+                      <span>เบอร์รถ: {r.values['D'] || '-'}</span>
+                      <span>ชนิดสินค้า: {r.values['F'] || '-'}</span>
+                      <span>เริ่ม: {startT || '-'}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isBatchFinishingTable}
+                onClick={() => setBatchFinishConfirmRows(null)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={isBatchFinishingTable}
+                onClick={async () => {
+                  setIsBatchFinishingTable(true);
+                  const finishTime = getCurrentTimeString();
+                  try {
+                    const completedMatches: Array<{
+                      recordId?: string;
+                      date?: string;
+                      driverName?: string;
+                      vehicleNumber?: string;
+                      startTime?: string;
+                      origin?: string;
+                      destination?: string;
+                      productType?: string;
+                    }> = [];
+
+                    for (const r of batchFinishConfirmRows) {
+                      const startT = (r.values['I'] ?? '').trim();
+                      const duration = startT
+                        ? calculateDurationString(startT, finishTime)
+                        : '00:00:00';
+                      const recordId =
+                        (r.values['Q'] ?? '').trim() || `ROW-${r.rowNumber}`;
+                      const date = (r.values['A'] ?? '').trim();
+                      const driverName = (r.values['C'] ?? '').trim();
+                      const vehicleNumber = (r.values['D'] ?? '').trim();
+                      const productType = (r.values['F'] ?? '').trim();
+                      const origin = (r.values['H'] ?? '').trim();
+                      const destination = (r.values['J'] ?? '').trim();
+
+                      await completeJobTransferRecord({
+                        recordId,
+                        rowNumber: r.rowNumber,
+                        endTime: finishTime,
+                        duration,
+                        status: 'ส่งสินค้าเรียบร้อยแล้ว',
+                        date,
+                        driverName,
+                        vehicleNumber,
+                        startTime: startT,
+                        origin,
+                        destination,
+                        productType,
+                      });
+
+                      r.values['K'] = finishTime;
+                      r.values['L'] = duration;
+                      r.values['M'] = 'ส่งสินค้าเรียบร้อยแล้ว';
+
+                      completedMatches.push({
+                        recordId: (r.values['Q'] ?? '').trim() || undefined,
+                        date,
+                        driverName,
+                        vehicleNumber,
+                        startTime: startT,
+                        origin,
+                        destination,
+                        productType,
+                      });
+                    }
+
+                    removeStoredActiveJobsByMatches(completedMatches);
+
+                    setSelectedInTransitKeys((prev) => {
+                      const next = new Set(prev);
+                      batchFinishConfirmRows.forEach((r) =>
+                        next.delete(getJobTransferRowKey(r))
+                      );
+                      return next;
+                    });
+
+                    const finishedCount = batchFinishConfirmRows.length;
+                    setBatchFinishConfirmRows(null);
+                    setSaveSuccessMsg(
+                      `บันทึกจบงานส่งสินค้าเรียบร้อยแล้ว (${finishedCount} รายการ)`
+                    );
+                    showSuccessToast(
+                      `บันทึกจบงานส่งสินค้าเรียบร้อย (${finishedCount} รายการ)`
+                    );
+                    loadData({ silent: true });
+                    setTimeout(() => {
+                      setSaveSuccessMsg(null);
+                    }, 5000);
+                  } catch (err) {
+                    console.error('Batch finish error:', err);
+                  } finally {
+                    setIsBatchFinishingTable(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>
+                  {isBatchFinishingTable
+                    ? 'กำลังบันทึก...'
+                    : `ยืนยันจบงาน (${batchFinishConfirmRows.length} รายการ)`}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delivery Point Creation Modal */}
       <DeliveryPointModal

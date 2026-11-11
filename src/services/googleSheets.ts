@@ -254,7 +254,7 @@ function doPost(e) {
       var recordId = String(body.recordId || '').trim();
 
       if (recordId && lastRow >= 2) {
-        var startRow = Math.max(2, lastRow - 300);
+        var startRow = Math.max(2, lastRow - 400);
         var numRows = lastRow - startRow + 1;
         var ids = sheet.getRange(startRow, 17, numRows, 1).getValues();
         for (var i = ids.length - 1; i >= 0; i--) {
@@ -265,7 +265,24 @@ function doPost(e) {
         }
       }
 
-      if (targetRow >= 2) {
+      if ((targetRow < 2 || targetRow > lastRow) && lastRow >= 2 && body.driverName && body.startTime) {
+        var sRow = Math.max(2, lastRow - 400);
+        var nRows = lastRow - sRow + 1;
+        var data = sheet.getRange(sRow, 1, nRows, 13).getValues();
+        for (var k = data.length - 1; k >= 0; k--) {
+          if (
+            String(data[k][2] || '').trim() === String(body.driverName || '').trim() &&
+            String(data[k][3] || '').trim() === String(body.vehicleNumber || '').trim() &&
+            String(data[k][8] || '').trim() === String(body.startTime || '').trim() &&
+            String(data[k][12] || '').trim() !== 'ส่งสินค้าเรียบร้อยแล้ว'
+          ) {
+            targetRow = sRow + k;
+            break;
+          }
+        }
+      }
+
+      if (targetRow >= 2 && targetRow <= lastRow) {
         sheet.getRange(targetRow, 11, 1, 3).setValues([[
           body.endTime || '',
           body.duration || '',
@@ -1149,6 +1166,17 @@ async function executeAppsScriptWebhookForUrl(
   return data;
 }
 
+let appsScriptWriteQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueAppsScriptWebhookWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const next = appsScriptWriteQueue.then(fn, fn);
+  appsScriptWriteQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
 async function callAppsScriptWebhook(
   scriptUrl: string,
   payload: Record<string, unknown>
@@ -1158,22 +1186,24 @@ async function callAppsScriptWebhook(
   error?: string;
   photoUrls?: string[];
 }> {
-  const targetUrl = normalizeAppsScriptUrl(scriptUrl);
-  try {
-    return await executeAppsScriptWebhookForUrl(targetUrl, payload);
-  } catch (err) {
-    if (targetUrl !== DEFAULT_APPS_SCRIPT_URL) {
-      const res = await executeAppsScriptWebhookForUrl(DEFAULT_APPS_SCRIPT_URL, payload);
-      configuredAppsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
-      try {
-        localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, DEFAULT_APPS_SCRIPT_URL);
-      } catch {
-        // ignore
+  return enqueueAppsScriptWebhookWrite(async () => {
+    const targetUrl = normalizeAppsScriptUrl(scriptUrl);
+    try {
+      return await executeAppsScriptWebhookForUrl(targetUrl, payload);
+    } catch (err) {
+      if (targetUrl !== DEFAULT_APPS_SCRIPT_URL) {
+        const res = await executeAppsScriptWebhookForUrl(DEFAULT_APPS_SCRIPT_URL, payload);
+        configuredAppsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
+        try {
+          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, DEFAULT_APPS_SCRIPT_URL);
+        } catch {
+          // ignore
+        }
+        return res;
       }
-      return res;
+      throw err;
     }
-    throw err;
-  }
+  });
 }
 
 // Auto-discover Apps Script URL and backend cached token on startup (non-blocking)
@@ -1344,7 +1374,7 @@ export const SHEET_TABS: SheetTabConfig[] = [
     category: 'งานขนส่ง',
     description: 'รายการเคลื่อนย้ายสินค้าภายในโรงงานแบบเรียลไทม์',
     reverseOrder: true,
-    defaultLimit: 250,
+    defaultLimit: 1000,
   },
   {
     gid: '944294225',
@@ -1742,8 +1772,14 @@ function readLocalMutationsStore(): MutationsStore {
     const rawRepairReplyEdits = Array.isArray(parsed.repairReplyEdits) ? parsed.repairReplyEdits : [];
     const rawRepairFinancialEdits = Array.isArray(parsed.repairFinancialEdits) ? parsed.repairFinancialEdits : [];
 
-    // Only retain recent optimistic items in local store while Google Sheets GViz cache refreshes.
-    const jobTransfers = rawJobTransfers.filter((jt) => !jt.syncedToSheet);
+    // Retain unsynced, active ('อยู่ระว่างการส่ง'), or recent (10 min) job transfers in local store
+    // so consecutive records saved back-to-back are never lost while Google Sheets GViz cache refreshes.
+    const jobTransfers = rawJobTransfers.filter(
+      (jt) =>
+        !jt.syncedToSheet ||
+        (jt.values?.['M'] ?? '').trim() === 'อยู่ระว่างการส่ง' ||
+        isRecentOptimisticMutation(jt.createdAt, 10 * 60 * 1000)
+    );
     const repairRequests = rawRepairRequests.filter((rr) =>
       isRecentOptimisticMutation(rr.createdAt)
     );
@@ -2782,15 +2818,60 @@ export async function fetchSheetTabData(
       );
     }
   } else if (tab.reverseOrder) {
-    // Fast path: order by A desc limit N returns the latest records in ~800ms to 2s
+    // Fast path: order by A desc (and I desc for job transfers) returns the latest records
+    const orderQuery =
+      tab.gid === '606634465'
+        ? `select * order by A desc, I desc limit ${limit}`
+        : `select * order by A desc limit ${limit}`;
     try {
-      dataResponse = await queryGviz(
-        tab.gid,
-        `select * order by A desc limit ${limit}`,
-        options?.signal,
-        35000
-      );
-      isDescendingOrdered = true;
+      if (tab.gid === '606634465') {
+        const [mainRes, activeRes] = await Promise.all([
+          queryGviz(tab.gid, orderQuery, options?.signal, 35000),
+          queryGviz(
+            tab.gid,
+            "select * where A is not null and (M != 'ส่งสินค้าเรียบร้อยแล้ว' or M is null) order by A desc, I desc limit 500",
+            options?.signal,
+            25000
+          ).catch(() => null),
+        ]);
+        dataResponse = mainRes;
+        isDescendingOrdered = true;
+
+        if (activeRes?.table?.rows && activeRes.table.rows.length > 0 && dataResponse.table) {
+          const existingRows = dataResponse.table.rows ?? [];
+          const makeRowKey = (r: GvizRow) => {
+            const qVal = formatGvizCellValue(r.c?.[16]).trim();
+            if (qVal) return `id:${qVal}`;
+            const aVal = formatGvizCellValue(r.c?.[0]).trim();
+            const cVal = formatGvizCellValue(r.c?.[2]).trim();
+            const dVal = formatGvizCellValue(r.c?.[3]).trim();
+            const fVal = formatGvizCellValue(r.c?.[5]).trim();
+            const gVal = formatGvizCellValue(r.c?.[6]).trim();
+            const hVal = formatGvizCellValue(r.c?.[7]).trim();
+            const iVal = formatGvizCellValue(r.c?.[8]).trim();
+            const jVal = formatGvizCellValue(r.c?.[9]).trim();
+            return `comp:${aVal}|${cVal}|${dVal}|${fVal}|${gVal}|${hVal}|${iVal}|${jVal}`;
+          };
+          const seenKeys = new Set(existingRows.map(makeRowKey));
+          const extraActiveRows = activeRes.table.rows.filter((r) => {
+            const k = makeRowKey(r);
+            if (seenKeys.has(k)) return false;
+            seenKeys.add(k);
+            return true;
+          });
+          if (extraActiveRows.length > 0) {
+            dataResponse.table.rows = [...extraActiveRows, ...existingRows];
+          }
+        }
+      } else {
+        dataResponse = await queryGviz(
+          tab.gid,
+          orderQuery,
+          options?.signal,
+          35000
+        );
+        isDescendingOrdered = true;
+      }
     } catch {
       // Fallback to select * limit N
       dataResponse = await queryGviz(
@@ -2934,6 +3015,14 @@ export async function fetchSheetTabData(
       if (tab.gid === '606634465' && col.id === 'N' && !formatted && colIdxR >= 0) {
         formatted = formatGvizCellValue(r.c?.[colIdxR]);
       }
+      if (
+        tab.gid === '606634465' &&
+        (col.id === 'M' ||
+          col.label.trim() === 'สถานะ' ||
+          col.label.trim().toUpperCase() === 'STATUS')
+      ) {
+        formatted = formatted.trim();
+      }
       values[col.id] = formatted;
       rawValues[col.id] =
         typeof cell?.v === 'number' || typeof cell?.v === 'string'
@@ -2943,6 +3032,22 @@ export async function fetchSheetTabData(
         hasNonEmptyValue = true;
       }
     });
+
+    if (tab.gid === '606634465' && hasNonEmptyValue) {
+      const currentStatus = (values['M'] ?? '').trim();
+      const hasStartData = Boolean(
+        (values['A'] ?? '').trim() ||
+          (values['C'] ?? '').trim() ||
+          (values['D'] ?? '').trim() ||
+          (values['I'] ?? '').trim()
+      );
+      if (!currentStatus && hasStartData) {
+        values['M'] = 'อยู่ระว่างการส่ง';
+        rawValues['M'] = 'อยู่ระว่างการส่ง';
+      } else if (currentStatus) {
+        values['M'] = currentStatus;
+      }
+    }
 
     if (hasNonEmptyValue) {
       let rowNumber = rowOffset + idx + 1;
@@ -2961,36 +3066,91 @@ export async function fetchSheetTabData(
     }
   });
 
-  // Overlay local/backend mutations so unsynced pending records are immediately visible
+  // Overlay local/backend mutations so unsynced or recently synced records are immediately visible
   if (tab.gid === '606634465') {
+    const matchedSheetRowNumbers = new Set<number>();
+    const usedRowNumbers = new Set<number>(parsedRows.map((r) => r.rowNumber));
+
     for (const jt of mutationsStore.jobTransfers) {
-      if (jt.syncedToSheet) continue;
-      const existingRow = parsedRows.find(
-        (r) =>
-          (jt.recordId && (r.values['Q'] ?? '').trim() === jt.recordId) ||
-          ((r.values['A'] ?? '').trim() === (jt.values['A'] ?? '').trim() &&
-            (r.values['C'] ?? '').trim() === (jt.values['C'] ?? '').trim() &&
-            (r.values['D'] ?? '').trim() === (jt.values['D'] ?? '').trim() &&
-            (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim())
-      );
+      const jtId = (jt.recordId ?? '').trim();
+      const existingRow = parsedRows.find((r) => {
+        if (matchedSheetRowNumbers.has(r.rowNumber)) return false;
+        const rowQ = (r.values['Q'] ?? '').trim();
+        if (jtId && rowQ) {
+          return rowQ === jtId;
+        }
+        if (rowQ && jtId && rowQ !== jtId) {
+          return false;
+        }
+        const sameBase =
+          (r.values['A'] ?? '').trim() === (jt.values['A'] ?? '').trim() &&
+          (r.values['C'] ?? '').trim() === (jt.values['C'] ?? '').trim() &&
+          (r.values['D'] ?? '').trim() === (jt.values['D'] ?? '').trim() &&
+          (r.values['I'] ?? '').trim() === (jt.values['I'] ?? '').trim();
+        if (!sameBase) return false;
+        const jtF = (jt.values['F'] ?? '').trim();
+        const jtH = (jt.values['H'] ?? '').trim();
+        const jtJ = (jt.values['J'] ?? '').trim();
+        if (jtF && (r.values['F'] ?? '').trim() && (r.values['F'] ?? '').trim() !== jtF) {
+          return false;
+        }
+        if (jtH && (r.values['H'] ?? '').trim() && (r.values['H'] ?? '').trim() !== jtH) {
+          return false;
+        }
+        if (jtJ && (r.values['J'] ?? '').trim() && (r.values['J'] ?? '').trim() !== jtJ) {
+          return false;
+        }
+        return true;
+      });
+
       if (existingRow) {
+        matchedSheetRowNumbers.add(existingRow.rowNumber);
         if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
         if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
-        if (jt.values['M']) existingRow.values['M'] = jt.values['M'];
+        if (jt.values['M']) {
+          existingRow.values['M'] = jt.values['M'].trim();
+          existingRow.rawValues['M'] = jt.values['M'].trim();
+        }
         if (jt.values['N']) existingRow.values['N'] = jt.values['N'];
-      } else if (!existingRecordIds.has(jt.recordId) && !search) {
-        const rowNumber =
+        if (jtId && !existingRow.values['Q']) {
+          existingRow.values['Q'] = jtId;
+        }
+      } else if (
+        !existingRecordIds.has(jtId) &&
+        !search &&
+        Boolean((jt.values['A'] ?? '').trim() || (jt.values['C'] ?? '').trim()) &&
+        (!jt.syncedToSheet ||
+          (jt.values['M'] ?? '').trim() === 'อยู่ระว่างการส่ง' ||
+          isRecentOptimisticMutation(jt.createdAt, 10 * 60 * 1000))
+      ) {
+        let rowNumber =
           jt.rowNumber && jt.rowNumber > totalRowsInSheet
             ? jt.rowNumber
             : totalRowsInSheet + parsedRows.length + 1;
-        parsedRows.push({
+        while (usedRowNumbers.has(rowNumber)) {
+          rowNumber++;
+        }
+        usedRowNumbers.add(rowNumber);
+        if (jtId) existingRecordIds.add(jtId);
+
+        const normalizedValues: Record<string, string> = {
+          ...jt.values,
+          M: (jt.values['M'] ?? '').trim() || 'อยู่ระว่างการส่ง',
+          Q: jtId || (jt.values['Q'] ?? ''),
+        };
+        const newSheetRow: SheetRow = {
           rowNumber,
-          values: { ...jt.values },
+          values: normalizedValues,
           rawValues: {
-            ...jt.values,
+            ...normalizedValues,
             G: Number(jt.values['G'] ?? 0) || 0,
           },
-        });
+        };
+        if (isDescendingOrdered) {
+          parsedRows.unshift(newSheetRow);
+        } else {
+          parsedRows.push(newSheetRow);
+        }
       }
     }
 
@@ -3191,6 +3351,8 @@ export async function fetchSheetTabData(
   };
 }
 
+let lastAssignedJobTransferRow = 0;
+
 export async function appendJobTransferRecord(
   payload: JobTransferPayload
 ): Promise<{ recordId: string; rowNumber: number | null; syncedToSheet?: boolean }> {
@@ -3282,11 +3444,30 @@ export async function appendJobTransferRecord(
     }
   }
 
-  // 3. Always persist to local & backend store
+  // 3. Always persist to local & backend store with a guaranteed unique rowNumber
   const currentSheetCount = await fetchSheetRowCount('606634465');
   const localStore = readLocalMutationsStore();
-  const baseRow = Math.max(currentSheetCount, 56278) + localStore.jobTransfers.length + 1;
-  const fallbackRowNumber = rowNumber ?? baseRow;
+  const maxLocalRow = localStore.jobTransfers.reduce(
+    (max, item) => Math.max(max, item.rowNumber || 0),
+    0
+  );
+  const candidateBaseRow = Math.max(
+    currentSheetCount,
+    56278,
+    maxLocalRow,
+    lastAssignedJobTransferRow
+  ) + 1;
+  let fallbackRowNumber = rowNumber && rowNumber > 0 ? rowNumber : candidateBaseRow;
+  if (
+    localStore.jobTransfers.some(
+      (j) => j.recordId !== recordId && j.rowNumber === fallbackRowNumber
+    ) ||
+    fallbackRowNumber <= lastAssignedJobTransferRow
+  ) {
+    fallbackRowNumber = Math.max(fallbackRowNumber, maxLocalRow, lastAssignedJobTransferRow) + 1;
+  }
+  lastAssignedJobTransferRow = Math.max(lastAssignedJobTransferRow, fallbackRowNumber);
+  setStoredRowCount('606634465', fallbackRowNumber);
 
   localStore.jobTransfers.push({
     recordId,
@@ -3318,7 +3499,7 @@ export async function appendJobTransferRecord(
         void fetch('/api/mutations/mark-synced', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ recordId, sheetRowNumber: rowNumber }),
+          body: JSON.stringify({ recordId, sheetRowNumber: rowNumber ?? fallbackRowNumber }),
         }).catch(() => {});
       }
     }
@@ -3335,26 +3516,59 @@ export async function completeJobTransferRecord(params: {
   endTime: string;
   duration: string;
   status?: string;
+  date?: string;
+  driverName?: string;
+  vehicleNumber?: string;
+  startTime?: string;
+  origin?: string;
+  destination?: string;
+  productType?: string;
 }): Promise<{ syncedToSheet: boolean }> {
   const finalStatus = params.status || 'ส่งสินค้าเรียบร้อยแล้ว';
+  const effectiveRecordId =
+    params.recordId?.trim() || `row_${params.rowNumber ?? 0}_${Date.now()}`;
   let completedOnSheet = false;
 
-  // 1. Update local store immediately
+  // 1. Update local store immediately (or insert completion overlay if completing an older sheet row)
   const localStore = readLocalMutationsStore();
+  let foundInLocal = false;
   for (const item of localStore.jobTransfers) {
     if (
-      item.recordId === params.recordId ||
+      (params.recordId && item.recordId === params.recordId) ||
       (params.rowNumber && item.rowNumber === params.rowNumber)
     ) {
       item.values['K'] = params.endTime;
       item.values['L'] = params.duration;
       item.values['M'] = finalStatus;
+      item.createdAt = new Date().toISOString();
+      foundInLocal = true;
     }
+  }
+  if (!foundInLocal) {
+    localStore.jobTransfers.push({
+      recordId: effectiveRecordId,
+      rowNumber: params.rowNumber ?? 0,
+      values: {
+        A: params.date ?? '',
+        C: params.driverName ?? '',
+        D: params.vehicleNumber ?? '',
+        F: params.productType ?? '',
+        H: params.origin ?? '',
+        I: params.startTime ?? '',
+        J: params.destination ?? '',
+        K: params.endTime,
+        L: params.duration,
+        M: finalStatus,
+        Q: params.recordId ?? '',
+      },
+      createdAt: new Date().toISOString(),
+      syncedToSheet: true,
+    });
   }
   writeLocalMutationsStore(localStore);
 
   // 2. Update backend store
-  void fetch(`/api/mutations/job-transfer/${encodeURIComponent(params.recordId)}`, {
+  void fetch(`/api/mutations/job-transfer/${encodeURIComponent(effectiveRecordId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -3362,6 +3576,13 @@ export async function completeJobTransferRecord(params: {
       endTime: params.endTime,
       duration: params.duration,
       status: finalStatus,
+      date: params.date,
+      driverName: params.driverName,
+      vehicleNumber: params.vehicleNumber,
+      startTime: params.startTime,
+      origin: params.origin,
+      destination: params.destination,
+      productType: params.productType,
     }),
   }).catch(() => {});
 
@@ -3376,6 +3597,10 @@ export async function completeJobTransferRecord(params: {
         endTime: params.endTime,
         duration: params.duration,
         status: finalStatus,
+        date: params.date,
+        driverName: params.driverName,
+        vehicleNumber: params.vehicleNumber,
+        startTime: params.startTime,
       });
       completedOnSheet = true;
       return { syncedToSheet: true };
@@ -4870,6 +5095,53 @@ export function normalizeDriverNameKey(rawName: string): string {
     .trim();
 }
 
+export function isValidEmployeeCode(code: string): boolean {
+  const trimmed = String(code || '').trim();
+  return /^\d{4,12}$/.test(trimmed) || /^[A-Za-z]{1,4}-?\d{3,10}$/.test(trimmed);
+}
+
+/**
+ * Verified baseline mapping of normalized driver names to employee codes
+ * from Account and הבันทึกการย้ายงาน sheets so employee codes are always available immediately.
+ */
+export const KNOWN_DRIVER_EMP_CODES: Record<string, string> = {
+  'ทเนศ เมฆหมอก': '61110020',
+  'ธีรวัฒน์ สิงห์โตน้อย': '64110003',
+  'ณัฐพงศ์ เจริญลาภ': '65060006',
+  'ศรายุธร ซื่อสัตย์': '65050030',
+  'ประกอบ นรินทร์นอก': '65020007',
+  'อัครเดช กลิ่นจันทร์': '68110004',
+  'นเรน นุ่มสุก': '69040005',
+  'นพนันท์ ยันอินทร์': '60070003',
+  'เพชรรัตน์ วาดเขียน': '51011376',
+  'ชญานนท์ คำทองเที่ยง': '60070027',
+  'สุทธิพงศ์ ชูนาคา': '66090002',
+  'สุทธิพงษ์ ชูนาคา': '66090002',
+  'สถาวร ช้างสาร': '58044306',
+  'ณัฐวุฒิ ภูสังข์': '67020002',
+  'กานต์ บัวแก้ว': '69100034',
+  'นิคม คุ้มเณร': '67080006',
+  'เรืองศักดิ์ รัตนรุ่งเรืองกุล': '69040004',
+  'จารุวัฒน์ ศรีโชติ': '68080007',
+  'ลิขิต อุ่นดวง': '61020006',
+  'เศกสรรค์ แก้วมรกฏ': '64100005',
+  'เลิศฤทธิ์ ศรีเรืองพันธ์': '65110003',
+  'สรศักดิ์ เมฆหมอก': '62070002',
+  'นนทนันท์ พุฒิโชติ': '68090004',
+  'ณัฐพล ศิริจันโท': '68040004',
+  'นพรัตน์ แสงแก้ว': '68100004',
+  'จตุพร พูลศิลป์': '67040003',
+  'สมชาย จูมวันนา': '62020005',
+  'บันลือศักดิ์ ลีทาสี': '68090017',
+  'ทินภัทร อินทฟู': '69080003',
+  'เด่น อุดศรี': '61060033',
+  'วัฒนา พุ่มแฟง': '62020050',
+  'ธรรณธร ทองนรินทร์': '65070008',
+  'อนนท์ สามีวัง': '67100003',
+  'นัฐพล เมืองสำราญ': '68020006',
+  'เฉลิมชัย จู๋กลาง': '68110003',
+};
+
 let cachedAccountEmployeeMap: Map<string, string> | null = null;
 let cachedAccountEmployeeMapAt = 0;
 
@@ -4906,7 +5178,7 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
     return cachedAccountEmployeeMap;
   }
 
-  const map = new Map<string, string>();
+  const map = new Map<string, string>(Object.entries(KNOWN_DRIVER_EMP_CODES));
 
   const [accountCsvRes, transferEmpRes] = await Promise.allSettled([
     fetch(
@@ -4914,9 +5186,29 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
     ).then((r) => (r.ok ? r.text() : '')),
     queryGviz(
       '606634465',
-      'select B, C where B is not null and C is not null group by B, C limit 500'
+      'select B, C, count(A) where B is not null and C is not null group by B, C limit 500'
     ),
   ]);
+
+  if (
+    transferEmpRes.status === 'fulfilled' &&
+    transferEmpRes.value?.table?.rows
+  ) {
+    const bestCountByKey = new Map<string, number>();
+    for (const r of transferEmpRes.value.table.rows) {
+      const empCode = formatGvizCellValue(r.c?.[0]).trim();
+      const drvName = formatGvizCellValue(r.c?.[1]).trim();
+      const cnt = Number(r.c?.[2]?.v ?? 0);
+      const key = normalizeDriverNameKey(drvName);
+      if (key && empCode && empCode !== drvName && isValidEmployeeCode(empCode)) {
+        const prevCount = bestCountByKey.get(key) ?? -1;
+        if (cnt > prevCount) {
+          bestCountByKey.set(key, cnt);
+          map.set(key, empCode);
+        }
+      }
+    }
+  }
 
   if (accountCsvRes.status === 'fulfilled' && accountCsvRes.value) {
     const lines = accountCsvRes.value.split(/\r?\n/).filter((l) => l.trim());
@@ -4926,21 +5218,7 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
       const fullName = (cols[3] || '').trim();
       const empCode = (cols[4] || username).trim();
       const key = normalizeDriverNameKey(fullName);
-      if (key && empCode) {
-        map.set(key, empCode);
-      }
-    }
-  }
-
-  if (
-    transferEmpRes.status === 'fulfilled' &&
-    transferEmpRes.value?.table?.rows
-  ) {
-    for (const r of transferEmpRes.value.table.rows) {
-      const empCode = String(r.c?.[0]?.v ?? '').trim();
-      const drvName = String(r.c?.[1]?.v ?? '').trim();
-      const key = normalizeDriverNameKey(drvName);
-      if (key && empCode && !map.has(key)) {
+      if (key && empCode && isValidEmployeeCode(empCode)) {
         map.set(key, empCode);
       }
     }
@@ -4952,6 +5230,209 @@ export async function fetchAccountEmployeeMap(): Promise<Map<string, string>> {
   }
 
   return map;
+}
+
+export interface EmployeeAccountRecord {
+  rowNumber: number;
+  id: string;
+  username: string;
+  employeeCode: string;
+  fullName: string;
+  department: string;
+  position: string;
+  phone: string;
+  image: string;
+  assignedVehicle: string;
+  shift: string;
+  team: string;
+}
+
+let cachedEmployeeAccounts: EmployeeAccountRecord[] | null = null;
+let cachedEmployeeAccountsAt = 0;
+
+export async function fetchEmployeeAccounts(options?: {
+  forceRefresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<EmployeeAccountRecord[]> {
+  if (
+    !options?.forceRefresh &&
+    cachedEmployeeAccounts &&
+    cachedEmployeeAccounts.length > 0 &&
+    Date.now() - cachedEmployeeAccountsAt < 45_000
+  ) {
+    return cachedEmployeeAccounts;
+  }
+
+  const [accountCsvRes, vehicleRes, transferEmpRes] = await Promise.allSettled([
+    fetch(
+      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`,
+      { signal: options?.signal }
+    ).then((r) => (r.ok ? r.text() : '')),
+    queryGviz('378250263', 'select A, C, I, J, K, L, M, O, P limit 500', options?.signal, 15000),
+    queryGviz(
+      '606634465',
+      'select B, C, count(A) where B is not null and C is not null group by B, C limit 500',
+      options?.signal,
+      15000
+    ),
+  ]);
+
+  // Build lookup map from ฐานข้อมูลรถ (gid: 378250263) by normalized driver name
+  const vehicleInfoMap = new Map<
+    string,
+    {
+      vehicleNumber: string;
+      vehicleType: string;
+      area: string;
+      phone: string;
+      shift: string;
+      photo: string;
+      team: string;
+      empCode: string;
+    }
+  >();
+
+  if (vehicleRes.status === 'fulfilled' && vehicleRes.value?.table?.rows) {
+    for (const r of vehicleRes.value.table.rows) {
+      const vehicleNumber = formatGvizCellValue(r.c?.[0]).trim();
+      const vehicleType = formatGvizCellValue(r.c?.[1]).trim();
+      const driverName = formatGvizCellValue(r.c?.[2]).trim();
+      const area = formatGvizCellValue(r.c?.[3]).trim();
+      const phone = formatGvizCellValue(r.c?.[4]).trim();
+      const shift = formatGvizCellValue(r.c?.[5]).trim();
+      const photo = formatGvizCellValue(r.c?.[6]).trim();
+      const team = formatGvizCellValue(r.c?.[7]).trim();
+      const empCode = formatGvizCellValue(r.c?.[8]).trim();
+      const key = normalizeDriverNameKey(driverName);
+      if (key) {
+        const existing = vehicleInfoMap.get(key);
+        vehicleInfoMap.set(key, {
+          vehicleNumber: existing?.vehicleNumber
+            ? `${existing.vehicleNumber}, ${vehicleNumber}`
+            : vehicleNumber,
+          vehicleType: existing?.vehicleType || vehicleType,
+          area: existing?.area || area,
+          phone: existing?.phone || phone,
+          shift: existing?.shift || shift,
+          photo: existing?.photo || photo,
+          team: existing?.team || team,
+          empCode: existing?.empCode || empCode,
+        });
+      }
+    }
+  }
+
+  // Build fallback employee code map from הבันทึกการย้ายงาน
+  const transferCodeMap = new Map<string, string>(Object.entries(KNOWN_DRIVER_EMP_CODES));
+  if (transferEmpRes.status === 'fulfilled' && transferEmpRes.value?.table?.rows) {
+    const bestCountByKey = new Map<string, number>();
+    for (const r of transferEmpRes.value.table.rows) {
+      const code = formatGvizCellValue(r.c?.[0]).trim();
+      const drvName = formatGvizCellValue(r.c?.[1]).trim();
+      const cnt = Number(r.c?.[2]?.v ?? 0);
+      const key = normalizeDriverNameKey(drvName);
+      if (key && code && code !== drvName && isValidEmployeeCode(code)) {
+        const prevCount = bestCountByKey.get(key) ?? -1;
+        if (cnt > prevCount) {
+          bestCountByKey.set(key, cnt);
+          transferCodeMap.set(key, code);
+        }
+      }
+    }
+  }
+
+  const records: EmployeeAccountRecord[] = [];
+
+  if (accountCsvRes.status === 'fulfilled' && accountCsvRes.value) {
+    const lines = accountCsvRes.value.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length > 0) {
+      const headers = parseSimpleCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+      const findColIdx = (candidates: string[], fallbackIdx: number): number => {
+        for (const cand of candidates) {
+          const idx = headers.findIndex((h) => h === cand.toLowerCase() || h.includes(cand.toLowerCase()));
+          if (idx >= 0) return idx;
+        }
+        return fallbackIdx;
+      };
+
+      const idxId = findColIdx(['id'], 0);
+      const idxUsername = findColIdx(['username', 'user'], 1);
+      const idxFullName = findColIdx(['ชื่อ-สกุล', 'ชื่อ-นามสกุล', 'ชื่อ', 'name'], 3);
+      const idxEmpCode = findColIdx(['รหัสพนักงาน', 'emp'], 4);
+      const idxImage = findColIdx(['image', 'รูป'], 5);
+      const idxPosition = findColIdx(['staus', 'status', 'ตำแหน่ง', 'role', 'สิทธิ์'], 6);
+      const idxPhone = findColIdx(['หมายเลขโทรศัพท์', 'เบอร์โทรศัพท์', 'เบอร์โทร', 'phone', 'tel'], 7);
+      const idxDept = findColIdx(['แผนก', 'ฝ่าย', 'สังกัด', 'department', 'พื้นที่'], -1);
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseSimpleCsvLine(lines[i]);
+        const id = (cols[idxId] || '').trim();
+        const username = (cols[idxUsername] || '').trim();
+        const fullName = (cols[idxFullName] || '').trim();
+        const rawEmpCode = (cols[idxEmpCode] || '').trim();
+        const rawImage = (cols[idxImage] || '').trim();
+        const rawPosition = (cols[idxPosition] || '').trim();
+        const rawPhone = (cols[idxPhone] || '').trim();
+        const rawDept = idxDept >= 0 ? (cols[idxDept] || '').trim() : '';
+
+        if (!id && !fullName && !username && !rawEmpCode) continue;
+
+        const nameKey = normalizeDriverNameKey(fullName);
+        const vehInfo = nameKey ? vehicleInfoMap.get(nameKey) : undefined;
+        const transferCode = nameKey ? transferCodeMap.get(nameKey) : undefined;
+
+        const employeeCode =
+          rawEmpCode ||
+          username ||
+          vehInfo?.empCode ||
+          transferCode ||
+          '-';
+
+        let department = rawDept;
+        if (!department) {
+          if (vehInfo?.area && vehInfo?.team) {
+            department = `ปฏิบัติการขนส่ง (${vehInfo.area} • ทีม ${vehInfo.team})`;
+          } else if (vehInfo?.area) {
+            department = `ปฏิบัติการขนส่ง (พื้นที่ ${vehInfo.area})`;
+          } else if (vehInfo?.team) {
+            department = `ปฏิบัติการขนส่ง (ทีม ${vehInfo.team})`;
+          } else if (rawPosition.toUpperCase() === 'MANAGER') {
+            department = 'บริหารจัดการ / ขนส่งและคลังสินค้า';
+          } else if (rawPosition.toUpperCase() === 'ADMIN') {
+            department = 'บริหารระบบและธุรการขนส่ง';
+          } else {
+            department = 'ปฏิบัติการขนส่งและเคลื่อนย้ายสินค้า';
+          }
+        }
+
+        const position = rawPosition || 'User';
+        const phone = rawPhone || vehInfo?.phone || '-';
+        const image = rawImage || vehInfo?.photo || '';
+
+        records.push({
+          rowNumber: i,
+          id: id || `${i}`,
+          username: username || '-',
+          employeeCode,
+          fullName: fullName || username || '-',
+          department,
+          position,
+          phone,
+          image,
+          assignedVehicle: vehInfo?.vehicleNumber || '-',
+          shift: vehInfo?.shift || '-',
+          team: vehInfo?.team || '-',
+        });
+      }
+    }
+  }
+
+  if (records.length > 0) {
+    cachedEmployeeAccounts = records;
+    cachedEmployeeAccountsAt = Date.now();
+  }
+
+  return records;
 }
 
 export async function appendTrailerRecord(trailerNumber: string): Promise<void> {

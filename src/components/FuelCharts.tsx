@@ -13,6 +13,11 @@ import {
 interface FuelChartsProps {
   rows: SheetRow[];
   columns?: SheetColumn[];
+  startDate?: string;
+  endDate?: string;
+  onStartDateChange?: (date: string) => void;
+  onEndDateChange?: (date: string) => void;
+  onClearDateFilter?: () => void;
 }
 
 interface DateAggregate {
@@ -88,11 +93,38 @@ function formatYmdToThaiDisplay(ymd: string): string {
   return `${d} ${thaiMonths[m - 1]} ${shortYear}`;
 }
 
-export const FuelCharts: React.FC<FuelChartsProps> = ({ rows, columns }) => {
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+export const FuelCharts: React.FC<FuelChartsProps> = ({
+  rows,
+  columns,
+  startDate: controlledStartDate,
+  endDate: controlledEndDate,
+  onStartDateChange,
+  onEndDateChange,
+  onClearDateFilter,
+}) => {
+  const [internalStartDate, setInternalStartDate] = useState<string>('');
+  const [internalEndDate, setInternalEndDate] = useState<string>('');
   const [hoveredInDate, setHoveredInDate] = useState<DateAggregate | null>(null);
   const [hoveredOutDate, setHoveredOutDate] = useState<DateAggregate | null>(null);
+
+  const startDate = controlledStartDate !== undefined ? controlledStartDate : internalStartDate;
+  const endDate = controlledEndDate !== undefined ? controlledEndDate : internalEndDate;
+
+  const setStartDate = (val: string) => {
+    if (onStartDateChange) {
+      onStartDateChange(val);
+    } else {
+      setInternalStartDate(val);
+    }
+  };
+
+  const setEndDate = (val: string) => {
+    if (onEndDateChange) {
+      onEndDateChange(val);
+    } else {
+      setInternalEndDate(val);
+    }
+  };
 
   const fuelTypeColId =
     columns?.find((c) => c.label.includes('ชนิดน้ำมัน'))?.id ?? 'D';
@@ -126,8 +158,12 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({ rows, columns }) => {
   };
 
   const handleClearFilter = () => {
-    setStartDate('');
-    setEndDate('');
+    if (onClearDateFilter) {
+      onClearDateFilter();
+    } else {
+      setStartDate('');
+      setEndDate('');
+    }
   };
 
   // Aggregated Inflow & Outflow data grouped by Date

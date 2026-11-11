@@ -7,6 +7,9 @@ import {
   Truck,
   Plus,
   MapPin,
+  Trash2,
+  ListPlus,
+  CheckSquare,
 } from 'lucide-react';
 import { JobTransferPayload, SheetRow } from '../types';
 import {
@@ -16,6 +19,8 @@ import {
   completeJobTransferRecord,
   fetchAccountEmployeeMap,
   normalizeDriverNameKey,
+  isValidEmployeeCode,
+  KNOWN_DRIVER_EMP_CODES,
   appendTrailerRecord,
 } from '../services/googleSheets';
 import { showSuccessToast } from '../utils/swal';
@@ -84,7 +89,7 @@ interface JobTransferModalProps {
   inlineMode?: boolean;
 }
 
-interface ActiveDeliveryJob {
+export interface ActiveDeliveryJob {
   rowNumber: number | null;
   recordId: string;
   date: string;
@@ -102,31 +107,100 @@ interface ActiveDeliveryJob {
   note: string;
 }
 
-const ACTIVE_JOB_STORAGE_KEY = 'gsheets_active_delivery_job_v1';
-
-function loadStoredActiveJob(): ActiveDeliveryJob | null {
-  try {
-    const raw = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as ActiveDeliveryJob;
-  } catch {
-    return null;
-  }
+interface DraftTransferItem {
+  tempId: string;
+  date: string;
+  employeeId: string;
+  driverName: string;
+  vehicleNumber: string;
+  trailerNumber: string;
+  productType: string;
+  weight: number;
+  origin: string;
+  destination: string;
+  rounds: number;
+  note: string;
 }
 
-function saveStoredActiveJob(job: ActiveDeliveryJob | null): void {
+const LEGACY_ACTIVE_JOB_STORAGE_KEY = 'gsheets_active_delivery_job_v1';
+const ACTIVE_JOBS_STORAGE_KEY = 'gsheets_active_delivery_jobs_v2';
+const ACTIVE_JOBS_EVENT_NAME = 'job-transfer-active-jobs-updated';
+
+export function loadStoredActiveJobs(): ActiveDeliveryJob[] {
   try {
-    if (job) {
-      localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, JSON.stringify(job));
+    const rawV2 = localStorage.getItem(ACTIVE_JOBS_STORAGE_KEY);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((x) => x && typeof x === 'object' && x.recordId);
+      }
+    }
+    const rawV1 = localStorage.getItem(LEGACY_ACTIVE_JOB_STORAGE_KEY);
+    if (rawV1) {
+      const single = JSON.parse(rawV1) as ActiveDeliveryJob | null;
+      localStorage.removeItem(LEGACY_ACTIVE_JOB_STORAGE_KEY);
+      if (single && single.recordId) {
+        const migrated = [single];
+        localStorage.setItem(ACTIVE_JOBS_STORAGE_KEY, JSON.stringify(migrated));
+        return migrated;
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [];
+}
+
+export function saveStoredActiveJobs(jobs: ActiveDeliveryJob[]): void {
+  try {
+    localStorage.removeItem(LEGACY_ACTIVE_JOB_STORAGE_KEY);
+    if (jobs.length > 0) {
+      localStorage.setItem(ACTIVE_JOBS_STORAGE_KEY, JSON.stringify(jobs));
     } else {
-      localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+      localStorage.removeItem(ACTIVE_JOBS_STORAGE_KEY);
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(ACTIVE_JOBS_EVENT_NAME));
     }
   } catch {
     // ignore storage errors
   }
 }
 
-function getCurrentThaiDateString(): string {
+export function removeStoredActiveJobsByMatches(
+  completedItems: Array<{
+    recordId?: string;
+    rowNumber?: number | null;
+    driverName?: string;
+    vehicleNumber?: string;
+    startTime?: string;
+  }>
+): void {
+  const current = loadStoredActiveJobs();
+  if (current.length === 0) return;
+  const next = current.filter((job) => {
+    return !completedItems.some((c) => {
+      if (c.recordId && job.recordId && c.recordId === job.recordId) return true;
+      if (c.rowNumber && job.rowNumber && c.rowNumber === job.rowNumber) return true;
+      if (
+        c.driverName &&
+        c.vehicleNumber &&
+        c.startTime &&
+        job.driverName === c.driverName &&
+        job.vehicleNumber === c.vehicleNumber &&
+        job.startTime === c.startTime
+      ) {
+        return true;
+      }
+      return false;
+    });
+  });
+  if (next.length !== current.length) {
+    saveStoredActiveJobs(next);
+  }
+}
+
+export function getCurrentThaiDateString(): string {
   const now = new Date();
   const day = now.getDate();
   const month = now.getMonth() + 1;
@@ -134,7 +208,7 @@ function getCurrentThaiDateString(): string {
   return `${day}/${month}/${buddhistYear}`;
 }
 
-function getCurrentTimeString(): string {
+export function getCurrentTimeString(): string {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
@@ -142,7 +216,7 @@ function getCurrentTimeString(): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function calculateDurationString(startTime: string, endTime: string): string {
+export function calculateDurationString(startTime: string, endTime: string): string {
   const parseSec = (t: string): number | null => {
     const parts = t.trim().split(':').map(Number);
     if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
@@ -167,38 +241,6 @@ function calculateDurationString(startTime: string, endTime: string): string {
   )}`;
 }
 
-const FINISH_BUTTON_DELAY_SECONDS = 60;
-
-function calculateElapsedSeconds(
-  startTime: string,
-  endTime: string,
-  startedAtMs?: number
-): number {
-  if (
-    typeof startedAtMs === 'number' &&
-    Number.isFinite(startedAtMs) &&
-    startedAtMs > 0
-  ) {
-    return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
-  }
-  const parseSec = (t: string): number | null => {
-    const parts = t.trim().split(':').map(Number);
-    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
-    const [h, m, s = 0] = parts;
-    return h * 3600 + m * 60 + s;
-  };
-
-  const startSec = parseSec(startTime);
-  const endSec = parseSec(endTime);
-  if (startSec === null || endSec === null) return 0;
-
-  let diff = endSec - startSec;
-  if (diff < 0) {
-    diff += 24 * 3600;
-  }
-  return Math.max(0, diff);
-}
-
 export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   isOpen,
   onClose,
@@ -221,13 +263,22 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   const [rounds, setRounds] = useState<string>('1');
   const [note, setNote] = useState<string>('');
 
-  const [activeJob, setActiveJob] = useState<ActiveDeliveryJob | null>(() =>
-    loadStoredActiveJob()
+  const [queuedItems, setQueuedItems] = useState<DraftTransferItem[]>([]);
+  const [pendingStartItems, setPendingStartItems] = useState<DraftTransferItem[]>([]);
+
+  const [activeJobs, setActiveJobs] = useState<ActiveDeliveryJob[]>(() =>
+    loadStoredActiveJobs()
   );
+  const [selectedFinishIds, setSelectedFinishIds] = useState<string[]>(() =>
+    loadStoredActiveJobs().map((j) => j.recordId)
+  );
+  const [jobsToFinish, setJobsToFinish] = useState<ActiveDeliveryJob[]>([]);
+  const [isAddingMoreWhileInTransit, setIsAddingMoreWhileInTransit] =
+    useState<boolean>(false);
 
   const [flowStep, setFlowStep] = useState<
     'FORM' | 'CONFIRM_START' | 'IN_TRANSIT' | 'CONFIRM_FINISH'
-  >(() => (loadStoredActiveJob() ? 'IN_TRANSIT' : 'FORM'));
+  >(() => (loadStoredActiveJobs().length > 0 ? 'IN_TRANSIT' : 'FORM'));
 
   const [pendingStartTime, setPendingStartTime] = useState<string>('');
   const [pendingEndTime, setPendingEndTime] = useState<string>('');
@@ -312,10 +363,39 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     };
   }, [isOpen, inlineMode, existingRows.length, fallbackRows.length]);
 
-  const updateActiveJob = (job: ActiveDeliveryJob | null) => {
-    setActiveJob(job);
-    saveStoredActiveJob(job);
+  const updateActiveJobs = (jobs: ActiveDeliveryJob[]) => {
+    setActiveJobs(jobs);
+    saveStoredActiveJobs(jobs);
+    setSelectedFinishIds((prev) => {
+      const validPrev = prev.filter((id) => jobs.some((j) => j.recordId === id));
+      const newIds = jobs
+        .map((j) => j.recordId)
+        .filter((id) => !validPrev.includes(id));
+      return [...validPrev, ...newIds];
+    });
   };
+
+  useEffect(() => {
+    const syncFromStorage = () => {
+      const latest = loadStoredActiveJobs();
+      setActiveJobs(latest);
+      setSelectedFinishIds((prev) => {
+        const validPrev = prev.filter((id) => latest.some((j) => j.recordId === id));
+        const newIds = latest
+          .map((j) => j.recordId)
+          .filter((id) => !validPrev.includes(id));
+        return validPrev.length > 0 || newIds.length > 0
+          ? [...validPrev, ...newIds]
+          : latest.map((j) => j.recordId);
+      });
+    };
+    window.addEventListener(ACTIVE_JOBS_EVENT_NAME, syncFromStorage);
+    window.addEventListener('storage', syncFromStorage);
+    return () => {
+      window.removeEventListener(ACTIVE_JOBS_EVENT_NAME, syncFromStorage);
+      window.removeEventListener('storage', syncFromStorage);
+    };
+  }, []);
 
   const sourceRows = existingRows.length > 0 ? existingRows : fallbackRows;
 
@@ -351,8 +431,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const dst = row.values['J']?.trim() ?? '';
 
       const normDrv = normalizeDriverNameKey(drv);
-      if (normDrv && emp && !historyNameToEmp.has(normDrv)) {
-        historyNameToEmp.set(normDrv, emp);
+      const validEmp = emp && emp !== drv && isValidEmployeeCode(emp) ? emp : '';
+      if (normDrv && validEmp && !historyNameToEmp.has(normDrv)) {
+        historyNameToEmp.set(normDrv, validEmp);
       }
       if (normDrv && trl && !historyNameToTrailer.has(normDrv)) {
         historyNameToTrailer.set(normDrv, trl);
@@ -365,11 +446,22 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
       // Fallback only while ฐานข้อมูลรถ is still loading
       if (vehicleDbRows.length === 0) {
-        const key = emp || drv;
+        const resolvedEmp =
+          validEmp ||
+          accountEmpMap.get(normDrv) ||
+          historyNameToEmp.get(normDrv) ||
+          KNOWN_DRIVER_EMP_CODES[normDrv] ||
+          '';
+        const key = resolvedEmp || drv || emp;
         if (key) {
           const existing = employeeMap.get(key);
           if (!existing) {
-            employeeMap.set(key, { empCode: emp || key, name: drv || key, vehicle: veh, trailer: trl });
+            employeeMap.set(key, {
+              empCode: resolvedEmp || key,
+              name: drv || key,
+              vehicle: veh,
+              trailer: trl,
+            });
           } else {
             if (!existing.name && drv) existing.name = drv;
             if (!existing.vehicle && veh) existing.vehicle = veh;
@@ -399,17 +491,24 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
         }
 
         const normDrv = normalizeDriverNameKey(drv);
+        const validColP =
+          empColP && empColP !== '-' && empColP !== drv && isValidEmployeeCode(empColP)
+            ? empColP
+            : '';
         const candidateEmpCode =
-          (empColP && empColP !== '-' ? empColP : '') ||
+          validColP ||
           accountEmpMap.get(normDrv) ||
           historyNameToEmp.get(normDrv) ||
+          KNOWN_DRIVER_EMP_CODES[normDrv] ||
           '';
         const resolvedTrailer = historyNameToTrailer.get(normDrv) || '';
 
-        // Prevent collisions: ensure every unique driver name from ฐานข้อมูลรถ gets its own option key
+        // Prevent collisions: ensure every unique driver/vehicle row from ฐานข้อมูลรถ gets its own option key
         let empKey = candidateEmpCode;
-        if (!empKey || (employeeMap.has(empKey) && employeeMap.get(empKey)?.name !== drv)) {
+        if (!empKey) {
           empKey = drv;
+        } else if (employeeMap.has(empKey) && employeeMap.get(empKey)?.name !== drv) {
+          empKey = `${candidateEmpCode}__${drv}`;
         }
 
         employeeMap.set(empKey, {
@@ -563,12 +662,19 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
   useEffect(() => {
     const trimmed = employeeId.trim();
     if (!trimmed) return;
-    const match = referenceOptions.employeeMap.get(trimmed);
+    let match = referenceOptions.employeeMap.get(trimmed);
+    if (!match) {
+      const drvMatch = referenceOptions.driverMap.get(trimmed);
+      if (drvMatch?.empId) {
+        setEmployeeId(drvMatch.empId);
+        match = referenceOptions.employeeMap.get(drvMatch.empId);
+      }
+    }
     if (match) {
       if (match.name) setDriverName(match.name);
       if (match.vehicle) setVehicleNumber(match.vehicle);
     }
-  }, [employeeId, referenceOptions.employeeMap]);
+  }, [employeeId, referenceOptions.employeeMap, referenceOptions.driverMap]);
 
   // Live clock timer when a job is in transit
   useEffect(() => {
@@ -580,18 +686,22 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     return () => clearInterval(timer);
   }, [isOpen, inlineMode, flowStep]);
 
-  // Reset error and update date when opening modal (preserve activeJob if currently in transit)
+  // Reset error and update date when opening modal (preserve activeJobs unless user clicked "+ เพิ่มงานส่งสินค้า")
   useEffect(() => {
     if (isOpen || inlineMode) {
       setDate(getCurrentThaiDateString());
       setSubmitError(null);
-      if (activeJob) {
-        setFlowStep('IN_TRANSIT');
-      } else {
-        setFlowStep('FORM');
+      if (activeJobs.length > 0 && !isAddingMoreWhileInTransit) {
+        if (flowStep !== 'CONFIRM_FINISH' && flowStep !== 'CONFIRM_START') {
+          setFlowStep('IN_TRANSIT');
+        }
+      } else if (activeJobs.length === 0) {
+        if (flowStep === 'IN_TRANSIT' || flowStep === 'CONFIRM_FINISH') {
+          setFlowStep('FORM');
+        }
       }
     }
-  }, [isOpen, inlineMode, activeJob]);
+  }, [isOpen, inlineMode, activeJobs.length, isAddingMoreWhileInTransit, flowStep]);
 
   if (!isOpen && !inlineMode) return null;
 
@@ -645,90 +755,170 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     setWeight(String(rounded));
   };
 
-  // Step 1: Validate form and prepare to press "เริ่มส่งสินค้า"
+  const buildCurrentDraftItem = (): DraftTransferItem | null => {
+    if (!driverName.trim() && !employeeId.trim()) {
+      setSubmitError('กรุณาระบุรหัสพนักงาน หรือ ชื่อพนักงานขับรถ');
+      return null;
+    }
+    if (!vehicleNumber.trim()) {
+      setSubmitError('กรุณาระบุเบอร์รถ');
+      return null;
+    }
+    if (!productType.trim()) {
+      setSubmitError('กรุณาระบุประเภทสินค้า');
+      return null;
+    }
+    if (!origin.trim() || !destination.trim()) {
+      setSubmitError('กรุณาระบุต้นทางและปลายทาง');
+      return null;
+    }
+
+    const numericWeight = parseFloat(weight.replace(/,/g, ''));
+    const cleanWeight = Number.isNaN(numericWeight) ? 0 : numericWeight;
+    const numericRounds = parseInt(rounds, 10);
+    const cleanRounds =
+      Number.isNaN(numericRounds) || numericRounds < 1 ? 1 : numericRounds;
+    const autoDate = date.trim() || getCurrentThaiDateString();
+    const selectedEmpInfo = referenceOptions.employeeMap.get(employeeId.trim());
+    const resolvedEmployeeCode =
+      selectedEmpInfo?.empCode ||
+      KNOWN_DRIVER_EMP_CODES[normalizeDriverNameKey(driverName)] ||
+      employeeId.trim();
+
+    return {
+      tempId: `${Date.now()}_${Math.random().toString(16).slice(2, 7)}`,
+      date: autoDate,
+      employeeId: resolvedEmployeeCode,
+      driverName: driverName.trim(),
+      vehicleNumber: vehicleNumber.trim(),
+      trailerNumber: trailerNumber.trim(),
+      productType: productType.trim(),
+      weight: cleanWeight,
+      origin: origin.trim(),
+      destination: destination.trim(),
+      rounds: cleanRounds,
+      note: note.trim(),
+    };
+  };
+
+  const handleAddToQueue = () => {
+    setSubmitError(null);
+    const item = buildCurrentDraftItem();
+    if (!item) return;
+
+    setQueuedItems((prev) => [...prev, item]);
+    // Reset only item-specific product/weight/note fields so adding the 2nd, 3rd item is instant
+    setProductType('');
+    setBundleCount('');
+    setWeightPerBundle('');
+    setExtraWeight('');
+    setWeight('0');
+    setNote('');
+  };
+
+  const handleRemoveQueuedItem = (tempId: string) => {
+    setQueuedItems((prev) => prev.filter((item) => item.tempId !== tempId));
+  };
+
+  // Step 1: Validate form (and/or queuedItems) and prepare to press "เริ่มส่งสินค้า"
   const handleInitiateStartDelivery = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
 
-    if (!driverName.trim() && !employeeId.trim()) {
-      setSubmitError('กรุณาระบุรหัสพนักงาน หรือ ชื่อพนักงานขับรถ');
-      return;
+    const hasCurrentProduct = Boolean(productType.trim());
+    const itemsToStart: DraftTransferItem[] = [...queuedItems];
+
+    if (itemsToStart.length === 0 || hasCurrentProduct) {
+      const currentItem = buildCurrentDraftItem();
+      if (!currentItem) return;
+      itemsToStart.push(currentItem);
     }
-    if (!vehicleNumber.trim()) {
-      setSubmitError('กรุณาระบุเบอร์รถ');
-      return;
-    }
-    if (!productType.trim()) {
-      setSubmitError('กรุณาระบุประเภทสินค้า');
-      return;
-    }
-    if (!origin.trim() || !destination.trim()) {
-      setSubmitError('กรุณาระบุต้นทางและปลายทาง');
+
+    if (itemsToStart.length === 0) {
+      setSubmitError('กรุณาเพิ่มรายการหรือกรอกข้อมูลก่อนเริ่มส่งสินค้า');
       return;
     }
 
+    setPendingStartItems(itemsToStart);
     setPendingStartTime(getCurrentTimeString());
     setFlowStep('CONFIRM_START');
   };
 
-  // Confirm "เริ่มส่งสินค้า" -> append row with status "อยู่ระว่างการส่ง"
+  // Confirm "เริ่มส่งสินค้า" -> append all rows in pendingStartItems with status "อยู่ระว่างการส่ง"
   const handleConfirmStartDelivery = async () => {
+    if (pendingStartItems.length === 0) return;
     setSubmitError(null);
     setIsSubmitting(true);
 
     try {
-      const startT = pendingStartTime || getCurrentTimeString();
-      const numericWeight = parseFloat(weight.replace(/,/g, ''));
-      const cleanWeight = Number.isNaN(numericWeight) ? 0 : numericWeight;
-      const numericRounds = parseInt(rounds, 10);
-      const cleanRounds =
-        Number.isNaN(numericRounds) || numericRounds < 1 ? 1 : numericRounds;
+      const baseStartT = pendingStartTime || getCurrentTimeString();
+      const createdJobs: ActiveDeliveryJob[] = [];
+      let allSynced = true;
 
-      const autoDate = date.trim() || getCurrentThaiDateString();
-      const payload: JobTransferPayload = {
-        date: autoDate,
-        employeeId: employeeId.trim(),
-        driverName: driverName.trim(),
-        vehicleNumber: vehicleNumber.trim(),
-        trailerNumber: trailerNumber.trim(),
-        productType: productType.trim(),
-        weight: cleanWeight,
-        origin: origin.trim(),
-        startTime: startT,
-        destination: destination.trim(),
-        endTime: startT,
-        duration: '0:00:00',
-        status: 'อยู่ระว่างการส่ง',
-        note: note.trim(),
-        rounds: cleanRounds,
-      };
+      for (let i = 0; i < pendingStartItems.length; i++) {
+        const item = pendingStartItems[i];
+        const payload: JobTransferPayload = {
+          date: item.date,
+          employeeId: item.employeeId,
+          driverName: item.driverName,
+          vehicleNumber: item.vehicleNumber,
+          trailerNumber: item.trailerNumber,
+          productType: item.productType,
+          weight: item.weight,
+          origin: item.origin,
+          startTime: baseStartT,
+          destination: item.destination,
+          endTime: baseStartT,
+          duration: '0:00:00',
+          status: 'อยู่ระว่างการส่ง',
+          note: item.note,
+          rounds: item.rounds,
+        };
 
-      const { recordId, rowNumber, syncedToSheet } = await appendJobTransferRecord(payload);
+        const { recordId, rowNumber, syncedToSheet } =
+          await appendJobTransferRecord(payload);
+        if (!syncedToSheet) {
+          allSynced = false;
+        }
 
-      const startedJob: ActiveDeliveryJob = {
-        rowNumber,
-        recordId,
-        date: payload.date,
-        employeeId: payload.employeeId,
-        driverName: payload.driverName,
-        vehicleNumber: payload.vehicleNumber,
-        trailerNumber: payload.trailerNumber,
-        productType: payload.productType,
-        weight: payload.weight,
-        origin: payload.origin,
-        destination: payload.destination,
-        startTime: payload.startTime,
-        startedAtMs: Date.now(),
-        rounds: payload.rounds,
-        note: payload.note,
-      };
+        createdJobs.push({
+          rowNumber,
+          recordId,
+          date: payload.date,
+          employeeId: payload.employeeId,
+          driverName: payload.driverName,
+          vehicleNumber: payload.vehicleNumber,
+          trailerNumber: payload.trailerNumber,
+          productType: payload.productType,
+          weight: payload.weight,
+          origin: payload.origin,
+          destination: payload.destination,
+          startTime: payload.startTime,
+          startedAtMs: Date.now(),
+          rounds: payload.rounds,
+          note: payload.note,
+        });
+      }
 
-      updateActiveJob(startedJob);
+      const nextActiveJobs = [...activeJobs, ...createdJobs];
+      updateActiveJobs(nextActiveJobs);
+      setQueuedItems([]);
+      setPendingStartItems([]);
+      setProductType('');
+      setBundleCount('');
+      setWeightPerBundle('');
+      setExtraWeight('');
+      setWeight('0');
+      setNote('');
+      setIsAddingMoreWhileInTransit(false);
       setFlowStep('IN_TRANSIT');
+
       showSuccessToast(
-        'เริ่มส่งสินค้าสำเร็จ!',
-        syncedToSheet
-          ? 'ระบบบันทึกสถานะอยู่ระหว่างการส่งลง Google Sheets เรียบร้อยแล้ว'
+        createdJobs.length > 1
+          ? `เริ่มส่งสินค้า ${createdJobs.length} รายการสำเร็จ!`
+          : 'เริ่มส่งสินค้าสำเร็จ!',
+        allSynced
+          ? `ระบบบันทึกสถานะอยู่ระหว่างการส่ง (${createdJobs.length} รายการ) ลง Google Sheets เรียบร้อยแล้ว`
           : 'บันทึกในระบบเรียบร้อยแล้ว (จะซิงค์เข้า Google Sheets อัตโนมัติเมื่อเชื่อมต่อ Webhook)'
       );
       onSavedSuccess();
@@ -743,59 +933,121 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     }
   };
 
-  // Step 2: Arrived at destination -> press "จบ"
-  const handleInitiateFinishDelivery = () => {
-    if (!activeJob) return;
-    const elapsedSec = calculateElapsedSeconds(
-      activeJob.startTime,
-      liveNowTime,
-      activeJob.startedAtMs
+  const handleToggleSelectFinishJob = (recordId: string) => {
+    setSelectedFinishIds((prev) =>
+      prev.includes(recordId)
+        ? prev.filter((id) => id !== recordId)
+        : [...prev, recordId]
     );
-    if (elapsedSec < FINISH_BUTTON_DELAY_SECONDS) return;
+  };
+
+  const handleToggleSelectAllFinishJobs = () => {
+    if (selectedFinishIds.length === activeJobs.length) {
+      setSelectedFinishIds([]);
+    } else {
+      setSelectedFinishIds(activeJobs.map((j) => j.recordId));
+    }
+  };
+
+  const handleAddMoreJobsFromTransit = () => {
+    const lastJob = activeJobs[activeJobs.length - 1];
+    if (lastJob) {
+      if (lastJob.employeeId && !employeeId) setEmployeeId(lastJob.employeeId);
+      if (lastJob.driverName && !driverName) setDriverName(lastJob.driverName);
+      if (lastJob.vehicleNumber && !vehicleNumber) setVehicleNumber(lastJob.vehicleNumber);
+      if (lastJob.trailerNumber && !trailerNumber) setTrailerNumber(lastJob.trailerNumber);
+      if (lastJob.origin && !origin) setOrigin(lastJob.origin);
+      if (lastJob.destination && !destination) setDestination(lastJob.destination);
+    }
+    setProductType('');
+    setBundleCount('');
+    setWeightPerBundle('');
+    setExtraWeight('');
+    setWeight('0');
+    setNote('');
     setSubmitError(null);
+    setIsAddingMoreWhileInTransit(true);
+    setFlowStep('FORM');
+  };
+
+  // Step 2: Arrived at destination -> press "จบงาน" (for 1 or multiple selected active jobs)
+  const handleInitiateFinishSelected = (targetJobs?: ActiveDeliveryJob[]) => {
+    const chosen =
+      targetJobs && targetJobs.length > 0
+        ? targetJobs
+        : activeJobs.filter((j) => selectedFinishIds.includes(j.recordId));
+    if (chosen.length === 0) {
+      setSubmitError('กรุณาเลือกรายการที่ต้องการจบงานอย่างน้อย 1 รายการ');
+      return;
+    }
+    setSubmitError(null);
+    setJobsToFinish(chosen);
     setPendingEndTime(getCurrentTimeString());
     setFlowStep('CONFIRM_FINISH');
   };
 
-  // Confirm "จบ" -> update row with เวลาจบ, เวลาที่ใช้, and สถานะ="ส่งสินค้าเรียบร้อยแล้ว"
+  // Confirm "จบงาน" -> update all jobs in jobsToFinish with เวลาจบ, เวลาที่ใช้, and สถานะ="ส่งสินค้าเรียบร้อยแล้ว"
   const handleConfirmFinishDelivery = async () => {
-    if (!activeJob) return;
+    if (jobsToFinish.length === 0) return;
     setSubmitError(null);
     setIsSubmitting(true);
 
     try {
       const endT = pendingEndTime || getCurrentTimeString();
-      const totalDuration = calculateDurationString(activeJob.startTime, endT);
+      let allSynced = true;
 
-      const { syncedToSheet } = await completeJobTransferRecord({
-        recordId: activeJob.recordId,
-        rowNumber: activeJob.rowNumber,
-        endTime: endT,
-        duration: totalDuration,
-        status: 'ส่งสินค้าเรียบร้อยแล้ว',
-      });
+      for (const job of jobsToFinish) {
+        const totalDuration = calculateDurationString(job.startTime, endT);
+        const { syncedToSheet } = await completeJobTransferRecord({
+          recordId: job.recordId,
+          rowNumber: job.rowNumber,
+          endTime: endT,
+          duration: totalDuration,
+          status: 'ส่งสินค้าเรียบร้อยแล้ว',
+          date: job.date,
+          driverName: job.driverName,
+          vehicleNumber: job.vehicleNumber,
+          startTime: job.startTime,
+          origin: job.origin,
+          destination: job.destination,
+          productType: job.productType,
+        });
+        if (!syncedToSheet) {
+          allSynced = false;
+        }
+      }
 
-      // Reset form and active job
-      updateActiveJob(null);
-      setProductType('');
-      setBundleCount('');
-      setWeightPerBundle('');
-      setExtraWeight('');
-      setWeight('0');
-      setOrigin('');
-      setDestination('');
-      setNote('');
-      setFlowStep('FORM');
+      const finishedIds = new Set(jobsToFinish.map((j) => j.recordId));
+      const remainingJobs = activeJobs.filter((j) => !finishedIds.has(j.recordId));
+      updateActiveJobs(remainingJobs);
+      setJobsToFinish([]);
+
+      if (remainingJobs.length > 0) {
+        setFlowStep('IN_TRANSIT');
+      } else {
+        setProductType('');
+        setBundleCount('');
+        setWeightPerBundle('');
+        setExtraWeight('');
+        setWeight('0');
+        setOrigin('');
+        setDestination('');
+        setNote('');
+        setIsAddingMoreWhileInTransit(false);
+        setFlowStep('FORM');
+      }
 
       showSuccessToast(
-        'จบงานส่งสินค้าสำเร็จ!',
-        syncedToSheet
-          ? 'ระบบบันทึกสถานะส่งสินค้าเรียบร้อยแล้ว'
+        jobsToFinish.length > 1
+          ? `จบงานส่งสินค้า ${jobsToFinish.length} รายการสำเร็จ!`
+          : 'จบงานส่งสินค้าสำเร็จ!',
+        allSynced
+          ? `ระบบบันทึกสถานะส่งสินค้าเรียบร้อยแล้ว (${jobsToFinish.length} รายการ)`
           : 'บันทึกในระบบเรียบร้อยแล้ว (จะซิงค์เข้า Google Sheets อัตโนมัติเมื่อเชื่อมต่อ Webhook)'
       );
 
       onSavedSuccess();
-      if (!inlineMode) {
+      if (!inlineMode && remainingJobs.length === 0) {
         onClose();
       }
     } catch (err: unknown) {
@@ -809,25 +1061,10 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     }
   };
 
-  const liveElapsedDuration = activeJob
-    ? calculateDurationString(activeJob.startTime, liveNowTime)
-    : '0:00:00';
-
-  const remainingFinishCooldownSec = activeJob
-    ? Math.max(
-        0,
-        FINISH_BUTTON_DELAY_SECONDS -
-          calculateElapsedSeconds(
-            activeJob.startTime,
-            liveNowTime,
-            activeJob.startedAtMs
-          )
-      )
-    : 0;
-
-  const finalConfirmedDuration = activeJob
-    ? calculateDurationString(activeJob.startTime, pendingEndTime)
-    : '0:00:00';
+  const totalPendingStartWeight = pendingStartItems.reduce(
+    (sum, item) => sum + (Number(item.weight) || 0),
+    0
+  );
 
   const cardContent = (
     <div
@@ -840,12 +1077,30 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     >
       {/* Compact Header */}
       <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5 sm:px-5 sm:py-3">
-        <h2 className="text-sm font-bold text-slate-900 sm:text-base">
-          {flowStep === 'CONFIRM_START' && 'ยืนยันเริ่มส่งสินค้า'}
-          {flowStep === 'IN_TRANSIT' && 'กำลังส่งสินค้า'}
-          {flowStep === 'CONFIRM_FINISH' && 'ยืนยันจบงานส่งสินค้า'}
-          {flowStep === 'FORM' && 'บันทึกการย้ายงาน'}
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-bold text-slate-900 sm:text-base">
+            {flowStep === 'CONFIRM_START' &&
+              `ยืนยันเริ่มส่งสินค้า (${pendingStartItems.length} รายการ)`}
+            {flowStep === 'IN_TRANSIT' &&
+              `กำลังส่งสินค้า (${activeJobs.length} รายการ)`}
+            {flowStep === 'CONFIRM_FINISH' &&
+              `ยืนยันจบงานส่งสินค้า (${jobsToFinish.length} รายการ)`}
+            {flowStep === 'FORM' && 'บันทึกการย้ายงาน'}
+          </h2>
+          {flowStep === 'FORM' && activeJobs.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingMoreWhileInTransit(false);
+                setFlowStep('IN_TRANSIT');
+              }}
+              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100"
+            >
+              <Truck className="h-3 w-3" />
+              <span>กำลังส่ง ({activeJobs.length})</span>
+            </button>
+          )}
+        </div>
         {!inlineMode && (
           <button
             type="button"
@@ -868,48 +1123,74 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       )}
 
       {/* STEP: CONFIRM_START */}
-      {flowStep === 'CONFIRM_START' && (
+      {flowStep === 'CONFIRM_START' && pendingStartItems.length > 0 && (
         <div className="overflow-y-auto px-3.5 py-3 sm:px-5 sm:py-4">
-          <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1 text-xs sm:text-sm">
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">วันที่ / เวลาเริ่ม</span>
+          <div className="mb-2.5 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+            <div>
+              <span className="text-slate-500">วันที่ / เวลาเริ่ม: </span>
               <span className="font-mono font-semibold text-slate-900 tabular-nums">
                 {date} · {pendingStartTime}
               </span>
             </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">พนักงานขับรถ</span>
-              <span className="font-semibold text-slate-900">
-                {employeeId ? `${employeeId} · ` : ''}
-                {driverName || '-'}
+            <div>
+              <span className="text-slate-500">รวมทั้งหมด: </span>
+              <span className="font-mono font-bold text-slate-900 tabular-nums">
+                {pendingStartItems.length} รายการ (
+                {totalPendingStartWeight.toLocaleString('th-TH')} กก.)
               </span>
             </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">เบอร์รถ / เบอร์หาง</span>
-              <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                {vehicleNumber}
-                {trailerNumber ? ` / ${trailerNumber}` : ''}
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">สินค้า / น้ำหนัก</span>
-              <span className="font-semibold text-slate-900">
-                {productType} ·{' '}
-                <span className="font-mono tabular-nums">
-                  {Number(weight || 0).toLocaleString('th-TH')} กก.
-                </span>
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">ต้นทาง → ปลายทาง</span>
-              <span className="font-semibold text-slate-900">
-                {origin} → {destination}
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">สถานะ</span>
-              <span className="font-semibold text-amber-700">อยู่ระว่างการส่ง</span>
-            </div>
+          </div>
+
+          <div className="max-h-64 space-y-2 overflow-y-auto pr-0.5">
+            {pendingStartItems.map((item, idx) => (
+              <div
+                key={item.tempId}
+                className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs shadow-2xs"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <span className="font-bold text-slate-900">
+                    รายการที่ {idx + 1}: {item.origin} → {item.destination}
+                  </span>
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200">
+                    อยู่ระว่างการส่ง
+                  </span>
+                </div>
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5 text-[11px] sm:text-xs">
+                  <div>
+                    <span className="text-slate-500">พนักงาน: </span>
+                    <span className="font-semibold text-slate-800">
+                      {item.employeeId ? `${item.employeeId} · ` : ''}
+                      {item.driverName}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">เบอร์รถ/หาง: </span>
+                    <span className="font-mono font-semibold text-slate-800">
+                      {item.vehicleNumber}
+                      {item.trailerNumber ? ` / ${item.trailerNumber}` : ''}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">สินค้า: </span>
+                    <span className="font-semibold text-slate-900">
+                      {item.productType}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">น้ำหนัก: </span>
+                    <span className="font-mono font-bold text-slate-900 tabular-nums">
+                      {item.weight.toLocaleString('th-TH')} กก.
+                    </span>
+                  </div>
+                  {item.note && (
+                    <div className="col-span-2">
+                      <span className="text-slate-500">หมายเหตุ: </span>
+                      <span className="text-slate-700">{item.note}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="mt-3.5 flex items-center justify-end gap-2">
@@ -929,7 +1210,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               <span>
-                {isSubmitting ? 'กำลังบันทึก...' : 'ยืนยันเริ่มส่งสินค้า'}
+                {isSubmitting
+                  ? `กำลังบันทึก (${pendingStartItems.length} รายการ)...`
+                  : `ยืนยันเริ่มส่งสินค้า (${pendingStartItems.length} รายการ)`}
               </span>
             </button>
           </div>
@@ -937,90 +1220,148 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       )}
 
       {/* STEP: IN_TRANSIT */}
-      {flowStep === 'IN_TRANSIT' && activeJob && (
+      {flowStep === 'IN_TRANSIT' && activeJobs.length > 0 && (
         <div className="overflow-y-auto px-3.5 py-3 sm:px-5 sm:py-4">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
-            <div className="flex items-center justify-between gap-2.5 border-b border-slate-200 pb-2.5">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white shrink-0">
-                  <Truck className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[11px] font-medium text-amber-700">
-                    อยู่ระว่างการส่ง
-                  </div>
-                  <div className="text-sm font-bold text-slate-900 sm:text-base truncate">
-                    {activeJob.origin} → {activeJob.destination}
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-right shrink-0">
-                <div className="text-[11px] font-medium text-slate-500">
-                  เวลาที่ใช้
-                </div>
-                <div className="font-mono text-lg font-bold text-slate-900 sm:text-2xl tabular-nums">
-                  {liveElapsedDuration}
-                </div>
-              </div>
+          {activeJobs.length > 1 && (
+            <div className="mb-2.5 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+              <label className="inline-flex items-center gap-2 font-semibold text-slate-800 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={
+                    activeJobs.length > 0 &&
+                    selectedFinishIds.length === activeJobs.length
+                  }
+                  onChange={handleToggleSelectAllFinishJobs}
+                  className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>
+                  เลือกทั้งหมด ({selectedFinishIds.length}/{activeJobs.length} รายการ)
+                </span>
+              </label>
+              <span className="font-mono text-[11px] font-semibold text-slate-600 tabular-nums">
+                รวม{' '}
+                {activeJobs
+                  .reduce((sum, j) => sum + (Number(j.weight) || 0), 0)
+                  .toLocaleString('th-TH')}{' '}
+                กก.
+              </span>
             </div>
+          )}
 
-            <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs sm:text-sm">
-              <div>
-                <span className="text-[11px] text-slate-500">พนักงานขับรถ</span>
-                <div className="font-semibold text-slate-900 truncate">
-                  {activeJob.employeeId ? `${activeJob.employeeId} · ` : ''}
-                  {activeJob.driverName}
+          <div className="max-h-80 space-y-2.5 overflow-y-auto pr-0.5">
+            {activeJobs.map((job, idx) => {
+              const isChecked = selectedFinishIds.includes(job.recordId);
+              const jobElapsed = calculateDurationString(job.startTime, liveNowTime);
+              return (
+                <div
+                  key={job.recordId || idx}
+                  className={`rounded-xl border p-3 transition-colors ${
+                    isChecked
+                      ? 'border-emerald-300 bg-emerald-50/30'
+                      : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 pb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleSelectFinishJob(job.recordId)}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0 cursor-pointer"
+                      />
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-white shrink-0">
+                        <Truck className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold text-amber-700">
+                          รายการที่ {idx + 1} · อยู่ระว่างการส่ง
+                        </div>
+                        <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                          {job.origin} → {job.destination}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right">
+                        <div className="text-[10px] font-medium text-slate-500">
+                          เวลาที่ใช้
+                        </div>
+                        <div className="font-mono text-sm sm:text-base font-bold text-slate-900 tabular-nums">
+                          {jobElapsed}
+                        </div>
+                      </div>
+                      {activeJobs.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleInitiateFinishSelected([job])}
+                          disabled={isSubmitting}
+                          className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
+                        >
+                          <Square className="h-2.5 w-2.5 fill-current" />
+                          <span>จบงานนี้</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs">
+                    <div>
+                      <span className="text-[11px] text-slate-500">พนักงานขับรถ: </span>
+                      <span className="font-semibold text-slate-900">
+                        {job.employeeId ? `${job.employeeId} · ` : ''}
+                        {job.driverName}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-slate-500">เบอร์รถ / หาง: </span>
+                      <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                        {job.vehicleNumber}
+                        {job.trailerNumber ? ` / ${job.trailerNumber}` : ''}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-slate-500">สินค้า / น้ำหนัก: </span>
+                      <span className="font-semibold text-slate-900">
+                        {job.productType} ·{' '}
+                        <span className="font-mono tabular-nums">
+                          {job.weight.toLocaleString('th-TH')} กก.
+                        </span>
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-slate-500">เวลาเริ่ม: </span>
+                      <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                        {job.startTime}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-500">เบอร์รถ / หาง</span>
-                <div className="font-mono font-semibold text-slate-900 tabular-nums">
-                  {activeJob.vehicleNumber}
-                  {activeJob.trailerNumber ? ` / ${activeJob.trailerNumber}` : ''}
-                </div>
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-500">สินค้า / น้ำหนัก</span>
-                <div className="font-semibold text-slate-900 truncate">
-                  {activeJob.productType} ·{' '}
-                  <span className="font-mono tabular-nums">
-                    {activeJob.weight.toLocaleString('th-TH')} กก.
-                  </span>
-                </div>
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-500">เวลาเริ่ม</span>
-                <div className="font-mono font-semibold text-slate-900 tabular-nums">
-                  {activeJob.startTime}
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
 
-          <div className="mt-3.5 flex items-center justify-between gap-2">
+          <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => {
-                updateActiveJob(null);
-                setFlowStep('FORM');
-              }}
+              onClick={handleAddMoreJobsFromTransit}
               disabled={isSubmitting}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
             >
-              สร้างรายการใหม่
+              <Plus className="h-3.5 w-3.5 text-indigo-600" />
+              <span>เพิ่มงานส่งสินค้า (รายการถัดไป)</span>
             </button>
 
             <button
               type="button"
-              onClick={handleInitiateFinishDelivery}
-              disabled={isSubmitting || remainingFinishCooldownSec > 0}
+              onClick={() => handleInitiateFinishSelected()}
+              disabled={isSubmitting || selectedFinishIds.length === 0}
               className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-5 py-2 text-xs sm:text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               <span>
-                {remainingFinishCooldownSec > 0
-                  ? `จบงานส่งสินค้า (รอ ${remainingFinishCooldownSec} วินาที)`
+                {activeJobs.length > 1
+                  ? `จบงานพร้อมกัน (${selectedFinishIds.length} รายการ)`
                   : 'จบงานส่งสินค้า'}
               </span>
             </button>
@@ -1029,39 +1370,48 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       )}
 
       {/* STEP: CONFIRM_FINISH */}
-      {flowStep === 'CONFIRM_FINISH' && activeJob && (
+      {flowStep === 'CONFIRM_FINISH' && jobsToFinish.length > 0 && (
         <div className="overflow-y-auto px-3.5 py-3 sm:px-5 sm:py-4">
-          <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1 text-xs sm:text-sm">
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">พนักงาน / เบอร์รถ</span>
-              <span className="font-semibold text-slate-900">
-                {activeJob.driverName} ({activeJob.vehicleNumber})
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">เส้นทาง</span>
-              <span className="font-semibold text-slate-900">
-                {activeJob.origin} → {activeJob.destination}
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">เวลาเริ่ม → เวลาจบ</span>
-              <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                {activeJob.startTime} → {pendingEndTime}
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">เวลาที่ใช้</span>
-              <span className="font-mono font-bold text-slate-900 tabular-nums">
-                {finalConfirmedDuration}
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-slate-500">สถานะ</span>
-              <span className="font-semibold text-emerald-700">
-                ส่งสินค้าเรียบร้อยแล้ว
-              </span>
-            </div>
+          <div className="max-h-64 space-y-2 overflow-y-auto pr-0.5">
+            {jobsToFinish.map((job, idx) => {
+              const durationStr = calculateDurationString(
+                job.startTime,
+                pendingEndTime
+              );
+              return (
+                <div
+                  key={job.recordId || idx}
+                  className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1.5 text-xs"
+                >
+                  <div className="flex justify-between py-1.5">
+                    <span className="font-bold text-slate-800">
+                      รายการที่ {idx + 1}: {job.origin} → {job.destination}
+                    </span>
+                    <span className="font-semibold text-emerald-700">
+                      ส่งสินค้าเรียบร้อยแล้ว
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-500">พนักงาน / เบอร์รถ</span>
+                    <span className="font-semibold text-slate-900">
+                      {job.driverName} ({job.vehicleNumber})
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-500">สินค้า / น้ำหนัก</span>
+                    <span className="font-semibold text-slate-900">
+                      {job.productType} ({job.weight.toLocaleString('th-TH')} กก.)
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-500">เวลาเริ่ม → เวลาจบ (เวลาที่ใช้)</span>
+                    <span className="font-mono font-bold text-slate-900 tabular-nums">
+                      {job.startTime} → {pendingEndTime} ({durationStr})
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-3.5 flex items-center justify-end gap-2">
@@ -1081,7 +1431,9 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               <span>
-                {isSubmitting ? 'กำลังบันทึก...' : 'ยืนยันจบงาน'}
+                {isSubmitting
+                  ? `กำลังบันทึก (${jobsToFinish.length} รายการ)...`
+                  : `ยืนยันจบงาน (${jobsToFinish.length} รายการ)`}
               </span>
             </button>
           </div>
@@ -1420,7 +1772,51 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
             </div>
           </div>
 
-          <div className="mt-3.5 flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+          {/* คิวรายการที่เพิ่มไว้เตรียมส่งพร้อมกันหลายรายการ */}
+          {queuedItems.length > 0 && (
+            <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                  <CheckSquare className="h-3.5 w-3.5 text-indigo-600" />
+                  รายการที่เตรียมส่ง ({queuedItems.length} รายการ)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setQueuedItems([])}
+                  className="text-[11px] font-medium text-red-600 hover:underline"
+                >
+                  ล้างคิวทั้งหมด
+                </button>
+              </div>
+              <div className="max-h-36 space-y-1.5 overflow-y-auto pr-0.5">
+                {queuedItems.map((qItem, qIdx) => (
+                  <div
+                    key={qItem.tempId}
+                    className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900 truncate">
+                        {qIdx + 1}. {qItem.productType} ({qItem.weight.toLocaleString('th-TH')} กก.)
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {qItem.origin} → {qItem.destination} · {qItem.driverName} ({qItem.vehicleNumber})
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveQueuedItem(qItem.tempId)}
+                      title="ลบรายการนี้ออกจากคิว"
+                      className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 shrink-0"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 pt-3">
             {!inlineMode && (
               <button
                 type="button"
@@ -1431,13 +1827,26 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
               </button>
             )}
             <button
+              type="button"
+              onClick={handleAddToQueue}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 whitespace-nowrap shrink-0"
+            >
+              <ListPlus className="h-3.5 w-3.5" />
+              <span>+ เพิ่มรายการเข้าคิว</span>
+            </button>
+            <button
               type="submit"
-              className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap ${
-                inlineMode ? 'w-full' : 'shrink-0'
+              formNoValidate={queuedItems.length > 0 && !productType.trim()}
+              className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs sm:text-sm font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap ${
+                inlineMode ? 'flex-1 sm:flex-none' : 'shrink-0'
               }`}
             >
               <Play className="h-3.5 w-3.5 fill-current" />
-              <span>เริ่มส่งสินค้า</span>
+              <span>
+                {queuedItems.length > 0
+                  ? `เริ่มส่งสินค้า (${queuedItems.length + (productType.trim() ? 1 : 0)} รายการ)`
+                  : 'เริ่มส่งสินค้า'}
+              </span>
             </button>
           </div>
         </form>

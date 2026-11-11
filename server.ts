@@ -604,9 +604,11 @@ async function startServer() {
     }
   });
 
+  const sheetProxyCache = new Map<string, { data: string; expiresAt: number }>();
+
   app.post('/api/webhook-proxy', async (req, res) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
       const { scriptUrl, payload } = req.body ?? {};
       const targetUrl = normalizeUrl(typeof scriptUrl === 'string' ? scriptUrl : undefined);
@@ -620,6 +622,7 @@ async function startServer() {
       const text = await response.text();
       try {
         const json = JSON.parse(text);
+        sheetProxyCache.clear();
         if (
           payload &&
           payload.action === 'appendRepairRequest' &&
@@ -646,14 +649,12 @@ async function startServer() {
       const isAbort = (err as { name?: string })?.name === 'AbortError';
       res.status(isAbort ? 504 : 500).json({
         ok: false,
-        error: isAbort ? 'Apps Script request timed out (12s)' : String(err),
+        error: isAbort ? 'Apps Script request timed out (15s)' : String(err),
       });
     } finally {
       clearTimeout(timer);
     }
   });
-
-  const sheetProxyCache = new Map<string, { data: string; expiresAt: number }>();
 
   app.get('/api/sheet-proxy', async (req, res) => {
     try {
@@ -877,10 +878,20 @@ async function startServer() {
       typeof body.baseRowNumber === 'number' && body.baseRowNumber > 0
         ? body.baseRowNumber
         : 56278;
-    const rowNumber =
+    let rowNumber =
       typeof body.rowNumber === 'number' && body.rowNumber > 0
         ? body.rowNumber
         : baseRowNumber + store.jobTransfers.length + 1;
+
+    const maxExistingRow = store.jobTransfers.reduce(
+      (max, j) => (j.recordId !== recordId ? Math.max(max, j.rowNumber || 0) : max),
+      0
+    );
+    if (
+      store.jobTransfers.some((j) => j.recordId !== recordId && j.rowNumber === rowNumber)
+    ) {
+      rowNumber = Math.max(rowNumber, maxExistingRow) + 1;
+    }
 
     const values: Record<string, string> = body.values ?? {};
     const entry: StoredJobTransfer = {
@@ -898,6 +909,7 @@ async function startServer() {
       store.jobTransfers.push(entry);
     }
     writeStore(store);
+    sheetProxyCache.clear();
 
     res.json({ recordId, rowNumber, entry });
   });
@@ -905,23 +917,59 @@ async function startServer() {
   app.put('/api/mutations/job-transfer/:recordId', (req, res) => {
     const store = readStore();
     const { recordId } = req.params;
-    const { rowNumber, endTime, duration, status } = req.body ?? {};
+    const {
+      rowNumber,
+      endTime,
+      duration,
+      status,
+      date,
+      driverName,
+      vehicleNumber,
+      startTime,
+      origin,
+      destination,
+      productType,
+    } = req.body ?? {};
 
     let updated = false;
     for (const item of store.jobTransfers) {
       if (
-        item.recordId === recordId ||
-        (typeof rowNumber === 'number' && item.rowNumber === rowNumber)
+        (recordId && item.recordId === recordId) ||
+        (typeof rowNumber === 'number' && rowNumber > 0 && item.rowNumber === rowNumber)
       ) {
         if (typeof endTime === 'string') item.values['K'] = endTime;
         if (typeof duration === 'string') item.values['L'] = duration;
         if (typeof status === 'string') item.values['M'] = status;
+        item.createdAt = new Date().toISOString();
         updated = true;
-        break;
       }
     }
 
+    if (!updated && (recordId || (typeof rowNumber === 'number' && rowNumber > 0))) {
+      store.jobTransfers.push({
+        recordId: recordId || `row_${rowNumber}_${Date.now()}`,
+        rowNumber: typeof rowNumber === 'number' && rowNumber > 0 ? rowNumber : 0,
+        values: {
+          A: typeof date === 'string' ? date : '',
+          C: typeof driverName === 'string' ? driverName : '',
+          D: typeof vehicleNumber === 'string' ? vehicleNumber : '',
+          F: typeof productType === 'string' ? productType : '',
+          H: typeof origin === 'string' ? origin : '',
+          I: typeof startTime === 'string' ? startTime : '',
+          J: typeof destination === 'string' ? destination : '',
+          K: typeof endTime === 'string' ? endTime : '',
+          L: typeof duration === 'string' ? duration : '',
+          M: typeof status === 'string' ? status : 'ส่งสินค้าเรียบร้อยแล้ว',
+          Q: recordId || '',
+        },
+        createdAt: new Date().toISOString(),
+        syncedToSheet: true,
+      });
+      updated = true;
+    }
+
     writeStore(store);
+    sheetProxyCache.clear();
     res.json({ ok: true, updated });
   });
 
