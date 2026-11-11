@@ -14,8 +14,32 @@ interface DrivePhotoImgProps {
   alt: string;
   className?: string;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+  onLoad?: (e: React.SyntheticEvent<HTMLImageElement, Event>) => void;
   highRes?: boolean;
   style?: React.CSSProperties;
+}
+
+export function buildHighResDriveUrl(rawUrl: string): { primary: string; fallback: string } | null {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (trimmed.startsWith('data:image/')) {
+    return { primary: trimmed, fallback: trimmed };
+  }
+  const fileId = extractDriveFileId(trimmed);
+  if (fileId) {
+    return {
+      primary: `https://drive.google.com/thumbnail?id=${fileId}&sz=w4096`,
+      fallback: `https://lh3.googleusercontent.com/d/${fileId}=s0`,
+    };
+  }
+  if (trimmed.includes('googleusercontent.com') || trimmed.includes('drive.google.com')) {
+    const cleaned = trimmed
+      .replace(/[?&]sz=w\d+/, '')
+      .replace(/=s\d+/, '=s0')
+      .replace(/=w\d+/, '=s0');
+    return { primary: cleaned, fallback: cleaned };
+  }
+  return null;
 }
 
 export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
@@ -23,12 +47,14 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
   alt,
   className = '',
   onClick,
+  onLoad,
   highRes = false,
   style,
 }) => {
   const trimmed = (src || '').trim();
   const isLegacyPath = isLegacyAppSheetPhotoPath(trimmed);
-  const initialFormatted = formatDriveImageUrl(trimmed, highRes);
+  const highResPair = highRes ? buildHighResDriveUrl(trimmed) : null;
+  const initialFormatted = highResPair ? highResPair.primary : formatDriveImageUrl(trimmed, highRes);
   const needsAsyncResolve = isLegacyPath && initialFormatted === trimmed;
 
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(
@@ -47,7 +73,8 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
     setHasError(false);
     setTriedAppsScriptFallback(false);
 
-    const formatted = formatDriveImageUrl(trimmed, highRes);
+    const pair = highRes ? buildHighResDriveUrl(trimmed) : null;
+    const formatted = pair ? pair.primary : formatDriveImageUrl(trimmed, highRes);
     const legacy = isLegacyAppSheetPhotoPath(trimmed);
     if (!legacy || formatted !== trimmed) {
       setResolvedSrc(formatted);
@@ -183,7 +210,16 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
       loading="lazy"
       referrerPolicy="no-referrer"
       onClick={onClick as React.MouseEventHandler<HTMLImageElement> | undefined}
+      onLoad={onLoad}
       onError={(e) => {
+        const fileId = extractDriveFileId(trimmed);
+        if (highRes && fileId) {
+          const lh3Fallback = `https://lh3.googleusercontent.com/d/${fileId}=s0`;
+          if (e.currentTarget.src !== lh3Fallback) {
+            e.currentTarget.src = lh3Fallback;
+            return;
+          }
+        }
         const fallback = getDriveThumbnailUrl(trimmed, highRes);
         if (
           fallback &&
@@ -193,7 +229,7 @@ export const DrivePhotoImg: React.FC<DrivePhotoImgProps> = ({
           e.currentTarget.src = fallback;
           return;
         }
-        if (!triedAppsScriptFallback && extractDriveFileId(trimmed)) {
+        if (!triedAppsScriptFallback && fileId) {
           setTriedAppsScriptFallback(true);
           void resolveDriveImageSrc(trimmed, true)
             .then((base64OrUrl) => {

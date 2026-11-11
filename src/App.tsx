@@ -908,6 +908,22 @@ function playNotificationChime() {
     }
   }, [loadData]);
 
+  // Silence cancelled fetch AbortError rejections so they never pollute the console
+  useEffect(() => {
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const isAbort =
+        reason?.name === 'AbortError' ||
+        String(reason?.message || reason || '').includes('aborted') ||
+        String(reason?.message || reason || '').includes('AbortError');
+      if (isAbort) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+  }, []);
+
   // Initial load and when activeTab / rowLimit / deepSearchTerm changes
   useEffect(() => {
     void loadData({ silent: false }).catch(() => {});
