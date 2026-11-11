@@ -2493,25 +2493,68 @@ function playNotificationChime() {
                         <Plus className="h-3.5 w-3.5 text-amber-600 shrink-0 transition-transform group-hover:scale-110" />
                         <span className="truncate">บันทึกแจ้งซ่อม</span>
                       </button>
+                    </div>
+                  )}
 
+                  {/* เมนูหลัก: ผู้จัดการอนุมัติงานซ่อม (แสดงเป็นเมนูหลักต่อจาก บันทึกงานซ่อม เพื่อให้ผู้จัดการเห็นได้ชัดเจนทันที) */}
+                  {isRepairTab && (
+                    <div className="pt-1">
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           setIsSidebarOpen(false);
+                          if (activeTab.gid !== '944294225') {
+                            handleSelectTab(tab);
+                          }
                           setIsApprovalModalOpen(true);
                         }}
-                        className="group flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
+                        className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
+                          isApprovalModalOpen
+                            ? 'bg-emerald-800 text-white shadow-sm ring-1 ring-emerald-800'
+                            : 'bg-white text-slate-800 border border-emerald-200/90 shadow-2xs hover:border-emerald-400 hover:bg-emerald-50/60 hover:text-slate-950'
+                        }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                          <span className="truncate">ผู้จัดการอนุมัติงานซ่อม</span>
-                        </div>
-                        {pendingApprovalCount > 0 && (
-                          <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-red-600 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white shadow-2xs shrink-0 tabular-nums">
-                            {pendingApprovalCount.toLocaleString('th-TH')}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                              isApprovalModalOpen
+                                ? 'bg-white/15 text-emerald-200'
+                                : 'bg-emerald-100 text-emerald-700 group-hover:bg-emerald-200/80 group-hover:text-emerald-900'
+                            }`}
+                          >
+                            <CheckCircle className="h-4 w-4 shrink-0" />
                           </span>
-                        )}
+                          <div className="min-w-0">
+                            <div
+                              className={`truncate text-sm font-bold leading-snug ${
+                                isApprovalModalOpen ? 'text-white' : 'text-slate-900'
+                              }`}
+                            >
+                              ผู้จัดการอนุมัติงานซ่อม
+                            </div>
+                            <div
+                              className={`truncate text-[11px] leading-tight ${
+                                isApprovalModalOpen ? 'text-emerald-200' : 'text-emerald-700 font-medium'
+                              }`}
+                            >
+                              พิจารณาอนุมัติรายการซ่อม
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {pendingApprovalCount > 0 && (
+                            <span className="inline-flex items-center justify-center rounded-full bg-red-600 px-2 py-0.5 font-mono text-[11px] font-bold text-white shadow-2xs tabular-nums">
+                              {pendingApprovalCount.toLocaleString('th-TH')}
+                            </span>
+                          )}
+                          <ChevronRight
+                            className={`h-4 w-4 shrink-0 transition-transform ${
+                              isApprovalModalOpen
+                                ? 'text-emerald-200 translate-x-0.5'
+                                : 'text-slate-300 group-hover:text-emerald-600'
+                            }`}
+                          />
+                        </div>
                       </button>
                     </div>
                   )}
@@ -5492,6 +5535,7 @@ function playNotificationChime() {
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}
         driverOptions={vehicleDriverOptions}
+        employeeAccounts={employeeAccounts}
         onAssignVehicleDriver={handleAssignVehicleDriver}
         onUpdateVehicleField={async (row, colId, newValue) => {
           if (colId === 'I' || colId === 'ชื่อพนักงานประจำรถ') {

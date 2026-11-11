@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Check, Camera, Pencil, Upload } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
 import {
+  EmployeeAccountRecord,
+  fetchEmployeeAccounts,
   isPhotoValue,
   matchVehicleDriverOption,
   processHighResImageFile,
@@ -10,6 +12,8 @@ import {
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
+
+const DEFAULT_INSPECTOR_NAME = 'นายสุรสิทธิ์ นุชจันทร์';
 
 function compressImageToDataUrl(file: File): Promise<string> {
   return processHighResImageFile(file);
@@ -27,6 +31,7 @@ interface RecordDetailModalProps {
   onUpdateVehicleField?: (row: SheetRow, colId: string, newValue: string) => Promise<string | void>;
   onAssignVehicleDriver?: (row: SheetRow, selectedDriverName: string) => Promise<void>;
   driverOptions?: VehicleDriverOption[];
+  employeeAccounts?: EmployeeAccountRecord[];
   onInspectRepair?: (row: SheetRow, inspectorName: string) => Promise<void>;
 }
 
@@ -42,6 +47,7 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   onUpdateVehicleField,
   onAssignVehicleDriver,
   driverOptions = [],
+  employeeAccounts = [],
   onInspectRepair,
 }) => {
   const [editingColId, setEditingColId] = useState<string | null>(null);
@@ -49,10 +55,72 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccessColId, setSaveSuccessColId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const [inspectorName, setInspectorName] = useState<string>(
-    () => localStorage.getItem('gsheets_repair_inspector_name') || 'นายสุรสิทธิ์ นุชจันทร์'
-  );
+  const [inspectorName, setInspectorName] = useState<string>(DEFAULT_INSPECTOR_NAME);
+  const [localAccounts, setLocalAccounts] = useState<EmployeeAccountRecord[]>([]);
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
+
+  // Always default inspectorName to "นายสุรสิทธิ์ นุชจันทร์" when opening a record
+  useEffect(() => {
+    if (row) {
+      setInspectorName(DEFAULT_INSPECTOR_NAME);
+    }
+  }, [row?.rowNumber]);
+
+  // Ensure Account records are loaded if employeeAccounts prop is empty
+  useEffect(() => {
+    if (!row) return;
+    if (employeeAccounts.length > 0) {
+      setLocalAccounts(employeeAccounts);
+      return;
+    }
+    let cancelled = false;
+    void fetchEmployeeAccounts()
+      .then((list) => {
+        if (!cancelled && list.length > 0) {
+          setLocalAccounts(list);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [row, employeeAccounts]);
+
+  // Filter employees from Account sheet where ตำแหน่ง / สิทธิ์ระบบ (position) is ADMIN
+  const adminInspectors = useMemo(() => {
+    const source = employeeAccounts.length > 0 ? employeeAccounts : localAccounts;
+    const seen = new Set<string>();
+    const list: { fullName: string; employeeCode: string; position: string }[] = [];
+
+    for (const emp of source) {
+      const posUpper = (emp.position || '').trim().toUpperCase();
+      if (posUpper !== 'ADMIN') continue;
+      const cleanName = (emp.fullName || '').replace(/\s+/g, ' ').trim();
+      if (!cleanName || cleanName === '-' || cleanName.includes('ทศพล')) continue;
+      if (seen.has(cleanName)) continue;
+      seen.add(cleanName);
+      list.push({
+        fullName: cleanName,
+        employeeCode: (emp.employeeCode || '').trim(),
+        position: 'ADMIN',
+      });
+    }
+
+    // Ensure default inspector "นายสุรสิทธิ์ นุชจันทร์" is always present and placed first
+    const defaultIndex = list.findIndex((item) => item.fullName === DEFAULT_INSPECTOR_NAME);
+    if (defaultIndex > 0) {
+      const [defaultItem] = list.splice(defaultIndex, 1);
+      list.unshift(defaultItem);
+    } else if (defaultIndex === -1) {
+      list.unshift({
+        fullName: DEFAULT_INSPECTOR_NAME,
+        employeeCode: '55073210',
+        position: 'ADMIN',
+      });
+    }
+
+    return list;
+  }, [employeeAccounts, localAccounts]);
 
   const rowPhotos = React.useMemo(() => {
     if (!row) return [];
@@ -81,11 +149,6 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
     setIsInspecting(true);
     try {
       const cleanInspector = inspectorName.trim();
-      try {
-        localStorage.setItem('gsheets_repair_inspector_name', cleanInspector);
-      } catch {
-        // ignore
-      }
       await onInspectRepair(row, cleanInspector);
       showSuccessToast(
         'ยืนยันการตรวจสอบสำเร็จ!',
@@ -224,28 +287,35 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
               <div className="mt-2.5 space-y-2">
                 <div>
                   <label className="block text-xs font-medium text-amber-900">
-                    ชื่อผู้ตรวจสอบ:
+                    ชื่อผู้ตรวจสอบ (ดึงจาก Account สิทธิ์ ADMIN):
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={inspectorName}
                     onChange={(e) => setInspectorName(e.target.value)}
-                    placeholder="ระบุชื่อผู้ตรวจสอบ"
                     className="mt-1 w-full rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
-                  />
+                  >
+                    {adminInspectors.map((item) => (
+                      <option key={item.fullName} value={item.fullName}>
+                        {item.fullName}
+                        {item.employeeCode && item.employeeCode !== '-'
+                          ? ` (${item.employeeCode} • ADMIN)`
+                          : ' (ADMIN)'}
+                      </option>
+                    ))}
+                  </select>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {['นายสุรสิทธิ์ นุชจันทร์', 'นายทศพล วิระพันธุ์'].map((name) => (
+                    {adminInspectors.map((item) => (
                       <button
-                        key={name}
+                        key={item.fullName}
                         type="button"
-                        onClick={() => setInspectorName(name)}
+                        onClick={() => setInspectorName(item.fullName)}
                         className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                          inspectorName.trim() === name
+                          inspectorName.trim() === item.fullName
                             ? 'border-slate-900 bg-slate-900 text-white'
                             : 'border-amber-300 bg-white text-slate-700 hover:bg-amber-100'
                         }`}
                       >
-                        {name}
+                        {item.fullName}
                       </button>
                     ))}
                   </div>
