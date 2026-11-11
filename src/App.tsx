@@ -2726,7 +2726,8 @@ function playNotificationChime() {
                 className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
+                <span className="sm:hidden">บันทึกน้ำมัน</span>
+                <span className="hidden sm:inline">บันทึกน้ำมัน (รับเข้า-เบิกออก)</span>
               </button>
             )}
 
@@ -3159,224 +3160,198 @@ function playNotificationChime() {
             </div>
           ) : activeTab.gid === '1733355146' ? (
             <div className="relative rounded-2xl bg-gradient-to-br from-sky-100/60 via-slate-100/70 to-emerald-100/50 p-2 sm:p-3 border border-white/80 shadow-xs">
-              <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3.5 lg:grid-cols-4">
                 {/* Card 1: คงเหลือน้ำมันปัจจุบัน (ลิตร) */}
-                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                <div className="group relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/60 bg-white/80 px-2.5 py-2.5 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-semibold text-slate-600">
-                        คงเหลือน้ำมันปัจจุบัน (ลิตร)
+                      <div className="truncate text-[11px] sm:text-xs font-semibold text-slate-600 whitespace-nowrap">
+                        คงเหลือน้ำมันปัจจุบัน
                       </div>
-                      <div className="mt-2 flex flex-col gap-1 sm:gap-1.5">
-                        <div className="flex items-baseline justify-between gap-2 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                      <div className="mt-1.5 sm:mt-2 flex flex-col gap-1 sm:gap-1.5">
+                        <div className="flex items-baseline justify-between gap-1 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                           <span className="text-slate-500 text-[11px] font-sans">ดีเซล:</span>
-                          <span className="font-sans text-sm sm:text-base font-extrabold tracking-tight text-blue-700 tabular-nums">
+                          <span className="font-sans text-xs sm:text-base font-extrabold tracking-tight text-blue-700 tabular-nums">
                             {isLoading && !sheetData
                               ? '...'
-                              : `${fuelKpiMetrics.latestDieselBalance.toLocaleString('th-TH')} ลิตร`}
+                              : `${fuelKpiMetrics.latestDieselBalance.toLocaleString('th-TH')} ล.`}
                           </span>
                         </div>
-                        <div className="flex items-baseline justify-between gap-2 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums">
+                        <div className="flex items-baseline justify-between gap-1 font-sans text-xs sm:text-sm font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                           <span className="text-slate-500 text-[11px] font-sans">เบนซิน:</span>
-                          <span className="font-sans text-sm sm:text-base font-extrabold tracking-tight text-indigo-700 tabular-nums">
+                          <span className="font-sans text-xs sm:text-base font-extrabold tracking-tight text-indigo-700 tabular-nums">
                             {isLoading && !sheetData
                               ? '...'
-                              : `${fuelKpiMetrics.latestBenzeneBalance.toLocaleString('th-TH')} ลิตร`}
+                              : `${fuelKpiMetrics.latestBenzeneBalance.toLocaleString('th-TH')} ล.`}
                           </span>
                         </div>
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/70 bg-blue-500/10 text-blue-700 backdrop-blur-sm">
+                    <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-200/70 bg-blue-500/10 text-blue-700 backdrop-blur-sm">
                       <Fuel className="h-4 w-4" />
                     </div>
-                  </div>
-                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
-                    ยอดคงเหลือล่าสุดจากฐานข้อมูล
                   </div>
                 </div>
 
                 {/* Card 2: ยอดรับเข้าสะสม (ลิตร) */}
-                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                <div className="group relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/60 bg-white/80 px-2.5 py-2.5 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-semibold text-slate-600">
-                        ยอดรับเข้าสะสม
+                      <div className="flex items-center justify-between gap-1 whitespace-nowrap">
+                        <span className="truncate text-[11px] sm:text-xs font-semibold text-slate-600">
+                          ยอดรับเข้าสะสม
+                        </span>
+                        <span className="shrink-0 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-full px-1.5 py-0.5 tabular-nums">
+                          {fuelKpiMetrics.totalInCount.toLocaleString('th-TH')} ครั้ง
+                        </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-1">
-                        <div className="flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
-                          <span>
-                            {isLoading && !sheetData
-                              ? '...'
-                              : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
-                          </span>
-                          <span className="font-sans text-xs font-semibold tracking-normal text-emerald-700">
-                            ลิตร
-                          </span>
-                        </div>
-                        <span className="shrink-0 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-full px-2 py-0.5 tabular-nums">
-                          รวม {fuelKpiMetrics.totalInCount.toLocaleString('th-TH')} ครั้ง
+                      <div className="mt-1 flex items-baseline gap-1 font-sans text-base sm:text-2xl font-extrabold tracking-tight text-slate-900 tabular-nums whitespace-nowrap">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : fuelKpiMetrics.totalInLiters.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-[11px] sm:text-xs font-semibold tracking-normal text-emerald-700">
+                          ลิตร
                         </span>
                       </div>
 
-                      <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                          <span className="text-slate-500 font-medium text-[11px]">ดีเซล:</span>
+                      <div className="mt-1.5 pt-1.5 border-t border-slate-100/90 flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between text-[11px] sm:text-xs font-sans whitespace-nowrap">
+                          <span className="text-slate-500 font-medium">ดีเซล:</span>
                           <span className="font-sans font-semibold text-slate-800 tabular-nums">
                             <span className="text-emerald-700 font-bold">
                               {fuelKpiMetrics.inDieselLiters.toLocaleString('th-TH')}
                             </span>{' '}
-                            ลิตร{' '}
-                            <span className="text-slate-400 font-normal">
-                              ({fuelKpiMetrics.inDieselCount.toLocaleString('th-TH')} ครั้ง)
+                            ล.{' '}
+                            <span className="text-slate-400 font-normal text-[10px]">
+                              ({fuelKpiMetrics.inDieselCount.toLocaleString('th-TH')})
                             </span>
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                          <span className="text-slate-500 font-medium text-[11px]">เบนซิน:</span>
+                        <div className="flex items-center justify-between text-[11px] sm:text-xs font-sans whitespace-nowrap">
+                          <span className="text-slate-500 font-medium">เบนซิน:</span>
                           <span className="font-sans font-semibold text-slate-800 tabular-nums">
                             <span className="text-indigo-700 font-bold">
                               {fuelKpiMetrics.inBenzeneLiters.toLocaleString('th-TH')}
                             </span>{' '}
-                            ลิตร{' '}
-                            <span className="text-slate-400 font-normal">
-                              ({fuelKpiMetrics.inBenzeneCount.toLocaleString('th-TH')} ครั้ง)
+                            ล.{' '}
+                            <span className="text-slate-400 font-normal text-[10px]">
+                              ({fuelKpiMetrics.inBenzeneCount.toLocaleString('th-TH')})
                             </span>
                           </span>
                         </div>
-                        {fuelKpiMetrics.inOtherLiters > 0 && (
-                          <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                            <span className="text-slate-500 font-medium text-[11px]">อื่นๆ:</span>
-                            <span className="font-sans font-semibold text-slate-800 tabular-nums">
-                              <span className="text-slate-700 font-bold">
-                                {fuelKpiMetrics.inOtherLiters.toLocaleString('th-TH')}
-                              </span>{' '}
-                              ลิตร{' '}
-                              <span className="text-slate-400 font-normal">
-                                ({fuelKpiMetrics.inOtherCount.toLocaleString('th-TH')} ครั้ง)
-                              </span>
-                            </span>
-                          </div>
-                        )}
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
+                    <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-200/70 bg-emerald-500/10 text-emerald-700 backdrop-blur-sm">
                       <Droplet className="h-4 w-4" />
                     </div>
                   </div>
                 </div>
 
                 {/* Card 3: ยอดจ่ายออกสะสม (เบิกออก) */}
-                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                <div className="group relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/60 bg-white/80 px-2.5 py-2.5 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-amber-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-semibold text-slate-600">
-                        ยอดจ่ายออกสะสม (เบิกออก)
+                      <div className="flex items-center justify-between gap-1 whitespace-nowrap">
+                        <span className="truncate text-[11px] sm:text-xs font-semibold text-slate-600">
+                          ยอดเบิกออกสะสม
+                        </span>
+                        <span className="shrink-0 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 rounded-full px-1.5 py-0.5 tabular-nums">
+                          {fuelKpiMetrics.totalOutCount.toLocaleString('th-TH')} ครั้ง
+                        </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-1">
-                        <div className="flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
-                          <span>
-                            {isLoading && !sheetData
-                              ? '...'
-                              : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
-                          </span>
-                          <span className="font-sans text-xs font-semibold tracking-normal text-amber-700">
-                            ลิตร
-                          </span>
-                        </div>
-                        <span className="shrink-0 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 rounded-full px-2 py-0.5 tabular-nums">
-                          รวม {fuelKpiMetrics.totalOutCount.toLocaleString('th-TH')} ครั้ง
+                      <div className="mt-1 flex items-baseline gap-1 font-sans text-base sm:text-2xl font-extrabold tracking-tight text-slate-900 tabular-nums whitespace-nowrap">
+                        <span>
+                          {isLoading && !sheetData
+                            ? '...'
+                            : fuelKpiMetrics.totalOutLiters.toLocaleString('th-TH')}
+                        </span>
+                        <span className="font-sans text-[11px] sm:text-xs font-semibold tracking-normal text-amber-700">
+                          ลิตร
                         </span>
                       </div>
 
-                      <div className="mt-2.5 pt-2 border-t border-slate-100/90 flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                          <span className="text-slate-500 font-medium text-[11px]">ดีเซล:</span>
+                      <div className="mt-1.5 pt-1.5 border-t border-slate-100/90 flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between text-[11px] sm:text-xs font-sans whitespace-nowrap">
+                          <span className="text-slate-500 font-medium">ดีเซล:</span>
                           <span className="font-sans font-semibold text-slate-800 tabular-nums">
                             <span className="text-amber-700 font-bold">
                               {fuelKpiMetrics.outDieselLiters.toLocaleString('th-TH')}
                             </span>{' '}
-                            ลิตร{' '}
-                            <span className="text-slate-400 font-normal">
-                              ({fuelKpiMetrics.outDieselCount.toLocaleString('th-TH')} ครั้ง)
+                            ล.{' '}
+                            <span className="text-slate-400 font-normal text-[10px]">
+                              ({fuelKpiMetrics.outDieselCount.toLocaleString('th-TH')})
                             </span>
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                          <span className="text-slate-500 font-medium text-[11px]">เบนซิน:</span>
+                        <div className="flex items-center justify-between text-[11px] sm:text-xs font-sans whitespace-nowrap">
+                          <span className="text-slate-500 font-medium">เบนซิน:</span>
                           <span className="font-sans font-semibold text-slate-800 tabular-nums">
                             <span className="text-indigo-700 font-bold">
                               {fuelKpiMetrics.outBenzeneLiters.toLocaleString('th-TH')}
                             </span>{' '}
-                            ลิตร{' '}
-                            <span className="text-slate-400 font-normal">
-                              ({fuelKpiMetrics.outBenzeneCount.toLocaleString('th-TH')} ครั้ง)
+                            ล.{' '}
+                            <span className="text-slate-400 font-normal text-[10px]">
+                              ({fuelKpiMetrics.outBenzeneCount.toLocaleString('th-TH')})
                             </span>
                           </span>
                         </div>
-                        {fuelKpiMetrics.outOtherLiters > 0 && (
-                          <div className="flex items-center justify-between text-xs sm:text-xs font-sans">
-                            <span className="text-slate-500 font-medium text-[11px]">อื่นๆ:</span>
-                            <span className="font-sans font-semibold text-slate-800 tabular-nums">
-                              <span className="text-slate-700 font-bold">
-                                {fuelKpiMetrics.outOtherLiters.toLocaleString('th-TH')}
-                              </span>{' '}
-                              ลิตร{' '}
-                              <span className="text-slate-400 font-normal">
-                                ({fuelKpiMetrics.outOtherCount.toLocaleString('th-TH')} ครั้ง)
-                              </span>
-                            </span>
-                          </div>
-                        )}
                       </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
+                    <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-200/70 bg-amber-500/10 text-amber-700 backdrop-blur-sm">
                       <Repeat className="h-4 w-4" />
                     </div>
                   </div>
                 </div>
 
                 {/* Card 4: มูลค่าจ่ายออกรวม (บาท) */}
-                <div className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 px-3.5 py-3 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
+                <div className="group relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/60 bg-white/80 px-2.5 py-2.5 sm:p-4 backdrop-blur-md shadow-sm ring-1 ring-slate-200/50 transition-all duration-200 hover:bg-white/90 hover:shadow-md">
                   <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-violet-400/15 blur-xl transition-opacity group-hover:opacity-100" />
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-semibold text-slate-600">
-                        มูลค่าจ่ายออกรวม (บาท)
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[11px] sm:text-xs font-semibold text-slate-600 whitespace-nowrap">
+                        มูลค่าจ่ายออกรวม
                       </div>
-                      <div className="mt-1.5 flex items-baseline gap-1 font-sans text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl tabular-nums">
-                        <span>
+                      <div className="mt-1 flex items-baseline gap-1 font-sans text-base sm:text-2xl font-extrabold tracking-tight text-slate-900 tabular-nums whitespace-nowrap">
+                        <span className="truncate">
                           {isLoading && !sheetData
                             ? '...'
                             : `${fuelKpiMetrics.totalOutValue.toLocaleString('th-TH', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 0,
                               })} ฿`}
                         </span>
                       </div>
+                      <div className="mt-1.5 pt-1.5 border-t border-slate-100/90 flex flex-col gap-0.5 text-[11px] font-sans whitespace-nowrap">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500">ราคาล่าสุด:</span>
+                          <span className="font-bold text-slate-800 tabular-nums">
+                            {fuelKpiMetrics.latestPrice.toLocaleString('th-TH', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{' '}
+                            ฿
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500">ราคาเฉลี่ย:</span>
+                          <span className="font-bold text-slate-800 tabular-nums">
+                            {fuelKpiMetrics.avgPrice.toLocaleString('th-TH', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{' '}
+                            ฿
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/70 bg-violet-500/10 text-violet-700 backdrop-blur-sm">
+                    <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200/70 bg-violet-500/10 text-violet-700 backdrop-blur-sm">
                       <Coins className="h-4 w-4" />
                     </div>
-                  </div>
-                  <div className="mt-2 truncate font-sans text-[11px] font-medium text-slate-500">
-                    ราคาล่าสุด{' '}
-                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
-                      {fuelKpiMetrics.latestPrice.toLocaleString('th-TH', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>{' '}
-                    ฿/ลิตร · เฉลี่ย{' '}
-                    <span className="font-sans font-bold tracking-tight text-slate-700 tabular-nums">
-                      {fuelKpiMetrics.avgPrice.toLocaleString('th-TH', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>{' '}
-                    ฿/ลิตร
                   </div>
                 </div>
               </div>
@@ -3813,32 +3788,36 @@ function playNotificationChime() {
 
           {/* Mode Switcher for Fuel Tab (1733355146) */}
           {activeTab.gid === '1733355146' && (
-            <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-white p-2.5 shadow-2xs">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="mt-2.5 sm:mt-3.5 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-1.5 sm:p-2.5 shadow-2xs">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
                 <button
                   type="button"
                   onClick={() => setFuelViewMode('summary')}
-                  className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-bold transition-all ${
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3.5 sm:py-2 text-xs font-bold transition-all whitespace-nowrap min-w-0 ${
                     fuelViewMode === 'summary'
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
-                  <Layers className="h-4 w-4" />
-                  <span>ตารางสรุปรับเข้า-เบิกออก แต่ละเดือน (ดูรายวัน)</span>
+                  <Layers className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate sm:hidden">สรุปรายเดือน/วัน</span>
+                  <span className="hidden sm:inline">ตารางสรุปรับเข้า-เบิกออก แต่ละเดือน (ดูรายวัน)</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setFuelViewMode('rawTable')}
-                  className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-bold transition-all ${
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3.5 sm:py-2 text-xs font-bold transition-all whitespace-nowrap min-w-0 ${
                     fuelViewMode === 'rawTable'
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
-                  <FileText className="h-4 w-4" />
-                  <span>
+                  <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate sm:hidden">
+                    ตารางทั้งหมด ({sheetData?.rows.length.toLocaleString('th-TH') ?? 0})
+                  </span>
+                  <span className="hidden sm:inline">
                     ตารางรายการทั้งหมด ({sheetData?.rows.length.toLocaleString('th-TH') ?? 0} แถว)
                   </span>
                 </button>
@@ -3847,7 +3826,7 @@ function playNotificationChime() {
               <button
                 type="button"
                 onClick={() => setIsFuelModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap shrink-0"
               >
                 <PlusCircle className="h-4 w-4" />
                 <span>+ บันทึกรับเข้า-เบิกออกน้ำมัน</span>
@@ -4392,7 +4371,7 @@ function playNotificationChime() {
                                   </div>
                                 )}
                                 <span
-                                  className={`text-[11px] font-semibold ${groupTheme.actionClass}`}
+                                  className={`hidden sm:inline text-[11px] font-semibold ${groupTheme.actionClass}`}
                                 >
                                   {isCollapsed ? 'คลิกเพื่อขยาย' : 'คลิกเพื่อย่อ'}
                                 </span>
@@ -4465,6 +4444,21 @@ function playNotificationChime() {
                                     col.type === 'datetime' ||
                                     col.type === 'timeofday';
 
+                                  const isFuelTab = activeTab.gid === '1733355146';
+                                  const isFuelMainCol =
+                                    isFuelTab &&
+                                    (col.id === 'D' ||
+                                      col.id === 'E' ||
+                                      col.id === 'F' ||
+                                      col.id === 'G' ||
+                                      col.id === 'H' ||
+                                      col.label.includes('ชนิดน้ำมัน') ||
+                                      col.label.includes('รับเข้า') ||
+                                      col.label.includes('ราคา') ||
+                                      col.label.includes('จ่ายออก') ||
+                                      col.label.includes('มูลค่า'));
+                                  const isHiddenOnMobile = isFuelTab && !isFuelMainCol;
+
                                   const isEditableGateCell =
                                     activeTab.gid === '1156877149' && col.id === 'C';
                                   const isEditableVehicleRegCell = false;
@@ -4503,7 +4497,9 @@ function playNotificationChime() {
                                             }
                                           : undefined
                                       }
-                                      className={`px-2.5 py-2 sm:px-4 sm:py-2.5 ${
+                                      className={`px-2.5 py-2 sm:px-4 sm:py-2.5 whitespace-nowrap ${
+                                        isHiddenOnMobile ? 'hidden sm:table-cell' : ''
+                                      } ${
                                         isOver20MinDuration
                                           ? 'bg-red-50 font-bold text-red-600'
                                           : 'text-slate-800'

@@ -357,10 +357,9 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({
 
         {/* Chart Viewport */}
         {data.length === 0 ? (
-          <div className="my-6 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-slate-400">
-            <Info className="mb-2 h-6 w-6 text-slate-300" />
+          <div className="my-4 flex h-36 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-center text-slate-400">
+            <Info className="mb-1.5 h-5 w-5 text-slate-300" />
             <p className="text-xs font-medium">ไม่พบข้อมูลตามช่วงวันที่เลือก</p>
-            <p className="mt-0.5 text-[11px] text-slate-400">ลองปรับเปลี่ยนตัวกรองวันที่ด้านบน</p>
           </div>
         ) : (
           <div className="relative mt-4 flex-1">
@@ -487,58 +486,64 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({
   };
 
   return (
-    <div className="mb-6 space-y-4">
+    <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
       {/* Date Filter & Control Bar */}
-      <div className="rounded-2xl border border-white/80 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-3.5 sm:p-4 text-white shadow-md">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="rounded-xl sm:rounded-2xl border border-white/80 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-2.5 sm:p-4 text-white shadow-md">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
           {/* Header */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30">
-              <BarChart3 className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-                กราฟแสดงแนวโน้มปริมาณน้ำมัน
-                <span className="hidden sm:inline-block rounded-md bg-blue-500/20 px-2 py-0.5 text-[10px] font-medium text-blue-300 border border-blue-400/30">
-                  ชนิดน้ำมัน ดีเซล / เบนซิน
-                </span>
+          <div className="flex items-center justify-between gap-2 whitespace-nowrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-7 w-7 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30">
+                <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5" />
+              </div>
+              <h2 className="text-xs sm:text-sm font-bold text-white truncate">
+                กราฟแนวโน้มปริมาณน้ำมัน (ดีเซล / เบนซิน)
               </h2>
-              <p className="text-[11px] text-slate-300">
-                เลือกช่วงวันที่เพื่อวิเคราะห์ปริมาณการรับเข้า และเบิกจ่ายออก
-              </p>
             </div>
+
+            {/* Clear Filter Button on Mobile */}
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={handleClearFilter}
+                className="inline-flex sm:hidden items-center gap-1 rounded-lg bg-rose-500/20 px-2 py-1 text-[10px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors whitespace-nowrap shrink-0"
+              >
+                <RotateCcw className="h-3 w-3" />
+                ล้างตัวกรอง
+              </button>
+            )}
           </div>
 
           {/* Controls: Date Filter & Preset Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-between sm:justify-end gap-1.5 overflow-x-auto no-scrollbar whitespace-nowrap">
             {/* Quick Presets */}
-            <div className="flex items-center gap-1 rounded-xl bg-slate-800/80 p-1 border border-slate-700/70 text-xs">
+            <div className="flex items-center gap-0.5 sm:gap-1 rounded-lg sm:rounded-xl bg-slate-800/80 p-0.5 sm:p-1 border border-slate-700/70 text-xs shrink-0">
               <button
                 type="button"
                 onClick={() => handleSetPreset(7)}
-                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="rounded-md sm:rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors whitespace-nowrap"
               >
                 7 วัน
               </button>
               <button
                 type="button"
                 onClick={() => handleSetPreset(30)}
-                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="rounded-md sm:rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors whitespace-nowrap"
               >
                 30 วัน
               </button>
               <button
                 type="button"
                 onClick={() => handleSetPreset('thisMonth')}
-                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="rounded-md sm:rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors whitespace-nowrap"
               >
                 เดือนนี้
               </button>
             </div>
 
             {/* Custom Date Inputs */}
-            <div className="flex items-center gap-1.5 rounded-xl bg-slate-800/80 px-2.5 py-1.5 border border-slate-700/70 text-xs">
-              <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <div className="flex items-center gap-1 rounded-lg sm:rounded-xl bg-slate-800/80 px-2 py-1 sm:px-2.5 sm:py-1.5 border border-slate-700/70 text-xs shrink-0">
+              <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-slate-400 shrink-0" />
               <input
                 type="date"
                 value={startDate}
@@ -556,12 +561,12 @@ export const FuelCharts: React.FC<FuelChartsProps> = ({
               />
             </div>
 
-            {/* Clear Filter Button */}
+            {/* Clear Filter Button (Desktop) */}
             {(startDate || endDate) && (
               <button
                 type="button"
                 onClick={handleClearFilter}
-                className="flex items-center gap-1 rounded-xl bg-rose-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors"
+                className="hidden sm:flex items-center gap-1 rounded-xl bg-rose-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors whitespace-nowrap shrink-0"
               >
                 <RotateCcw className="h-3 w-3" />
                 ล้างตัวกรอง

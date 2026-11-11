@@ -542,129 +542,160 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
   }, [monthlyData]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5 sm:space-y-4">
       {/* 1. Header Toolbar & Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
-        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
-          {/* Search Box */}
-          <div className="relative flex-1 min-w-[220px] max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="ค้นหาเบอร์รถ, คนขับ, ชนิดน้ำมัน, เลขใบเบิก..."
-              className="w-full rounded-lg border border-slate-200 bg-slate-50/50 pl-9 pr-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none"
-            />
-          </div>
+      <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 sm:p-3.5 shadow-xs">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2.5 flex-1 min-w-0">
+          {/* Row 1 on Mobile: Search Box + Year Filter + Refresh */}
+          <div className="flex items-center gap-1.5 w-full sm:w-auto sm:flex-1 sm:min-w-[240px] sm:max-w-md">
+            <div className="relative flex-1 min-w-0">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="ค้นหารถ, คนขับ, ใบเบิก..."
+                className="w-full rounded-lg border border-slate-200 bg-slate-50/50 pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none"
+              />
+            </div>
 
-          {/* Year Filter */}
-          <div className="flex items-center gap-1 text-xs">
-            <span className="text-slate-500 hidden sm:inline">ปี:</span>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:border-blue-600 focus:outline-none"
+              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 focus:border-blue-600 focus:outline-none whitespace-nowrap"
             >
-              <option value="ALL">ทุกปีทั้งหมด</option>
+              <option value="ALL">ทุกปี</option>
               {availableYears.map((y) => (
                 <option key={y} value={String(y)}>
                   ปี {y > 2400 ? y : y + 543}
                 </option>
               ))}
             </select>
+
+            {onRefreshData && (
+              <button
+                type="button"
+                onClick={onRefreshData}
+                disabled={isRefreshing}
+                className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 shrink-0"
+                title="รีเฟรชข้อมูล"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+              </button>
+            )}
           </div>
 
-          {/* Fuel Type Filter */}
-          <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
-            <button
-              type="button"
-              onClick={() => setSelectedFuelType('ALL')}
-              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
-                selectedFuelType === 'ALL'
-                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ทั้งหมด
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedFuelType('DIESEL')}
-              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
-                selectedFuelType === 'DIESEL'
-                  ? 'bg-blue-600 text-white shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ดีเซล
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedFuelType('BENZENE')}
-              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
-                selectedFuelType === 'BENZENE'
-                  ? 'bg-amber-600 text-white shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              เบนซิน
-            </button>
-          </div>
+          {/* Row 2 on Mobile: Fuel Type + Transaction Type + Expand/Collapse */}
+          <div className="flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar whitespace-nowrap">
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Fuel Type Filter */}
+              <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px] sm:text-xs shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedFuelType('ALL')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedFuelType === 'ALL'
+                      ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ทั้งหมด
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFuelType('DIESEL')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedFuelType === 'DIESEL'
+                      ? 'bg-blue-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ดีเซล
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFuelType('BENZENE')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedFuelType === 'BENZENE'
+                      ? 'bg-amber-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  เบนซิน
+                </button>
+              </div>
 
-          {/* Transaction Type Filter */}
-          <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
-            <button
-              type="button"
-              onClick={() => setSelectedTxType('ALL')}
-              className={`rounded-md px-2 py-1 font-medium transition-colors ${
-                selectedTxType === 'ALL'
-                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              รับ/เบิก
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedTxType('IN')}
-              className={`rounded-md px-2 py-1 font-medium transition-colors ${
-                selectedTxType === 'IN'
-                  ? 'bg-emerald-600 text-white shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              เฉพาะรับเข้า
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedTxType('OUT')}
-              className={`rounded-md px-2 py-1 font-medium transition-colors ${
-                selectedTxType === 'OUT'
-                  ? 'bg-indigo-600 text-white shadow-2xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              เฉพาะจ่ายออก
-            </button>
+              {/* Transaction Type Filter */}
+              <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px] sm:text-xs shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTxType('ALL')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedTxType === 'ALL'
+                      ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  รับ/เบิก
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTxType('IN')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedTxType === 'IN'
+                      ? 'bg-emerald-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  รับเข้า
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTxType('OUT')}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap ${
+                    selectedTxType === 'OUT'
+                      ? 'bg-indigo-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  จ่ายออก
+                </button>
+              </div>
+            </div>
+
+            {/* Mobile Expand/Collapse Compact Buttons */}
+            <div className="flex sm:hidden items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => toggleAllMonths(true)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              >
+                ขยายทั้งหมด
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleAllMonths(false)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              >
+                ย่อทั้งหมด
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        {/* Desktop Action Buttons */}
+        <div className="hidden sm:flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => toggleAllMonths(true)}
-            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            title="ขยายทุกเดือน"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900 whitespace-nowrap"
           >
             ขยายทุกเดือน
           </button>
           <button
             type="button"
             onClick={() => toggleAllMonths(false)}
-            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            title="พับเก็บทุกเดือน"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900 whitespace-nowrap"
           >
             พับเก็บทุกเดือน
           </button>
@@ -673,17 +704,17 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
               type="button"
               onClick={onRefreshData}
               disabled={isRefreshing}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap"
               title="รีเฟรชข้อมูล"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
-              <span className="hidden sm:inline">รีเฟรช</span>
+              <span>รีเฟรช</span>
             </button>
           )}
           <button
             type="button"
             onClick={onOpenFuelModal}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap"
           >
             <PlusCircle className="h-4 w-4" />
             <span>+ บันทึกรับเข้า-เบิกออกน้ำมัน</span>
@@ -691,122 +722,122 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
         </div>
       </div>
 
-      {/* 2. Top Summary KPI Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {/* 2. Top Summary KPI Cards (Compact Single-Line on Mobile) */}
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-4">
         {/* Total Inflow */}
-        <div className="rounded-xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/70 to-white p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-emerald-800">
-            <span className="flex items-center gap-1.5">
-              <ArrowDownLeft className="h-4 w-4 text-emerald-600" />
-              รวมรับเข้าทั้งหมด
+        <div className="rounded-xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/70 to-white px-3 py-2 sm:p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-emerald-800 whitespace-nowrap">
+            <span className="flex items-center gap-1 truncate">
+              <ArrowDownLeft className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">รวมรับเข้า</span>
             </span>
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 shrink-0">
               {formatNumber(overallTotals.inCount)} ครั้ง
             </span>
           </div>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="font-mono text-2xl font-bold tracking-tight text-emerald-700">
-              {formatNumber(overallTotals.inLit, 1)}
-            </span>
-            <span className="text-xs font-medium text-slate-500">ลิตร</span>
-          </div>
-          {overallTotals.inAmt > 0 && (
-            <div className="mt-1 text-[11px] text-emerald-800/80">
-              มูลค่า: {formatNumber(overallTotals.inAmt, 2)} บาท
+          <div className="mt-1 flex items-baseline justify-between gap-1 whitespace-nowrap">
+            <div className="flex items-baseline gap-1">
+              <span className="font-mono text-base sm:text-2xl font-bold tracking-tight text-emerald-700">
+                {formatNumber(overallTotals.inLit, 1)}
+              </span>
+              <span className="text-[11px] sm:text-xs font-medium text-slate-500">ล.</span>
             </div>
-          )}
+            {overallTotals.inAmt > 0 && (
+              <span className="text-[10px] sm:text-[11px] text-emerald-800/80 font-mono truncate">
+                {formatNumber(overallTotals.inAmt, 0)} ฿
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Total Outflow */}
-        <div className="rounded-xl border border-blue-200/80 bg-gradient-to-br from-blue-50/70 to-white p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-blue-800">
-            <span className="flex items-center gap-1.5">
-              <ArrowUpRight className="h-4 w-4 text-blue-600" />
-              รวมจ่ายออก / เบิกออก
+        <div className="rounded-xl border border-blue-200/80 bg-gradient-to-br from-blue-50/70 to-white px-3 py-2 sm:p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-blue-800 whitespace-nowrap">
+            <span className="flex items-center gap-1 truncate">
+              <ArrowUpRight className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+              <span className="truncate">รวมเบิกออก</span>
             </span>
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800">
+            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-800 shrink-0">
               {formatNumber(overallTotals.outCount)} ครั้ง
             </span>
           </div>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="font-mono text-2xl font-bold tracking-tight text-blue-700">
-              {formatNumber(overallTotals.outLit, 1)}
-            </span>
-            <span className="text-xs font-medium text-slate-500">ลิตร</span>
-          </div>
-          {overallTotals.outAmt > 0 && (
-            <div className="mt-1 text-[11px] text-blue-800/80">
-              มูลค่า: {formatNumber(overallTotals.outAmt, 2)} บาท
+          <div className="mt-1 flex items-baseline justify-between gap-1 whitespace-nowrap">
+            <div className="flex items-baseline gap-1">
+              <span className="font-mono text-base sm:text-2xl font-bold tracking-tight text-blue-700">
+                {formatNumber(overallTotals.outLit, 1)}
+              </span>
+              <span className="text-[11px] sm:text-xs font-medium text-slate-500">ล.</span>
             </div>
-          )}
+            {overallTotals.outAmt > 0 && (
+              <span className="text-[10px] sm:text-[11px] text-blue-800/80 font-mono truncate">
+                {formatNumber(overallTotals.outAmt, 0)} ฿
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Net Flow */}
-        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-            <span className="flex items-center gap-1.5">
-              <Fuel className="h-4 w-4 text-slate-600" />
-              ผลต่างสุทธิ (รับ - จ่าย)
+        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-3 py-2 sm:p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-slate-700 whitespace-nowrap">
+            <span className="flex items-center gap-1 truncate">
+              <Fuel className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+              <span className="truncate">ผลต่างสุทธิ</span>
+            </span>
+            <span className="text-[10px] font-medium text-slate-500 shrink-0">
+              {monthlyData.length} เดือน
             </span>
           </div>
-          <div className="mt-2 flex items-baseline gap-1">
+          <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap">
             <span
-              className={`font-mono text-2xl font-bold tracking-tight ${
+              className={`font-mono text-base sm:text-2xl font-bold tracking-tight ${
                 overallTotals.netLit >= 0 ? 'text-emerald-700' : 'text-rose-700'
               }`}
             >
               {overallTotals.netLit > 0 ? '+' : ''}
               {formatNumber(overallTotals.netLit, 1)}
             </span>
-            <span className="text-xs font-medium text-slate-500">ลิตร</span>
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">
-            {monthlyData.length} เดือนที่แสดงในตาราง
+            <span className="text-[11px] sm:text-xs font-medium text-slate-500">ล.</span>
           </div>
         </div>
 
         {/* Distinct Days & Records */}
-        <div className="rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50/60 to-white p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-amber-900">
-            <span className="flex items-center gap-1.5">
-              <Calendar className="h-4 w-4 text-amber-700" />
-              จำนวนรายการที่พบ
+        <div className="rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50/60 to-white px-3 py-2 sm:p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-amber-900 whitespace-nowrap">
+            <span className="flex items-center gap-1 truncate">
+              <Calendar className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+              <span className="truncate">รายการที่พบ</span>
+            </span>
+            <span className="text-[10px] font-medium text-amber-800/80 shrink-0">
+              / {formatNumber(rows.length)}
             </span>
           </div>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="font-mono text-2xl font-bold tracking-tight text-amber-800">
+          <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap">
+            <span className="font-mono text-base sm:text-2xl font-bold tracking-tight text-amber-800">
               {formatNumber(filteredRows.length)}
             </span>
-            <span className="text-xs font-medium text-slate-500">รายการ</span>
-          </div>
-          <div className="mt-1 text-[11px] text-amber-800/80">
-            จากทั้งหมด {formatNumber(rows.length)} รายการในชีต
+            <span className="text-[11px] sm:text-xs font-medium text-slate-500">รายการ</span>
           </div>
         </div>
       </div>
 
       {/* 3. Monthly Summary Table */}
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
-        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-blue-600" />
-            <h3 className="text-sm font-bold text-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="flex items-center gap-2 min-w-0 whitespace-nowrap">
+            <Layers className="h-4 w-4 text-blue-600 shrink-0" />
+            <h3 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
               ตารางสรุป รับเข้า-เบิกออก แต่ละเดือน
             </h3>
-            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shrink-0">
               {monthlyData.length} เดือน
             </span>
-          </div>
-          <div className="text-xs text-slate-500">
-            คลิกที่แถวของเดือน เพื่อดูรายชื่อวันที่มีการรับเข้า-จ่ายออก
           </div>
         </div>
 
         {monthlyData.length === 0 ? (
-          <div className="py-12 text-center">
-            <Fuel className="mx-auto h-10 w-10 text-slate-300" />
-            <p className="mt-2 text-sm font-semibold text-slate-700">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</p>
-            <p className="text-xs text-slate-500">ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา</p>
+          <div className="py-10 text-center">
+            <Fuel className="mx-auto h-8 w-8 text-slate-300" />
+            <p className="mt-2 text-xs sm:text-sm font-semibold text-slate-700">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-200">
@@ -818,119 +849,112 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
                   {/* Month Row Header (Clickable Accordion) */}
                   <div
                     onClick={() => toggleMonth(m.monthKey)}
-                    className={`cursor-pointer transition-colors p-3.5 sm:px-5 hover:bg-slate-50/90 ${
+                    className={`cursor-pointer transition-colors p-2.5 sm:p-3.5 sm:px-5 hover:bg-slate-50/90 ${
                       isMonthExpanded ? 'bg-slate-50/70 border-l-4 border-l-blue-600' : 'bg-white'
                     }`}
                   >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      {/* Left: Month Title & Badges */}
-                      <div className="flex items-center gap-3">
-                        <button
-                          type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700 transition-colors shrink-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleMonth(m.monthKey);
-                          }}
-                        >
-                          {isMonthExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-blue-700 font-bold" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </button>
-
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-base font-bold text-slate-900">
-                              {m.monthTitle}
-                            </span>
-                            <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
-                              {m.distinctDaysCount} วันที่มีรายการ
-                            </span>
-                            {m.distinctVehiclesCount > 0 && (
-                              <span className="hidden sm:inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                                <Truck className="h-3 w-3 text-slate-400" />
-                                {m.distinctVehiclesCount} คัน
-                              </span>
+                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                      {/* Top Row on Mobile: Month Title + Badges + Counts on a Single Line */}
+                      <div className="flex items-center justify-between gap-2 min-w-0 whitespace-nowrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <button
+                            type="button"
+                            className="flex h-6 w-6 sm:h-7 sm:w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700 transition-colors shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleMonth(m.monthKey);
+                            }}
+                          >
+                            {isMonthExpanded ? (
+                              <ChevronDown className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-700 font-bold" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                             )}
-                          </div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
-                            <span>
-                              รับเข้า: <strong className="text-emerald-700">{formatNumber(m.inCount)} รายการ</strong>
+                          </button>
+
+                          <span className="text-xs sm:text-base font-bold text-slate-900 truncate">
+                            {m.monthTitle}
+                          </span>
+                          <span className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] sm:text-xs font-semibold text-blue-700 border border-blue-200 shrink-0">
+                            {m.distinctDaysCount} วัน
+                          </span>
+                          {m.distinctVehiclesCount > 0 && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] sm:text-xs font-medium text-slate-600 shrink-0">
+                              <Truck className="h-3 w-3 text-slate-400" />
+                              {m.distinctVehiclesCount} คัน
                             </span>
-                            <span>•</span>
-                            <span>
-                              จ่ายออก: <strong className="text-blue-700">{formatNumber(m.outCount)} รายการ</strong>
-                            </span>
-                          </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 shrink-0">
+                          <span>
+                            รับ <strong className="text-emerald-700">{formatNumber(m.inCount)}</strong>
+                          </span>
+                          <span>•</span>
+                          <span>
+                            จ่าย <strong className="text-blue-700">{formatNumber(m.outCount)}</strong>
+                          </span>
                         </div>
                       </div>
 
-                      {/* Right: Metrics Grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 text-xs">
+                      {/* Bottom Row on Mobile: 3-Column Single-Line Metrics Strip */}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 sm:gap-3 text-xs">
                         {/* Received In */}
-                        <div className="rounded-lg bg-emerald-50/70 border border-emerald-100 px-3 py-1.5">
-                          <div className="flex items-center justify-between text-[11px] font-medium text-emerald-800">
-                            <span>รับเข้า (In)</span>
-                            <ArrowDownLeft className="h-3 w-3 text-emerald-600" />
+                        <div className="rounded-lg bg-emerald-50/70 border border-emerald-100 px-2 py-1 sm:px-3 sm:py-1.5 min-w-0">
+                          <div className="flex items-center justify-between gap-1 text-[10px] sm:text-[11px] font-medium text-emerald-800 whitespace-nowrap">
+                            <span>รับเข้า</span>
+                            <span className="font-mono font-bold text-emerald-700 text-[11px] sm:text-sm">
+                              {formatNumber(m.totalInLiters, 1)} ล.
+                            </span>
                           </div>
-                          <div className="mt-0.5 font-mono text-sm font-bold text-emerald-700">
-                            {formatNumber(m.totalInLiters, 1)}{' '}
-                            <span className="text-[10px] font-normal text-slate-500">ลิตร</span>
-                          </div>
-                          <div className="text-[10px] text-emerald-800/70">
+                          <div className="mt-0.5 text-[10px] text-emerald-800/75 truncate whitespace-nowrap">
                             ดีเซล {formatNumber(m.inDieselLiters, 0)} | เบนซิน {formatNumber(m.inBenzeneLiters, 0)}
                           </div>
                         </div>
 
                         {/* Issued Out */}
-                        <div className="rounded-lg bg-blue-50/70 border border-blue-100 px-3 py-1.5">
-                          <div className="flex items-center justify-between text-[11px] font-medium text-blue-800">
-                            <span>จ่ายออก (Out)</span>
-                            <ArrowUpRight className="h-3 w-3 text-blue-600" />
+                        <div className="rounded-lg bg-blue-50/70 border border-blue-100 px-2 py-1 sm:px-3 sm:py-1.5 min-w-0">
+                          <div className="flex items-center justify-between gap-1 text-[10px] sm:text-[11px] font-medium text-blue-800 whitespace-nowrap">
+                            <span>จ่ายออก</span>
+                            <span className="font-mono font-bold text-blue-700 text-[11px] sm:text-sm">
+                              {formatNumber(m.totalOutLiters, 1)} ล.
+                            </span>
                           </div>
-                          <div className="mt-0.5 font-mono text-sm font-bold text-blue-700">
-                            {formatNumber(m.totalOutLiters, 1)}{' '}
-                            <span className="text-[10px] font-normal text-slate-500">ลิตร</span>
-                          </div>
-                          <div className="text-[10px] text-blue-800/70">
+                          <div className="mt-0.5 text-[10px] text-blue-800/75 truncate whitespace-nowrap">
                             ดีเซล {formatNumber(m.outDieselLiters, 0)} | เบนซิน {formatNumber(m.outBenzeneLiters, 0)}
                           </div>
                         </div>
 
                         {/* Net Change */}
-                        <div className="rounded-lg bg-slate-100 border border-slate-200 px-3 py-1.5">
-                          <div className="text-[11px] font-medium text-slate-600">ผลต่างสุทธิ</div>
-                          <div
-                            className={`mt-0.5 font-mono text-sm font-bold ${
-                              m.netLiters >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                            }`}
-                          >
-                            {m.netLiters > 0 ? '+' : ''}
-                            {formatNumber(m.netLiters, 1)}{' '}
-                            <span className="text-[10px] font-normal text-slate-500">ลิตร</span>
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {m.netLiters >= 0 ? 'รับเข้ามากกว่าจ่าย' : 'จ่ายออกมากกว่ารับ'}
+                        <div className="rounded-lg bg-slate-100 border border-slate-200 px-2 py-1 sm:px-3 sm:py-1.5 min-w-0 flex flex-col justify-center">
+                          <div className="flex items-center justify-between gap-1 text-[10px] sm:text-[11px] font-medium text-slate-600 whitespace-nowrap">
+                            <span>สุทธิ</span>
+                            <span
+                              className={`font-mono font-bold text-[11px] sm:text-sm ${
+                                m.netLiters >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                              }`}
+                            >
+                              {m.netLiters > 0 ? '+' : ''}
+                              {formatNumber(m.netLiters, 1)} ล.
+                            </span>
                           </div>
                         </div>
 
-                        {/* Drill-down Toggle Button */}
-                        <div className="flex items-center justify-end">
+                        {/* Drill-down Toggle Button (Desktop only) */}
+                        <div className="hidden sm:flex items-center justify-end">
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleMonth(m.monthKey);
                             }}
-                            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap ${
                               isMonthExpanded
                                 ? 'bg-blue-600 text-white shadow-2xs'
                                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                             }`}
                           >
-                            <span>{isMonthExpanded ? 'ซ่อนรายวัน' : 'คลิกดูรายวัน'}</span>
+                            <span>{isMonthExpanded ? 'ซ่อนรายวัน' : 'ดูรายวัน'}</span>
                             {isMonthExpanded ? (
                               <ChevronDown className="h-3.5 w-3.5" />
                             ) : (
@@ -942,23 +966,20 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Expanded Daily Breakdown ("วันไหนบ้าง ที่รับเข้า จ่ายออก") */}
+                  {/* Expanded Daily Breakdown */}
                   {isMonthExpanded && (
-                    <div className="border-t border-slate-200 bg-slate-50/50 p-3 sm:p-5 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                          <Calendar className="h-4 w-4 text-blue-600" />
-                          <span>
-                            รายละเอียดวันที่มีการ รับเข้า-จ่ายออก ประจำเดือน {m.monthTitle} ({m.days.length} วัน)
+                    <div className="border-t border-slate-200 bg-slate-50/50 p-2 sm:p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 truncate">
+                          <Calendar className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                          <span className="truncate">
+                            รายวันประจำเดือน {m.monthTitle} ({m.days.length} วัน)
                           </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          คลิกที่วันเพื่อดูรายละเอียดแต่ละเที่ยว (ID, เวลา, รถ, คนขับ, ผู้จ่าย)
                         </div>
                       </div>
 
                       {/* Day Cards List */}
-                      <div className="space-y-2.5">
+                      <div className="space-y-2">
                         {m.days.map((d) => {
                           const isDayExpanded = expandedDays[d.ymd] ?? true;
 
@@ -967,19 +988,19 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
                               key={d.ymd}
                               className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xs transition-shadow hover:shadow-xs"
                             >
-                              {/* Day Header Row */}
+                              {/* Day Header Row (Single-Line Focused) */}
                               <div
                                 onClick={() => toggleDay(d.ymd)}
-                                className={`cursor-pointer px-3.5 py-2.5 transition-colors ${
+                                className={`cursor-pointer px-2.5 py-2 sm:px-3.5 sm:py-2.5 transition-colors ${
                                   isDayExpanded ? 'bg-slate-100/70 border-b border-slate-200' : 'bg-white hover:bg-slate-50'
                                 }`}
                               >
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                  {/* Left: Date & Weekday */}
-                                  <div className="flex items-center gap-2.5">
+                                <div className="flex items-center justify-between gap-1.5 flex-nowrap overflow-x-auto no-scrollbar whitespace-nowrap">
+                                  {/* Left: Date & Count */}
+                                  <div className="flex items-center gap-1.5 min-w-0 shrink-0">
                                     <button
                                       type="button"
-                                      className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:text-slate-800"
+                                      className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:text-slate-800 shrink-0"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         toggleDay(d.ymd);
@@ -992,59 +1013,50 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
                                       )}
                                     </button>
 
-                                    <div>
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-xs sm:text-sm text-slate-900">
-                                          {d.weekdayThai}ที่ {d.dateDisplay}
-                                        </span>
-                                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono text-slate-600">
-                                          {d.records.length} รายการ
-                                        </span>
-                                      </div>
-                                      {d.vehicles.length > 0 && (
-                                        <div className="mt-0.5 text-[11px] text-slate-500 truncate max-w-md">
-                                          รถที่เข้าเติม: {d.vehicles.slice(0, 4).join(', ')}
-                                          {d.vehicles.length > 4 ? ` และอีก ${d.vehicles.length - 4} คัน` : ''}
-                                        </div>
-                                      )}
-                                    </div>
+                                    <span className="font-semibold text-xs sm:text-sm text-slate-900">
+                                      <span className="hidden sm:inline">{d.weekdayThai}ที่ </span>
+                                      {d.dateDisplay}
+                                    </span>
+                                    <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-slate-700">
+                                      {d.records.length} รายการ
+                                    </span>
                                   </div>
 
-                                  {/* Right: Day Totals */}
-                                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                                  {/* Right: Day Totals on Same Single Line */}
+                                  <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs shrink-0">
                                     {d.inLiters > 0 && (
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1 text-emerald-800 border border-emerald-200 font-semibold">
-                                        <ArrowDownLeft className="h-3 w-3 text-emerald-600" />
-                                        รับเข้า: {formatNumber(d.inLiters, 1)} ล.
-                                        <span className="text-[10px] font-normal text-emerald-600">
-                                          ({d.inCount} ครั้ง)
-                                        </span>
+                                      <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800 border border-emerald-200 font-semibold">
+                                        <ArrowDownLeft className="h-3 w-3 text-emerald-600 shrink-0" />
+                                        <span>รับ {formatNumber(d.inLiters, 1)} ล.</span>
                                       </span>
                                     )}
 
                                     {d.outLiters > 0 && (
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-blue-800 border border-blue-200 font-semibold">
-                                        <ArrowUpRight className="h-3 w-3 text-blue-600" />
-                                        จ่ายออก: {formatNumber(d.outLiters, 1)} ล.
-                                        <span className="text-[10px] font-normal text-blue-600">
-                                          ({d.outCount} ครั้ง)
-                                        </span>
+                                      <span className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-blue-800 border border-blue-200 font-semibold">
+                                        <ArrowUpRight className="h-3 w-3 text-blue-600 shrink-0" />
+                                        <span>จ่าย {formatNumber(d.outLiters, 1)} ล.</span>
                                       </span>
                                     )}
 
                                     <span
-                                      className={`rounded-md px-2 py-1 font-mono font-bold text-xs ${
+                                      className={`rounded px-1.5 py-0.5 font-mono font-bold text-[11px] sm:text-xs ${
                                         d.netLiters >= 0
                                           ? 'bg-slate-100 text-slate-800'
                                           : 'bg-rose-50 text-rose-700'
                                       }`}
-                                      title="คงเหลือสุทธิประจำวัน (รับ - จ่าย)"
                                     >
-                                      สุทธิ: {d.netLiters > 0 ? '+' : ''}
+                                      สุทธิ {d.netLiters > 0 ? '+' : ''}
                                       {formatNumber(d.netLiters, 1)} ล.
                                     </span>
                                   </div>
                                 </div>
+
+                                {d.vehicles.length > 0 && (
+                                  <div className="mt-1 pl-6 text-[11px] text-slate-500 truncate whitespace-nowrap">
+                                    รถที่เติม: {d.vehicles.slice(0, 6).join(', ')}
+                                    {d.vehicles.length > 6 ? ` +${d.vehicles.length - 6} คัน` : ''}
+                                  </div>
+                                )}
                               </div>
 
                               {/* Day Transactions Table (When expanded) */}

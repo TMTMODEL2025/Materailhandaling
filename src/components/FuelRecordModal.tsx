@@ -584,61 +584,61 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
             </div>
           </div>
         ) : (
-          <form onSubmit={handleReviewSubmit} className="overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
-            <div className="space-y-3">
+          <form onSubmit={handleReviewSubmit} className="overflow-y-auto px-3.5 py-2.5 sm:px-5 sm:py-4">
+            <div className="space-y-2.5 sm:space-y-3">
               {/* Toggle: เบิกออก vs รับเข้า */}
               <div>
-                <label className="block text-[11px] sm:text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700 mb-1 whitespace-nowrap">
                   ประเภทรายการ (STATUS) <span className="text-red-600">*</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setTransactionType('เบิกออก')}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs sm:text-sm font-semibold transition-colors ${
+                    className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-2 sm:px-3 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
                       transactionType === 'เบิกออก'
                         ? 'border-amber-600 bg-amber-600 text-white shadow-2xs'
                         : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    <ArrowUpFromLine className="h-4 w-4" />
-                    <span>เบิกออก (จ่ายน้ำมัน)</span>
+                    <ArrowUpFromLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                    <span className="truncate">เบิกออก (จ่ายน้ำมัน)</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setTransactionType('รับเข้า')}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs sm:text-sm font-semibold transition-colors ${
+                    className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-2 sm:px-3 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
                       transactionType === 'รับเข้า'
                         ? 'border-emerald-600 bg-emerald-600 text-white shadow-2xs'
                         : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    <ArrowDownToLine className="h-4 w-4" />
-                    <span>รับเข้า (เติมสต็อก)</span>
+                    <ArrowDownToLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                    <span className="truncate">รับเข้า (เติมสต็อก)</span>
                   </button>
                 </div>
               </div>
 
-              {/* Current Stock Summary Strip */}
-              <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-slate-500">คงเหลือ ดีเซล:</span>
+              {/* Current Stock Summary Strip (Single-Line per column) */}
+              <div className="grid grid-cols-2 gap-1.5 sm:gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px] sm:text-xs">
+                <div className="flex items-center justify-between gap-1 whitespace-nowrap min-w-0">
+                  <span className="text-slate-500 truncate">ดีเซล:</span>
                   <span className="font-mono font-bold text-slate-900 tabular-nums">
-                    {sheetContext.prevBalanceDiesel.toLocaleString('th-TH')} ลิตร
+                    {sheetContext.prevBalanceDiesel.toLocaleString('th-TH')} ล.
                   </span>
                 </div>
-                <div className="flex items-center justify-between border-l border-slate-200 pl-2.5 pr-1">
-                  <span className="text-slate-500">คงเหลือ เบนซิน:</span>
+                <div className="flex items-center justify-between gap-1 border-l border-slate-200 pl-2 whitespace-nowrap min-w-0">
+                  <span className="text-slate-500 truncate">เบนซิน:</span>
                   <span className="font-mono font-bold text-slate-900 tabular-nums">
-                    {sheetContext.prevBalanceBenzene.toLocaleString('th-TH')} ลิตร
+                    {sheetContext.prevBalanceBenzene.toLocaleString('th-TH')} ล.
                   </span>
                 </div>
               </div>
 
               {/* วันที่ & เวลา */}
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap">
                     วันที่ <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -651,7 +651,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap">
                     เวลา <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -667,7 +667,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
 
               {/* ชนิดน้ำมัน */}
               <div>
-                <label className="block text-[11px] sm:text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700 mb-1 whitespace-nowrap">
                   ชนิดน้ำมัน <span className="text-red-600">*</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -676,7 +676,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                       key={type}
                       type="button"
                       onClick={() => handleFuelTypeChange(type)}
-                      className={`rounded-lg border px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors ${
+                      className={`rounded-lg border px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${
                         fuelType === type
                           ? 'border-slate-900 bg-slate-900 text-white'
                           : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -689,10 +689,10 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
               </div>
 
               {/* จำนวนลิตร & ราคาต่อลิตร */}
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                    {isReceive ? 'รับเข้า / ลิตร' : 'จ่ายออก / ลิตร'}{' '}
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
+                    {isReceive ? 'รับเข้า (ลิตร)' : 'จ่ายออก (ลิตร)'}{' '}
                     <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -707,7 +707,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
                     ราคาต่อลิตร (บาท)
                   </label>
                   <input
@@ -724,7 +724,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
 
               {/* มูลค่ารวม & ยอดคงเหลือหลังทำรายการ */}
               {numericLiters > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-2.5 py-1.5 text-[11px] sm:text-xs whitespace-nowrap">
                   <div>
                     <span className="text-slate-600">มูลค่ารวม: </span>
                     <span className="font-mono font-bold text-sky-800 tabular-nums">
@@ -732,7 +732,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}
-                      บาท
+                      ฿
                     </span>
                   </div>
                   <div>
@@ -742,7 +742,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                         ? nextBalanceDiesel
                         : nextBalanceBenzene
                       ).toLocaleString('th-TH')}{' '}
-                      ลิตร
+                      ล.
                     </span>
                   </div>
                 </div>
@@ -751,9 +751,9 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
               {/* ฟิลด์เฉพาะกรณี เบิกออก */}
               {!isReceive && (
                 <>
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                      <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
                         เบอร์รถ <span className="text-red-600">*</span>
                       </label>
                       <input
@@ -772,13 +772,12 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                       </datalist>
                     </div>
                     <div>
-                      <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                      <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
                         เลขไมล์
                         {vehicleNumber &&
                           sheetContext.vehicleToMileageMap.get(vehicleNumber.trim()) && (
                             <span className="ml-1 font-mono text-[10px] text-slate-400">
-                              (ล่าสุด:{' '}
-                              {sheetContext.vehicleToMileageMap.get(vehicleNumber.trim())})
+                              ({sheetContext.vehicleToMileageMap.get(vehicleNumber.trim())})
                             </span>
                           )}
                       </label>
@@ -794,7 +793,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                    <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap">
                       พนักงานขับรถ <span className="text-red-600">*</span>
                     </label>
                     <input
@@ -816,10 +815,10 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
               )}
 
               {/* ผู้จ่ายน้ำมัน / ผู้รับเข้า & เลขที่ใบเบิก */}
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                    {isReceive ? 'ผู้รับเข้า / ผู้ทำรายการ' : 'ผู้จ่ายน้ำมัน'}{' '}
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
+                    {isReceive ? 'ผู้รับเข้า' : 'ผู้จ่ายน้ำมัน'}{' '}
                     <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -829,7 +828,7 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                     value={staffName}
                     onChange={(e) => setStaffName(e.target.value)}
                     placeholder={
-                      isReceive ? 'ระบุชื่อผู้รับน้ำมันเข้า' : 'ระบุชื่อผู้จ่ายน้ำมัน'
+                      isReceive ? 'ชื่อผู้รับเข้า' : 'ชื่อผู้จ่ายน้ำมัน'
                     }
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                   />
@@ -840,8 +839,8 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
                   </datalist>
                 </div>
                 <div>
-                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
-                    เลขที่ใบเบิก / เลขที่อ้างอิง
+                  <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap truncate">
+                    เลขที่ใบเบิก
                   </label>
                   <input
                     type="text"
@@ -855,20 +854,20 @@ export const FuelRecordModal: React.FC<FuelRecordModalProps> = ({
 
               {/* หมายเหตุ */}
               <div>
-                <label className="block text-[11px] sm:text-xs font-medium text-slate-700">
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-700 whitespace-nowrap">
                   หมายเหตุ
                 </label>
                 <input
                   type="text"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="ระบุหมายเหตุเพิ่มเติม (ถ้ามี)"
+                  placeholder="ระบุหมายเหตุ (ถ้ามี)"
                   className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+            <div className="mt-3.5 flex items-center justify-end gap-2 border-t border-slate-200 pt-2.5">
               <button
                 type="button"
                 onClick={onClose}
