@@ -96,6 +96,13 @@ import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
 import { showSuccessToast } from './utils/swal';
+import {
+  formatCompletionPercentage,
+  parseThaiDateToTimestamp,
+  getRowApprovalStatus,
+  calculatePendingApprovalCount,
+  parseNumericCell,
+} from './utils/sheetMetrics';
 
 const PAGE_SIZE = 30;
 
@@ -115,62 +122,11 @@ function isDurationExceeding20Minutes(val: string): boolean {
   return false;
 }
 
-function parseThaiDateToTimestamp(val: string): number | null {
-  const trimmed = String(val ?? '').trim();
-  if (!trimmed) return null;
-
-  // 1. Check Date(YYYY, M, D) gviz format
-  const dateObjMatch = trimmed.match(/^Date\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (dateObjMatch) {
-    let year = parseInt(dateObjMatch[1], 10);
-    const month = parseInt(dateObjMatch[2], 10) + 1;
-    const day = parseInt(dateObjMatch[3], 10);
-    if (year > 2400) year -= 543;
-    if (year < 100) year += 2000;
-    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
-  }
-
-  // 2. Check DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY (with optional time)
-  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (match) {
-    const day = parseInt(match[1], 10);
-    const month = parseInt(match[2], 10);
-    let year = parseInt(match[3], 10);
-    if (year < 100) year += 2000;
-    if (year > 2400) year -= 543;
-    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
-  }
-
-  // 3. Check YYYY-MM-DD or YYYY/MM/DD
-  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-  if (isoMatch) {
-    let year = parseInt(isoMatch[1], 10);
-    if (year > 2400) year -= 543;
-    const month = parseInt(isoMatch[2], 10);
-    const day = parseInt(isoMatch[3], 10);
-    return new Date(year, month - 1, day).setHours(0, 0, 0, 0);
-  }
-
-  return null;
-}
-
 function parseIsoInputDateToTimestamp(isoDate: string): number | null {
   if (!isoDate) return null;
   const [y, m, d] = isoDate.split('-').map(Number);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d).setHours(0, 0, 0, 0);
-}
-
-function calculatePendingApprovalCount(rows: SheetRow[]): number {
-  return rows.filter((r) => {
-    const st = getRowApprovalStatus(r);
-    return (
-      st === 'รออนุมัติ' ||
-      st === 'ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
-      st === 'ขอข้อมูลเพิ่มเติม' ||
-      st === 'รอพิจารณา'
-    );
-  }).length;
 }
 
 const REPAIR_STATUS_GROUP_ORDER: string[] = [
@@ -181,42 +137,6 @@ const REPAIR_STATUS_GROUP_ORDER: string[] = [
   'อนุมัติ',
   'ไม่อนุมัติ',
 ];
-
-function getRowApprovalStatus(row: SheetRow): string {
-  const appStatus = (row.values['AI'] ?? '').trim();
-  const repairStatus = (row.values['P'] ?? '').trim();
-  const inspector = (row.values['AB'] ?? '').trim();
-  const replyText = (row.values['AM'] ?? '').trim();
-
-  if (
-    appStatus === 'รอตรวจสอบ' ||
-    repairStatus === 'รอตรวจสอบ' ||
-    (!appStatus && !inspector)
-  ) {
-    return 'รอตรวจสอบ';
-  }
-  if (appStatus.includes('ไม่อนุมัติ')) return 'ไม่อนุมัติ';
-  if (
-    appStatus.includes('อนุมัติ') &&
-    !appStatus.includes('ไม่อนุมัติ') &&
-    !appStatus.includes('รอ') &&
-    !appStatus.includes('ตอบกลับ')
-  ) {
-    return 'อนุมัติ';
-  }
-  const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
-  if (isReplied) return 'ตอบกลับข้อมูลเพิ่มเติมแล้ว';
-  if (appStatus.includes('ขอข้อมูล')) return 'ขอข้อมูลเพิ่มเติม';
-  if (
-    !appStatus ||
-    appStatus.includes('รออนุมัติ') ||
-    appStatus.includes('รอพิจารณา') ||
-    appStatus.includes('รอ')
-  ) {
-    return 'รออนุมัติ';
-  }
-  return appStatus.replace(/^\d+\.\s*/, '').trim();
-}
 
 function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string {
   const statusCol = columns?.find(
@@ -562,14 +482,21 @@ export default function App() {
   );
 
   useEffect(() => {
-    void fetchEmployeeAccounts()
-      .then((accounts) => {
-        if (accounts.length > 0) {
-          setEmployeeAccounts(accounts);
-        }
-      })
-      .catch(() => {});
-  }, [activeTab.gid]);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void fetchEmployeeAccounts()
+        .then((accounts) => {
+          if (!cancelled && accounts.length > 0) {
+            setEmployeeAccounts(accounts);
+          }
+        })
+        .catch(() => {});
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
 function playNotificationChime() {
   try {
@@ -799,7 +726,8 @@ function playNotificationChime() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const isFetchingRef = useRef<boolean>(false);
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repairBgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(
     async (options?: { silent?: boolean; remoteSearch?: string }) => {
@@ -808,6 +736,10 @@ function playNotificationChime() {
       }
       if (syncTimeoutRef.current) {
         clearTimeout(syncTimeoutRef.current);
+      }
+      if (repairBgTimerRef.current) {
+        clearTimeout(repairBgTimerRef.current);
+        repairBgTimerRef.current = null;
       }
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -853,7 +785,7 @@ function playNotificationChime() {
           // Stagger background repair fetch by 800ms so active tab renders first without concurrent load
           const repairTabConfig = SHEET_TABS.find((t) => t.gid === '944294225');
           if (repairTabConfig) {
-            setTimeout(() => {
+            repairBgTimerRef.current = setTimeout(() => {
               if (controller.signal.aborted) return;
               void fetchSheetTabData(repairTabConfig, {
                 limit: 250,
@@ -931,6 +863,10 @@ function playNotificationChime() {
     void loadData({ silent: false }).catch(() => {});
     return () => {
       abortControllerRef.current?.abort('unmount');
+      if (repairBgTimerRef.current) {
+        clearTimeout(repairBgTimerRef.current);
+        repairBgTimerRef.current = null;
+      }
     };
   }, [loadData]);
 
@@ -1711,8 +1647,22 @@ function playNotificationChime() {
     };
   }, [sheetData, filteredRows, quickFilterColumn, quickFilterOptions]);
 
-  // Real-time KPI summary cards specifically for הבันทึกการย้ายงาน (gid: 606634465)
+  // Real-time KPI summary cards specifically for บันทึกการย้ายงาน (gid: 606634465)
   const jobTransferKpiMetrics = useMemo(() => {
+    if (activeTab.gid !== '606634465') {
+      return {
+        totalWeightTons: 0,
+        totalWeightKg: 0,
+        vehicleCount: 0,
+        driverCount: 0,
+        totalRounds: 0,
+        totalRecords: 0,
+        completedCount: 0,
+        inTransitCount: 0,
+        completionRate: '0',
+      };
+    }
+
     const weightColId =
       sheetData?.columns.find((c) => c.label.trim() === 'น้ำหนัก')?.id ?? 'G';
     const vehColId =
@@ -1732,19 +1682,12 @@ function playNotificationChime() {
 
     filteredRows.forEach((r) => {
       // 1. น้ำหนัก (กก. -> ตัน)
-      const rawWeight = r.rawValues[weightColId] ?? r.rawValues['G'];
-      if (typeof rawWeight === 'number' && !Number.isNaN(rawWeight)) {
-        totalWeightKg += rawWeight;
-      } else {
-        const strWeight = (r.values[weightColId] ?? r.values['G'] ?? '').replace(
-          /,/g,
-          ''
-        );
-        const parsedWeight = parseFloat(strWeight);
-        if (!Number.isNaN(parsedWeight)) {
-          totalWeightKg += parsedWeight;
-        }
-      }
+      totalWeightKg += parseNumericCell(
+        r.rawValues[weightColId] ??
+          r.rawValues['G'] ??
+          r.values[weightColId] ??
+          r.values['G']
+      );
 
       // 2. จำนวนรถที่ย้าย (คัน) และ พนักงานขับรถ
       const rawVeh = (r.values[vehColId] ?? r.values['D'] ?? '').trim();
@@ -1757,18 +1700,8 @@ function playNotificationChime() {
       }
 
       // 3. รอบการย้ายรวม (เที่ยว)
-      const rawRound = r.rawValues['V'];
-      if (typeof rawRound === 'number' && !Number.isNaN(rawRound) && rawRound > 0) {
-        totalRounds += rawRound;
-      } else {
-        const strRound = (r.values['V'] ?? '').replace(/,/g, '').trim();
-        const parsedRound = parseFloat(strRound);
-        if (!Number.isNaN(parsedRound) && parsedRound > 0) {
-          totalRounds += parsedRound;
-        } else {
-          totalRounds += 1;
-        }
-      }
+      const parsedRound = parseNumericCell(r.rawValues['V'] ?? r.values['V']);
+      totalRounds += parsedRound > 0 ? parsedRound : 1;
 
       // 4. สถานะการส่งสินค้า
       const statusText = (
@@ -1791,10 +1724,11 @@ function playNotificationChime() {
     });
 
     const totalWeightTons = totalWeightKg / 1000;
-    const completionRate =
-      filteredRows.length > 0
-        ? Math.round((completedCount / filteredRows.length) * 100)
-        : 0;
+    // Never round an incomplete (<100%) ratio up to 100% (e.g. 995/1000 -> "99.5")
+    const completionRate = formatCompletionPercentage(
+      completedCount,
+      filteredRows.length
+    );
 
     return {
       totalWeightTons,
@@ -1807,11 +1741,26 @@ function playNotificationChime() {
       inTransitCount,
       completionRate,
     };
-  }, [sheetData, filteredRows]);
+  }, [activeTab.gid, sheetData, filteredRows]);
 
   // Real-time KPI summary cards specifically for บันทึกงานซ่อม (gid: 944294225)
   const repairKpiMetrics = useMemo(() => {
-    let totalRequests = filteredRows.length;
+    if (activeTab.gid !== '944294225') {
+      return {
+        totalRequests: 0,
+        pendingApprovalCount: 0,
+        pendingOnlyCount: 0,
+        repliedCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0,
+        totalPartsCost: 0,
+        totalLaborCost: 0,
+        totalRepairCost: 0,
+        approvedRate: '0',
+      };
+    }
+
+    const totalRequests = filteredRows.length;
     let pendingApprovalCount = 0;
     let pendingOnlyCount = 0;
     let repliedCount = 0;
@@ -1846,32 +1795,23 @@ function playNotificationChime() {
         rejectedCount += 1;
       }
 
-      // Calculate spare parts cost
-      const partsRaw = r.rawValues[sparePartsColId] ?? r.rawValues['N'];
-      if (typeof partsRaw === 'number' && !Number.isNaN(partsRaw)) {
-        totalPartsCost += partsRaw;
-      } else {
-        const parsed = parseFloat(
-          String(r.values[sparePartsColId] ?? r.values['N'] ?? '').replace(/,/g, '')
-        );
-        if (!Number.isNaN(parsed)) totalPartsCost += parsed;
-      }
+      totalPartsCost += parseNumericCell(
+        r.rawValues[sparePartsColId] ??
+          r.rawValues['N'] ??
+          r.values[sparePartsColId] ??
+          r.values['N']
+      );
 
-      // Calculate labor cost
-      const laborRaw = r.rawValues[laborColId] ?? r.rawValues['O'];
-      if (typeof laborRaw === 'number' && !Number.isNaN(laborRaw)) {
-        totalLaborCost += laborRaw;
-      } else {
-        const parsed = parseFloat(
-          String(r.values[laborColId] ?? r.values['O'] ?? '').replace(/,/g, '')
-        );
-        if (!Number.isNaN(parsed)) totalLaborCost += parsed;
-      }
+      totalLaborCost += parseNumericCell(
+        r.rawValues[laborColId] ??
+          r.rawValues['O'] ??
+          r.values[laborColId] ??
+          r.values['O']
+      );
     });
 
     const totalRepairCost = totalPartsCost + totalLaborCost;
-    const approvedRate =
-      totalRequests > 0 ? Math.round((approvedCount / totalRequests) * 100) : 0;
+    const approvedRate = formatCompletionPercentage(approvedCount, totalRequests);
 
     return {
       totalRequests,
@@ -1885,10 +1825,37 @@ function playNotificationChime() {
       totalRepairCost,
       approvedRate,
     };
-  }, [sheetData, filteredRows]);
+  }, [activeTab.gid, sheetData, filteredRows]);
 
   // Real-time KPI summary cards specifically for บันทึกน้ำมัน (gid: 1733355146)
   const fuelKpiMetrics = useMemo(() => {
+    if (activeTab.gid !== '1733355146') {
+      return {
+        latestDieselBalance: 0,
+        latestBenzeneBalance: 0,
+        totalInLiters: 0,
+        totalInCount: 0,
+        inDieselLiters: 0,
+        inDieselCount: 0,
+        inBenzeneLiters: 0,
+        inBenzeneCount: 0,
+        inOtherLiters: 0,
+        inOtherCount: 0,
+        totalOutLiters: 0,
+        totalOutCount: 0,
+        dispenseCount: 0,
+        outDieselLiters: 0,
+        outDieselCount: 0,
+        outBenzeneLiters: 0,
+        outBenzeneCount: 0,
+        outOtherLiters: 0,
+        outOtherCount: 0,
+        totalOutValue: 0,
+        latestPrice: 0,
+        avgPrice: 0,
+      };
+    }
+
     let latestDieselBalance = 0;
     let latestBenzeneBalance = 0;
 
@@ -1898,8 +1865,6 @@ function playNotificationChime() {
     let inDieselCount = 0;
     let inBenzeneLiters = 0;
     let inBenzeneCount = 0;
-    let inOtherLiters = 0;
-    let inOtherCount = 0;
 
     let totalOutLiters = 0;
     let totalOutCount = 0;
@@ -1907,8 +1872,6 @@ function playNotificationChime() {
     let outDieselCount = 0;
     let outBenzeneLiters = 0;
     let outBenzeneCount = 0;
-    let outOtherLiters = 0;
-    let outOtherCount = 0;
 
     let totalOutValue = 0;
     let latestPrice = 0;
@@ -1925,16 +1888,6 @@ function playNotificationChime() {
       sheetData?.columns.find((c) => c.label.includes('จ่ายออก'))?.id ?? 'G';
     const amountColId =
       sheetData?.columns.find((c) => c.label.includes('มูลค่า'))?.id ?? 'H';
-    const balDieselColId =
-      sheetData?.columns.find(
-        (c) => c.label.includes('คงเหลือ') && c.label.includes('ดีเซล')
-      )?.id ?? 'M';
-    const balBenzeneColId =
-      sheetData?.columns.find(
-        (c) =>
-          c.label.includes('คงเหลือ') &&
-          (c.label.includes('เบนซิน') || c.label.includes('เบนซิล'))
-      )?.id ?? 'N';
 
     filteredRows.forEach((r) => {
       const fType = (r.values[fuelTypeColId] ?? r.values['D'] ?? '').trim();
@@ -1944,17 +1897,11 @@ function playNotificationChime() {
         fType.includes('ซิล') ||
         fType.toLowerCase().includes('benzene') ||
         fType.includes('โซฮอล์');
-      const isDiesel = !isBenzene;
 
-      // Liters In
-      const inRaw = r.rawValues[inColId] ?? r.rawValues['E'];
-      let inVal =
-        typeof inRaw === 'number'
-          ? inRaw
-          : parseFloat(
-              String(r.values[inColId] ?? r.values['E'] ?? '').replace(/,/g, '')
-            );
-      if (!Number.isNaN(inVal) && inVal > 0) {
+      const inVal = parseNumericCell(
+        r.rawValues[inColId] ?? r.rawValues['E'] ?? r.values[inColId] ?? r.values['E']
+      );
+      if (inVal > 0) {
         totalInLiters += inVal;
         totalInCount += 1;
         if (isBenzene) {
@@ -1966,15 +1913,10 @@ function playNotificationChime() {
         }
       }
 
-      // Liters Out
-      const outRaw = r.rawValues[outColId] ?? r.rawValues['G'];
-      let outVal =
-        typeof outRaw === 'number'
-          ? outRaw
-          : parseFloat(
-              String(r.values[outColId] ?? r.values['G'] ?? '').replace(/,/g, '')
-            );
-      if (!Number.isNaN(outVal) && outVal > 0) {
+      const outVal = parseNumericCell(
+        r.rawValues[outColId] ?? r.rawValues['G'] ?? r.values[outColId] ?? r.values['G']
+      );
+      if (outVal > 0) {
         totalOutLiters += outVal;
         totalOutCount += 1;
         if (isBenzene) {
@@ -1986,27 +1928,23 @@ function playNotificationChime() {
         }
       }
 
-      // Value / Amount
-      const amountRaw = r.rawValues[amountColId] ?? r.rawValues['H'];
-      let amountVal =
-        typeof amountRaw === 'number'
-          ? amountRaw
-          : parseFloat(
-              String(r.values[amountColId] ?? r.values['H'] ?? '').replace(/,/g, '')
-            );
-      if (!Number.isNaN(amountVal) && amountVal > 0) {
+      const amountVal = parseNumericCell(
+        r.rawValues[amountColId] ??
+          r.rawValues['H'] ??
+          r.values[amountColId] ??
+          r.values['H']
+      );
+      if (amountVal > 0) {
         totalOutValue += amountVal;
       }
 
-      // Price
-      const priceRaw = r.rawValues[priceColId] ?? r.rawValues['F'];
-      let priceVal =
-        typeof priceRaw === 'number'
-          ? priceRaw
-          : parseFloat(
-              String(r.values[priceColId] ?? r.values['F'] ?? '').replace(/,/g, '')
-            );
-      if (!Number.isNaN(priceVal) && priceVal > 0) {
+      const priceVal = parseNumericCell(
+        r.rawValues[priceColId] ??
+          r.rawValues['F'] ??
+          r.values[priceColId] ??
+          r.values['F']
+      );
+      if (priceVal > 0) {
         if (!latestPrice) latestPrice = priceVal;
         priceSumForAvg += priceVal;
         priceCountForAvg += 1;
@@ -2047,7 +1985,7 @@ function playNotificationChime() {
       latestPrice,
       avgPrice,
     };
-  }, [sheetData, filteredRows]);
+  }, [activeTab.gid, sheetData, filteredRows]);
 
   // Real-time KPI summary metrics specifically for ฐานข้อมูลรถ (gid: 378250263)
   const vehicleKpiMetrics = useMemo(() => {
@@ -2895,6 +2833,7 @@ function playNotificationChime() {
                   ? (sheetData?.rows ?? repairTabRows)
                   : repairTabRows
               }
+              pmRows={activeTab.gid === '1032541508' ? sheetData?.rows : undefined}
               onOpenApprovalModal={() => setIsApprovalModalOpen(true)}
               onSelectRepairRow={(row) => setSelectedRow(row)}
               onSwitchToPmTab={() => {
@@ -4468,7 +4407,7 @@ function playNotificationChime() {
                         </tr>
                         {!isCollapsed && (
                           <>
-                            {paginatedGroupRows.map((row) => {
+                            {paginatedGroupRows.map((row, rowIdx) => {
                               const rowKey = getJobTransferRowKey(row);
                               const isRowInTransit =
                                 activeTab.gid === '606634465' &&
@@ -4480,7 +4419,7 @@ function playNotificationChime() {
 
                               return (
                               <tr
-                                key={row.rowNumber}
+                                key={`${rowKey}-${row.rowNumber}-${rowIdx}`}
                                 onClick={() => setSelectedRow(row)}
                                 className={`cursor-pointer transition-colors ${
                                   isRowSelected
@@ -4955,9 +4894,9 @@ function playNotificationChime() {
                     );
                   })
                 ) : (
-                  paginatedRows.map((row) => (
+                  paginatedRows.map((row, rowIdx) => (
                     <tr
-                      key={row.rowNumber}
+                      key={`${row.rowNumber}-${row.values['Q'] || row.values['A'] || rowIdx}`}
                       onClick={() => setSelectedRow(row)}
                       className="cursor-pointer transition-colors hover:bg-slate-50"
                     >

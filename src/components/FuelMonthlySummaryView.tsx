@@ -21,6 +21,11 @@ import {
   RefreshCw,
   Eye,
 } from 'lucide-react';
+import {
+  THAI_MONTHS_FULL,
+  parseThaiDateToGregorianYmd,
+  parseNumericCell,
+} from '../utils/sheetMetrics';
 
 interface FuelMonthlySummaryViewProps {
   rows: SheetRow[];
@@ -101,89 +106,13 @@ interface MonthAggregate {
   days: DayAggregate[];
 }
 
-const THAI_MONTHS_FULL = [
-  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
-  'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
-  'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
-];
-
 const THAI_WEEKDAYS = [
   'วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ',
   'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์',
 ];
 
-function parseDateInfo(rawDate: string, rawMonthCol?: string): {
-  ymd: string;
-  year: number;
-  month: number;
-  day: number;
-} | null {
-  if (!rawDate) return null;
-  const trimmed = String(rawDate).trim();
-  if (!trimmed) return null;
-
-  // 1. Check Date(YYYY, M, D) gviz format
-  const dateObjMatch = trimmed.match(/^Date\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (dateObjMatch) {
-    let year = parseInt(dateObjMatch[1], 10);
-    const month = parseInt(dateObjMatch[2], 10) + 1; // 0-indexed month
-    const day = parseInt(dateObjMatch[3], 10);
-    if (year < 100) year += 2000;
-    const yStr = String(year);
-    const mStr = String(month).padStart(2, '0');
-    const dStr = String(day).padStart(2, '0');
-    return { ymd: `${yStr}-${mStr}-${dStr}`, year, month, day };
-  }
-
-  // 2. Check DD/MM/YYYY or D/M/YYYY
-  const slashMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (slashMatch) {
-    let p1 = parseInt(slashMatch[1], 10);
-    let p2 = parseInt(slashMatch[2], 10);
-    let year = parseInt(slashMatch[3], 10);
-    if (year < 100) year += 2000;
-
-    let day = p1;
-    let month = p2;
-
-    // Check if Month Col has hint e.g. "3.มีนาคม"
-    if (rawMonthCol && p1 <= 12 && p2 <= 31 && p1 !== p2) {
-      for (let m = 1; m <= 12; m++) {
-        if (
-          rawMonthCol.includes(`${m}.`) ||
-          rawMonthCol.includes(THAI_MONTHS_FULL[m - 1])
-        ) {
-          if (p1 === m) {
-            month = p1;
-            day = p2;
-          } else if (p2 === m) {
-            month = p2;
-            day = p1;
-          }
-          break;
-        }
-      }
-    }
-
-    const yStr = String(year);
-    const mStr = String(month).padStart(2, '0');
-    const dStr = String(day).padStart(2, '0');
-    return { ymd: `${yStr}-${mStr}-${dStr}`, year, month, day };
-  }
-
-  // 3. Check ISO YYYY-MM-DD
-  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-  if (isoMatch) {
-    const year = parseInt(isoMatch[1], 10);
-    const month = parseInt(isoMatch[2], 10);
-    const day = parseInt(isoMatch[3], 10);
-    const yStr = String(year);
-    const mStr = String(month).padStart(2, '0');
-    const dStr = String(day).padStart(2, '0');
-    return { ymd: `${yStr}-${mStr}-${dStr}`, year, month, day };
-  }
-
-  return null;
+function parseDateInfo(rawDate: string, rawMonthCol?: string) {
+  return parseThaiDateToGregorianYmd(rawDate, rawMonthCol);
 }
 
 function formatNumber(num: number, decimals = 0): string {
@@ -238,28 +167,10 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
           fuelType.includes('โซฮอล์');
         const isDiesel = !isBenzene;
 
-        const rawIn = r.rawValues['E'] ?? r.values['E'] ?? '';
-        const rawOut = r.rawValues['G'] ?? r.values['G'] ?? '';
-        const inLiters =
-          typeof rawIn === 'number'
-            ? rawIn
-            : parseFloat(String(rawIn).replace(/,/g, '').trim()) || 0;
-        const outLiters =
-          typeof rawOut === 'number'
-            ? rawOut
-            : parseFloat(String(rawOut).replace(/,/g, '').trim()) || 0;
-
-        const rawPrice = r.rawValues['F'] ?? r.values['F'] ?? '';
-        const pricePerLiter =
-          typeof rawPrice === 'number'
-            ? rawPrice
-            : parseFloat(String(rawPrice).replace(/,/g, '').trim()) || 0;
-
-        const rawAmount = r.rawValues['H'] ?? r.values['H'] ?? '';
-        let totalAmount =
-          typeof rawAmount === 'number'
-            ? rawAmount
-            : parseFloat(String(rawAmount).replace(/,/g, '').trim()) || 0;
+        const inLiters = parseNumericCell(r.rawValues['E'] ?? r.values['E']);
+        const outLiters = parseNumericCell(r.rawValues['G'] ?? r.values['G']);
+        const pricePerLiter = parseNumericCell(r.rawValues['F'] ?? r.values['F']);
+        let totalAmount = parseNumericCell(r.rawValues['H'] ?? r.values['H']);
         if (totalAmount === 0 && pricePerLiter > 0) {
           totalAmount = (inLiters > 0 ? inLiters : outLiters) * pricePerLiter;
         }

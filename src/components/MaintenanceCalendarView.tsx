@@ -18,10 +18,20 @@ import {
 } from 'lucide-react';
 import { SheetRow, SheetColumn } from '../types';
 import { fetchSheetTabData, SHEET_TABS } from '../services/googleSheets';
+import {
+  THAI_MONTHS_FULL as THAI_MONTHS,
+  THAI_MONTHS_SHORT,
+  parseNumericCell as parseNumeric,
+  parseThaiDateToGregorianYmd,
+  getRowApprovalStatus as getRowApprovalStatusLabel,
+  evaluateVehiclePmList,
+  VehiclePmStatusItem,
+} from '../utils/sheetMetrics';
 
 interface MaintenanceCalendarViewProps {
   repairRows: SheetRow[];
   repairColumns?: SheetColumn[];
+  pmRows?: SheetRow[];
   onSelectRepairRow: (row: SheetRow) => void;
   onOpenApprovalModal: () => void;
   onOpenRepairModal?: () => void;
@@ -52,113 +62,7 @@ interface CalendarEventItem {
   sourceRow: SheetRow;
 }
 
-interface VehiclePmStatusItem {
-  row: SheetRow;
-  seq: string;
-  dateStr: string;
-  vehicleNo: string;
-  prevMileage: number;
-  currMileage: number;
-  diffMileage: number;
-  pmCycle: string;
-  statusText: string;
-  isDue: boolean;
-  latestPmRepairRow?: SheetRow;
-  latestPmRepairDate?: string;
-  latestPmRepairStatus?: string;
-}
-
-const THAI_MONTHS = [
-  'มกราคม',
-  'กุมภาพันธ์',
-  'มีนาคม',
-  'เมษายน',
-  'พฤษภาคม',
-  'มิถุนายน',
-  'กรกฎาคม',
-  'สิงหาคม',
-  'กันยายน',
-  'ตุลาคม',
-  'พฤศจิกายน',
-  'ธันวาคม',
-];
-
-const THAI_MONTHS_SHORT = [
-  'ม.ค.',
-  'ก.พ.',
-  'มี.ค.',
-  'เม.ย.',
-  'พ.ค.',
-  'มิ.ย.',
-  'ก.ค.',
-  'ส.ค.',
-  'ก.ย.',
-  'ต.ค.',
-  'พ.ย.',
-  'ธ.ค.',
-];
-
 const WEEKDAY_HEADERS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
-
-function parseNumeric(val: string | number | undefined): number {
-  if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
-  if (!val) return 0;
-  const cleaned = String(val).replace(/,/g, '').trim();
-  const num = parseFloat(cleaned);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function parseThaiDateToGregorianYmd(rawDate: string): {
-  ymd: string;
-  year: number;
-  month: number;
-  day: number;
-} | null {
-  if (!rawDate) return null;
-  const trimmed = String(rawDate).trim();
-  if (!trimmed) return null;
-
-  // 1. Check Date(YYYY, M, D)
-  const gvizMatch = trimmed.match(/^Date\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (gvizMatch) {
-    let year = parseInt(gvizMatch[1], 10);
-    const month = parseInt(gvizMatch[2], 10) + 1;
-    const day = parseInt(gvizMatch[3], 10);
-    if (year > 2400) year -= 543;
-    if (year < 100) year += 2000;
-    const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return { ymd, year, month, day };
-  }
-
-  // 2. Check D/M/YYYY or DD-MM-YYYY
-  const slashMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (slashMatch) {
-    const day = parseInt(slashMatch[1], 10);
-    const month = parseInt(slashMatch[2], 10);
-    let year = parseInt(slashMatch[3], 10);
-    if (year < 100) year += 2000;
-    if (year > 2400) year -= 543;
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      return { ymd, year, month, day };
-    }
-  }
-
-  // 3. Check ISO YYYY-MM-DD
-  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-  if (isoMatch) {
-    let year = parseInt(isoMatch[1], 10);
-    if (year > 2400) year -= 543;
-    const month = parseInt(isoMatch[2], 10);
-    const day = parseInt(isoMatch[3], 10);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      return { ymd, year, month, day };
-    }
-  }
-
-  return null;
-}
 
 function formatYmdThaiShort(ymd: string): string {
   const [y, m, d] = ymd.split('-').map(Number);
@@ -166,44 +70,9 @@ function formatYmdThaiShort(ymd: string): string {
   return `${d} ${THAI_MONTHS_SHORT[m - 1]} ${y + 543}`;
 }
 
-function getRowApprovalStatusLabel(row: SheetRow): string {
-  const appStatus = (row.values['AI'] ?? '').trim();
-  const repairStatus = (row.values['P'] ?? '').trim();
-  const inspector = (row.values['AB'] ?? '').trim();
-  const replyText = (row.values['AM'] ?? '').trim();
-
-  if (
-    appStatus === 'รอตรวจสอบ' ||
-    repairStatus === 'รอตรวจสอบ' ||
-    (!appStatus && !inspector)
-  ) {
-    return 'รอตรวจสอบ';
-  }
-  if (appStatus.includes('ไม่อนุมัติ')) return 'ไม่อนุมัติ';
-  if (
-    appStatus.includes('อนุมัติ') &&
-    !appStatus.includes('ไม่อนุมัติ') &&
-    !appStatus.includes('รอ') &&
-    !appStatus.includes('ตอบกลับ')
-  ) {
-    return 'อนุมัติ';
-  }
-  const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
-  if (isReplied) return 'ตอบกลับข้อมูลเพิ่มเติมแล้ว';
-  if (appStatus.includes('ขอข้อมูล')) return 'ขอข้อมูลเพิ่มเติม';
-  if (
-    !appStatus ||
-    appStatus.includes('รออนุมัติ') ||
-    appStatus.includes('รอพิจารณา') ||
-    appStatus.includes('รอ')
-  ) {
-    return 'รออนุมัติ';
-  }
-  return appStatus.replace(/^\d+\.\s*/, '').trim();
-}
-
 export const MaintenanceCalendarView: React.FC<MaintenanceCalendarViewProps> = ({
   repairRows,
+  pmRows,
   onSelectRepairRow,
   onOpenApprovalModal,
   onOpenRepairModal,
@@ -226,7 +95,7 @@ export const MaintenanceCalendarView: React.FC<MaintenanceCalendarViewProps> = (
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Load กำหนดรอบPM (gid: 1032541508)
-  const [pmSheetRows, setPmSheetRows] = useState<SheetRow[]>([]);
+  const [pmSheetRows, setPmSheetRows] = useState<SheetRow[]>(() => pmRows ?? []);
   const [isLoadingPmSheet, setIsLoadingPmSheet] = useState<boolean>(false);
 
   const loadPmSheet = () => {
@@ -244,79 +113,36 @@ export const MaintenanceCalendarView: React.FC<MaintenanceCalendarViewProps> = (
   };
 
   useEffect(() => {
-    loadPmSheet();
-  }, []);
-
-  // Parse PM Sheet rows and cross-reference with latest PM repair record per vehicle
-  const vehiclePmList = useMemo<VehiclePmStatusItem[]>(() => {
-    // Map latest PM repair per vehicle from repairRows
-    const latestPmByVehicle = new Map<
-      string,
-      { row: SheetRow; dateStr: string; status: string; ymd: string }
-    >();
-
-    repairRows.forEach((r) => {
-      const veh = (r.values['D'] ?? '').trim().toUpperCase();
-      const rType = (r.values['E'] ?? '').trim();
-      const symptom = (r.values['F'] ?? '').trim();
-      const isPm =
-        rType.includes('PM') ||
-        rType.includes('ซ่อมเชิงป้องกัน') ||
-        symptom.toUpperCase().includes('PM');
-      if (!veh || !isPm) return;
-
-      const rawDate = (r.values['B'] ?? '').trim();
-      const parsed = parseThaiDateToGregorianYmd(rawDate);
-      const ymd = parsed?.ymd ?? '';
-      const existing = latestPmByVehicle.get(veh);
-      if (!existing || ymd >= existing.ymd) {
-        latestPmByVehicle.set(veh, {
-          row: r,
-          dateStr: rawDate,
-          status: (r.values['P'] ?? '').trim() || getRowApprovalStatusLabel(r),
-          ymd,
-        });
-      }
-    });
-
-    return pmSheetRows
-      .map((r): VehiclePmStatusItem | null => {
-        const vehicleNo = (r.values['C'] ?? '').trim();
-        if (!vehicleNo) return null;
-        const seq = (r.values['A'] ?? String(r.rowNumber)).trim();
-        const dateStr = (r.values['B'] ?? '').trim();
-        const prevMileage = parseNumeric(r.rawValues['D'] ?? r.values['D']);
-        const currMileage = parseNumeric(r.rawValues['E'] ?? r.values['E']);
-        const diffMileage = currMileage > prevMileage ? currMileage - prevMileage : 0;
-        const pmCycle = (r.values['F'] ?? '').trim();
-        const statusText = (r.values['G'] ?? '').trim();
-        const isDue =
-          statusText.includes('ครบรอบ') && !statusText.includes('ยังไม่ครบ');
-
-        const latestPm = latestPmByVehicle.get(vehicleNo.toUpperCase());
-
-        return {
-          row: r,
-          seq,
-          dateStr,
-          vehicleNo,
-          prevMileage,
-          currMileage,
-          diffMileage,
-          pmCycle,
-          statusText: statusText || (isDue ? '⚠️ ครบรอบPM' : '❌ ยังไม่ครบกำหนดPM'),
-          isDue,
-          latestPmRepairRow: latestPm?.row,
-          latestPmRepairDate: latestPm?.dateStr,
-          latestPmRepairStatus: latestPm?.status,
-        };
+    if (pmRows && pmRows.length > 0) {
+      setPmSheetRows(pmRows);
+      return;
+    }
+    let cancelled = false;
+    const pmTab = SHEET_TABS.find((t) => t.gid === '1032541508');
+    if (!pmTab) return;
+    setIsLoadingPmSheet(true);
+    void fetchSheetTabData(pmTab, { limit: 300 })
+      .then((res) => {
+        if (!cancelled) {
+          setPmSheetRows(res.rows);
+        }
       })
-      .filter((item): item is VehiclePmStatusItem => item !== null)
-      .sort((a, b) => {
-        if (a.isDue !== b.isDue) return a.isDue ? -1 : 1;
-        return b.diffMileage - a.diffMileage;
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingPmSheet(false);
+        }
       });
-  }, [pmSheetRows, repairRows]);
+    return () => {
+      cancelled = true;
+    };
+  }, [pmRows]);
+
+  // Parse PM Sheet rows and cross-reference with latest PM repair record per vehicle using centralized memoized helper
+  const vehiclePmList = useMemo<VehiclePmStatusItem[]>(
+    () => evaluateVehiclePmList(pmSheetRows, repairRows),
+    [pmSheetRows, repairRows]
+  );
 
   // Build Calendar Events from:
   // 1) Unapproved Repair Jobs in `บันทึกงานซ่อม`

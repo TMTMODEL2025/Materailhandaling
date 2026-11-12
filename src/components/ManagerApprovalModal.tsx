@@ -18,6 +18,10 @@ import { approveRepairRecord, updateRepairAdditionalDetails, isPhotoValue } from
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
+import {
+  filterPendingApprovalRows,
+  parseNumericCell,
+} from '../utils/sheetMetrics';
 
 const PHOTO_COLS = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
 
@@ -47,11 +51,7 @@ function getCurrentTimeString(): string {
 }
 
 function parseCostAmount(val: string | undefined): number {
-  if (!val) return 0;
-  const cleaned = String(val).replace(/,/g, '').replace(/[^\d.-]/g, '').trim();
-  if (!cleaned) return 0;
-  const num = parseFloat(cleaned);
-  return Number.isFinite(num) ? num : 0;
+  return parseNumericCell(val);
 }
 
 function formatCostBaht(amount: number, rawVal?: string): string {
@@ -142,37 +142,16 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
     }
   }, [isOpen]);
 
-  // Filter rows based on approval status (exclude 'รอตรวจสอบ' until passed 'ผู้ตรวจสอบ')
-  const pendingRows = useMemo(() => {
-    return rows.filter((r) => {
-      const status = (r.values['AI'] ?? '').trim();
-      const repairStatus = (r.values['P'] ?? '').trim();
-      const inspector = (r.values['AB'] ?? '').trim();
-      const replyText = (r.values['AM'] ?? '').trim();
-      if (
-        status === 'รอตรวจสอบ' ||
-        repairStatus === 'รอตรวจสอบ' ||
-        (!status && !inspector)
-      ) {
-        return false;
-      }
-      return (
-        status === '2.⚠️รออนุมัติ' ||
-        status === 'รออนุมัติ' ||
-        status === '2.⚠️รอพิจารณา' ||
-        status === 'รอพิจารณา' ||
-        status === '4.⚠️ขอข้อมูลเพิ่มเติม' ||
-        status === '4.💬 ตอบกลับข้อมูลเพิ่มเติมแล้ว' ||
-        status.includes('ขอข้อมูล') ||
-        status.includes('ตอบกลับ') ||
-        status.includes('รอ') ||
-        Boolean(replyText) ||
-        !status
-      );
-    });
-  }, [rows]);
+  // Filter rows based on centralized approval status (exclude 'รอตรวจสอบ' until passed 'ผู้ตรวจสอบ')
+  const pendingRows = useMemo(
+    () => filterPendingApprovalRows(rows),
+    [rows]
+  );
 
-  const displayedRows = filterMode === 'PENDING' ? pendingRows : rows;
+  const displayedRows = useMemo(
+    () => (filterMode === 'PENDING' ? pendingRows : rows),
+    [filterMode, pendingRows, rows]
+  );
 
   if (!isOpen) return null;
 

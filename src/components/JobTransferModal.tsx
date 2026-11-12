@@ -23,6 +23,7 @@ import {
   KNOWN_DRIVER_EMP_CODES,
   appendTrailerRecord,
 } from '../services/googleSheets';
+import { isValidTrailerCode } from '../utils/sheetMetrics';
 import { showSuccessToast } from '../utils/swal';
 
 const CUSTOM_LOCATIONS_KEY = 'job_transfer_custom_locations';
@@ -317,26 +318,37 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const trailerTab = SHEET_TABS.find((t) => t.gid === '1295975917');
     if (!vehicleTab) return;
     let cancelled = false;
-    void Promise.all([
-      fetchSheetTabData(vehicleTab, { limit: 250 }),
-      fetchAccountEmployeeMap(),
-      trailerTab ? fetchSheetTabData(trailerTab, { limit: 250 }) : Promise.resolve(null),
-    ])
-      .then(([vehRes, empMap, trlRes]) => {
-        if (cancelled) return;
-        if (vehRes.rows.length > 0) {
-          setVehicleDbRows(vehRes.rows);
-        }
-        if (empMap.size > 0) {
-          setAccountEmpMap(new Map(empMap));
-        }
-        if (trlRes && trlRes.rows.length > 0) {
-          setTrailerDbRows(trlRes.rows);
-        }
-      })
-      .catch(() => {});
+    const timer = setTimeout(
+      () => {
+        void (async () => {
+          try {
+            const [vehRes, empMap] = await Promise.all([
+              fetchSheetTabData(vehicleTab, { limit: 250 }),
+              fetchAccountEmployeeMap(),
+            ]);
+            if (cancelled) return;
+            if (vehRes.rows.length > 0) {
+              setVehicleDbRows(vehRes.rows);
+            }
+            if (empMap.size > 0) {
+              setAccountEmpMap(new Map(empMap));
+            }
+            if (trailerTab) {
+              const trlRes = await fetchSheetTabData(trailerTab, { limit: 250 });
+              if (!cancelled && trlRes.rows.length > 0) {
+                setTrailerDbRows(trlRes.rows);
+              }
+            }
+          } catch {
+            // ignore background fetch error
+          }
+        })();
+      },
+      inlineMode ? 600 : 0
+    );
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [isOpen, inlineMode]);
 
@@ -351,15 +363,21 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const transferTab = SHEET_TABS.find((t) => t.gid === '606634465');
     if (!transferTab) return;
     let cancelled = false;
-    void fetchSheetTabData(transferTab, { limit: 250 })
-      .then((res) => {
-        if (!cancelled && res.rows.length > 0) {
-          setFallbackRows(res.rows);
-        }
-      })
-      .catch(() => {});
+    const timer = setTimeout(
+      () => {
+        void fetchSheetTabData(transferTab, { limit: 250 })
+          .then((res) => {
+            if (!cancelled && res.rows.length > 0) {
+              setFallbackRows(res.rows);
+            }
+          })
+          .catch(() => {});
+      },
+      inlineMode ? 1800 : 100
+    );
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [isOpen, inlineMode, existingRows.length, fallbackRows.length]);
 
@@ -425,7 +443,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
       const emp = row.values['B']?.trim() ?? '';
       const drv = row.values['C']?.trim() ?? '';
       const veh = row.values['D']?.trim() ?? '';
-      const trl = row.values['E']?.trim() ?? '';
+      const rawTrl = row.values['E']?.trim() ?? '';
+      const trl = isValidTrailerCode(rawTrl) && !/^FL/i.test(veh) ? rawTrl : '';
       const prd = row.values['F']?.trim() ?? '';
       const org = row.values['H']?.trim() ?? '';
       const dst = row.values['J']?.trim() ?? '';
@@ -501,7 +520,8 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
           historyNameToEmp.get(normDrv) ||
           KNOWN_DRIVER_EMP_CODES[normDrv] ||
           '';
-        const resolvedTrailer = historyNameToTrailer.get(normDrv) || '';
+        const resolvedTrailer =
+          /^FL/i.test(veh) ? '' : historyNameToTrailer.get(normDrv) || '';
 
         // Prevent collisions: ensure every unique driver/vehicle row from ฐานข้อมูลรถ gets its own option key
         let empKey = candidateEmpCode;
@@ -711,11 +731,20 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const match = referenceOptions.employeeMap.get(trimmed);
     if (match) {
       if (match.name) setDriverName(match.name);
-      if (match.vehicle) setVehicleNumber(match.vehicle);
-      if (match.trailer && !trailerNumber) setTrailerNumber(match.trailer);
+      if (match.vehicle) {
+        setVehicleNumber(match.vehicle);
+        if (/^FL/i.test(match.vehicle)) {
+          setTrailerNumber('');
+        } else if (match.trailer && isValidTrailerCode(match.trailer) && !trailerNumber) {
+          setTrailerNumber(match.trailer);
+        }
+      } else if (match.trailer && isValidTrailerCode(match.trailer) && !trailerNumber) {
+        setTrailerNumber(match.trailer);
+      }
     } else if (!trimmed) {
       setDriverName('');
       setVehicleNumber('');
+      setTrailerNumber('');
     }
   };
 
@@ -724,8 +753,15 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
     const match = referenceOptions.driverMap.get(val.trim());
     if (match) {
       if (match.empId) setEmployeeId(match.empId);
-      if (match.vehicle && !vehicleNumber) setVehicleNumber(match.vehicle);
-      if (match.trailer && !trailerNumber) setTrailerNumber(match.trailer);
+      if (match.vehicle && !vehicleNumber) {
+        setVehicleNumber(match.vehicle);
+      }
+      const nextVeh = match.vehicle || vehicleNumber;
+      if (/^FL/i.test(nextVeh)) {
+        setTrailerNumber('');
+      } else if (match.trailer && isValidTrailerCode(match.trailer) && !trailerNumber) {
+        setTrailerNumber(match.trailer);
+      }
     }
   };
 
@@ -857,21 +893,29 @@ export const JobTransferModal: React.FC<JobTransferModalProps> = ({
 
       for (let i = 0; i < pendingStartItems.length; i++) {
         const item = pendingStartItems[i];
+        const cleanTrailer =
+          /^FL/i.test(item.vehicleNumber) || !isValidTrailerCode(item.trailerNumber)
+            ? ''
+            : item.trailerNumber.trim();
+        const mergedNote =
+          !cleanTrailer && item.trailerNumber.trim() && !isValidTrailerCode(item.trailerNumber)
+            ? (item.note ? `${item.note} (${item.trailerNumber.trim()})` : item.trailerNumber.trim())
+            : item.note;
         const payload: JobTransferPayload = {
           date: item.date,
           employeeId: item.employeeId,
           driverName: item.driverName,
           vehicleNumber: item.vehicleNumber,
-          trailerNumber: item.trailerNumber,
+          trailerNumber: cleanTrailer,
           productType: item.productType,
           weight: item.weight,
           origin: item.origin,
           startTime: baseStartT,
           destination: item.destination,
-          endTime: baseStartT,
-          duration: '0:00:00',
+          endTime: '',
+          duration: '',
           status: 'อยู่ระว่างการส่ง',
-          note: item.note,
+          note: mergedNote,
           rounds: item.rounds,
         };
 

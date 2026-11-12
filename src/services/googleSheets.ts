@@ -16,6 +16,9 @@ import {
   SheetRow,
   SheetTabConfig,
 } from '../types';
+import { isValidTrailerCode } from '../utils/sheetMetrics';
+
+export type { SheetRow, SheetColumn, SheetDataResult, SheetTabConfig };
 
 export const GOOGLE_SHEET_ID = '1Dn72dYdEGz3GBvk3O5n1FN0RCKv5S1IvgLeA5M5RzWc';
 export const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
@@ -1317,39 +1320,12 @@ void (async () => {
     // ignore on static hosting
   }
 
-  // Also check cell D1 of จุดส่งสินค้า (gid: 1156877149) for auto-discovered Apps Script URL
-  try {
-    const gviz = await queryGviz('1156877149', 'select D limit 1');
-    const colLabel = gviz.table?.cols?.[0]?.label?.trim() ?? '';
-    const firstCell = String(gviz.table?.rows?.[0]?.c?.[0]?.v ?? '').trim();
-    const candidate = colLabel.startsWith('https://script.google.com/')
-      ? colLabel
-      : firstCell.startsWith('https://script.google.com/')
-        ? firstCell
-        : '';
-    if (candidate) {
-      const norm = normalizeAppsScriptUrl(candidate);
-      if (
-        !configuredAppsScriptUrl ||
-        configuredAppsScriptUrl.includes('/dev') ||
-        configuredAppsScriptUrl.includes(STALE_APPS_SCRIPT_ID) ||
-        configuredAppsScriptUrl === DEFAULT_APPS_SCRIPT_URL
-      ) {
-        configuredAppsScriptUrl = norm;
-        try {
-          localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, norm);
-        } catch {
-          // ignore
-        }
-      }
+  // Delay background mutation flush on startup so initial tab GViz queries don't hit 429 rate limits
+  setTimeout(() => {
+    if (configuredAppsScriptUrl || cachedAccessToken) {
+      void flushPendingMutationsToGoogleSheet();
     }
-  } catch {
-    // ignore
-  }
-
-  if (configuredAppsScriptUrl || cachedAccessToken) {
-    void flushPendingMutationsToGoogleSheet();
-  }
+  }, 3500);
 })();
 
 export async function connectAdminGoogleAccountOnce(): Promise<string> {
@@ -1489,7 +1465,26 @@ export const SHEET_TABS: SheetTabConfig[] = [
 
 const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
   '606634465': {
+    A: 'วันที่',
+    B: 'กะ',
+    C: 'ชื่อผู้ขับขี่',
+    D: 'เบอร์รถ',
+    E: 'เบอร์หาง',
+    F: 'จุดรับงาน',
+    G: 'จำนวน',
+    H: 'หน่วย',
+    I: 'เวลาเริ่ม',
+    J: 'จุดส่งงาน',
+    K: 'เวลาจบ',
+    L: 'เวลาที่ใช้',
+    M: 'สถานะ',
+    N: 'หมายเหตุ',
+    O: 'ประตู',
+    P: 'วันเวลาทำรายการ',
+    Q: 'รหัสรายการ',
     R: 'หมายเหตุ',
+    S: 'ภาพถ่ายที่ 1',
+    T: 'ภาพถ่ายที่ 2',
     U: 'น้ำหนักสุทธิ',
     V: 'จำนวนรอบ',
   },
@@ -1906,7 +1901,13 @@ function readLocalMutationsStore(): MutationsStore {
   }
 }
 
+let cachedMutationsStore: MutationsStore | null = null;
+let cachedMutationsAt = 0;
+let inFlightMutationsPromise: Promise<MutationsStore> | null = null;
+
 function writeLocalMutationsStore(store: MutationsStore): void {
+  cachedMutationsStore = null;
+  cachedMutationsAt = 0;
   try {
     localStorage.setItem(LOCAL_MUTATIONS_STORAGE_KEY, JSON.stringify(store));
   } catch {
@@ -1939,21 +1940,29 @@ async function fetchCombinedMutationsStore(
   if (isBackendApiAvailable === false) {
     return local;
   }
-  try {
-    const res = await Promise.race([
-      fetch('/api/mutations', {
-        headers: { Accept: 'application/json' },
-      }).catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
-    ]);
-    if (!res || !res.ok) {
-      return local;
-    }
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      return local;
-    }
-    const remote = (await res.json()) as Partial<MutationsStore>;
+  if (cachedMutationsStore && Date.now() - cachedMutationsAt < 2500) {
+    return cachedMutationsStore;
+  }
+  if (inFlightMutationsPromise) {
+    return inFlightMutationsPromise;
+  }
+
+  inFlightMutationsPromise = (async () => {
+    try {
+      const res = await Promise.race([
+        fetch('/api/mutations', {
+          headers: { Accept: 'application/json' },
+        }).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+      ]);
+      if (!res || !res.ok) {
+        return local;
+      }
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return local;
+      }
+      const remote = (await res.json()) as Partial<MutationsStore>;
       const mergedJobMap = new Map<string, StoredJobTransfer>();
       (remote.jobTransfers ?? []).forEach((jt) => mergedJobMap.set(jt.recordId, jt));
       local.jobTransfers.forEach((jt) => {
@@ -2147,7 +2156,7 @@ async function fetchCombinedMutationsStore(
         }
       });
 
-      return {
+      const combined: MutationsStore = {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
         deliveryPointEdits: Array.from(mergedDpEditMap.values()),
@@ -2164,10 +2173,18 @@ async function fetchCombinedMutationsStore(
         fuelRecords: Array.from(mergedFuelMap.values()),
         tireStockEdits: Array.from(mergedTireMap.values()),
       };
-  } catch {
-    // ignore fetch error on static hosting
-  }
-  return local;
+      cachedMutationsStore = combined;
+      cachedMutationsAt = Date.now();
+      return combined;
+    } catch {
+      // ignore fetch error on static hosting
+    }
+    return local;
+  })().finally(() => {
+    inFlightMutationsPromise = null;
+  });
+
+  return inFlightMutationsPromise;
 }
 
 async function postJobTransferRowToGoogleSheetsApi(
@@ -3208,6 +3225,40 @@ export async function fetchSheetTabData(
       } else if (currentStatus) {
         values['M'] = currentStatus;
       }
+
+      // Fix misplaced note in เบอร์หาง (E) vs หมายเหตุ (N):
+      // If Col E has non-trailer text (like "ยางรั่ว", "อื่นๆ"), move it to Col N and clear Col E
+      const rawTrailer = (values['E'] ?? '').trim();
+      if (rawTrailer && !isValidTrailerCode(rawTrailer)) {
+        const existingNote = (values['N'] ?? '').trim();
+        if (!existingNote || existingNote === '-') {
+          values['N'] = rawTrailer;
+          rawValues['N'] = rawTrailer;
+        } else if (!existingNote.includes(rawTrailer)) {
+          values['N'] = `${existingNote} (${rawTrailer})`;
+          rawValues['N'] = values['N'];
+        }
+        values['E'] = '';
+        rawValues['E'] = null;
+      }
+
+      // Fix เวลาจบ (K) duplicating เวลาเริ่ม (I) when status (M) is still in-transit
+      const normalizedStatus = (values['M'] ?? '').trim();
+      const isCompleted = normalizedStatus === 'ส่งสินค้าเรียบร้อยแล้ว';
+      const startT = (values['I'] ?? '').trim();
+      const endT = (values['K'] ?? '').trim();
+      const durT = (values['L'] ?? '').trim();
+      if (
+        !isCompleted ||
+        (endT && startT && endT === startT && (!durT || durT === '0:00:00' || durT === '00:00:00'))
+      ) {
+        if (!isCompleted) {
+          values['K'] = '';
+          rawValues['K'] = null;
+          values['L'] = '';
+          rawValues['L'] = null;
+        }
+      }
     }
 
     if (hasNonEmptyValue) {
@@ -3266,11 +3317,20 @@ export async function fetchSheetTabData(
 
       if (existingRow) {
         matchedSheetRowNumbers.add(existingRow.rowNumber);
-        if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
-        if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
+        const jtStatus = (jt.values['M'] ?? existingRow.values['M'] ?? '').trim();
+        const jtIsCompleted = jtStatus === 'ส่งสินค้าเรียบร้อยแล้ว';
         if (jt.values['M']) {
-          existingRow.values['M'] = jt.values['M'].trim();
-          existingRow.rawValues['M'] = jt.values['M'].trim();
+          existingRow.values['M'] = jtStatus;
+          existingRow.rawValues['M'] = jtStatus;
+        }
+        if (jtIsCompleted) {
+          if (jt.values['K']) existingRow.values['K'] = jt.values['K'];
+          if (jt.values['L']) existingRow.values['L'] = jt.values['L'];
+        } else {
+          existingRow.values['K'] = '';
+          existingRow.rawValues['K'] = null;
+          existingRow.values['L'] = '';
+          existingRow.rawValues['L'] = null;
         }
         if (jt.values['N']) existingRow.values['N'] = jt.values['N'];
         if (jtId && !existingRow.values['Q']) {
@@ -3294,9 +3354,22 @@ export async function fetchSheetTabData(
         usedRowNumbers.add(rowNumber);
         if (jtId) existingRecordIds.add(jtId);
 
+        const jtStatus = (jt.values['M'] ?? '').trim() || 'อยู่ระว่างการส่ง';
+        const jtIsCompleted = jtStatus === 'ส่งสินค้าเรียบร้อยแล้ว';
+        const rawTrailer = (jt.values['E'] ?? '').trim();
+        const validTrailer = isValidTrailerCode(rawTrailer) ? rawTrailer : '';
+        const mergedNote =
+          !validTrailer && rawTrailer
+            ? (jt.values['N'] ?? '').trim() || rawTrailer
+            : (jt.values['N'] ?? '').trim();
+
         const normalizedValues: Record<string, string> = {
           ...jt.values,
-          M: (jt.values['M'] ?? '').trim() || 'อยู่ระว่างการส่ง',
+          E: validTrailer,
+          K: jtIsCompleted ? (jt.values['K'] ?? '') : '',
+          L: jtIsCompleted ? (jt.values['L'] ?? '') : '',
+          M: jtStatus,
+          N: mergedNote,
           Q: jtId || (jt.values['Q'] ?? ''),
         };
         const newSheetRow: SheetRow = {
@@ -5518,6 +5591,7 @@ export interface EmployeeAccountRecord {
 
 let cachedEmployeeAccounts: EmployeeAccountRecord[] | null = null;
 let cachedEmployeeAccountsAt = 0;
+let inFlightEmployeeAccountsPromise: Promise<EmployeeAccountRecord[]> | null = null;
 
 export async function fetchEmployeeAccounts(options?: {
   forceRefresh?: boolean;
@@ -5532,12 +5606,17 @@ export async function fetchEmployeeAccounts(options?: {
     return cachedEmployeeAccounts;
   }
 
-  // Stagger requests to prevent 429 rate limit
-  const accountCsvRes = await fetch(
-    `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
-  )
-    .then(async (r) => (r.ok ? { status: 'fulfilled' as const, value: await r.text() } : { status: 'rejected' as const, reason: 'failed' }))
-    .catch((err) => ({ status: 'rejected' as const, reason: err }));
+  if (!options?.forceRefresh && inFlightEmployeeAccountsPromise) {
+    return inFlightEmployeeAccountsPromise;
+  }
+
+  const runFetch = async (): Promise<EmployeeAccountRecord[]> => {
+    // Stagger requests to prevent 429 rate limit
+    const accountCsvRes = await fetch(
+      `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Account`
+    )
+      .then(async (r) => (r.ok ? { status: 'fulfilled' as const, value: await r.text() } : { status: 'rejected' as const, reason: 'failed' }))
+      .catch((err) => ({ status: 'rejected' as const, reason: err }));
 
   await new Promise((r) => setTimeout(r, 300));
 
@@ -5688,6 +5767,12 @@ export async function fetchEmployeeAccounts(options?: {
   }
 
   return records;
+  };
+
+  inFlightEmployeeAccountsPromise = runFetch().finally(() => {
+    inFlightEmployeeAccountsPromise = null;
+  });
+  return inFlightEmployeeAccountsPromise;
 }
 
 export interface VehicleDriverOption {
