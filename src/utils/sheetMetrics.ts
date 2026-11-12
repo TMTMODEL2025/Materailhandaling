@@ -31,6 +31,17 @@ export const THAI_MONTHS_SHORT = [
 ];
 
 /**
+ * Returns current date formatted in Thai BE format (DD/MM/YYYY)
+ */
+export function getCurrentThaiDateString(): string {
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear() + 543;
+  return `${day}/${month}/${year}`;
+}
+
+/**
  * Formats a completion or approval percentage without rounding incomplete (<100%)
  * ratios up to 100%. For example, 995/1000 returns "99.5", never "100".
  */

@@ -445,12 +445,7 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
     setExpandedMonths(next);
   };
 
-  // Auto-expand the first/latest month on initial load
-  React.useEffect(() => {
-    if (monthlyData.length > 0 && Object.keys(expandedMonths).length === 0) {
-      setExpandedMonths({ [monthlyData[0].monthKey]: true });
-    }
-  }, [monthlyData]);
+  // Default initial state: all months collapsed by default
 
   return (
     <div className="space-y-2.5 sm:space-y-4">
@@ -622,14 +617,6 @@ export const FuelMonthlySummaryView: React.FC<FuelMonthlySummaryViewProps> = ({
               <span>รีเฟรช</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onOpenFuelModal}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap"
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span>+ บันทึกรับเข้า-เบิกออกน้ำมัน</span>
-          </button>
         </div>
       </div>
 

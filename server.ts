@@ -176,6 +176,18 @@ interface StoredTireStockEdit {
   syncedToSheet?: boolean;
 }
 
+interface StoredPmScheduleEdit {
+  rowNumber: number;
+  date: string;
+  vehicleNumber: string;
+  prevMileage: string;
+  currMileage: string;
+  pmCycle: string;
+  pmStatus: string;
+  updatedAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -192,6 +204,7 @@ interface MutationsStore {
   repairFinancialEdits: StoredRepairFinancialEdit[];
   fuelRecords: StoredFuelRecord[];
   tireStockEdits: StoredTireStockEdit[];
+  pmScheduleEdits: StoredPmScheduleEdit[];
   googleAccessToken?: string;
   googleTokenExpiresAt?: number;
   googleScriptUrl?: string;
@@ -252,6 +265,7 @@ function readStore(): MutationsStore {
           : [],
         fuelRecords: Array.isArray(parsed.fuelRecords) ? parsed.fuelRecords : [],
         tireStockEdits: Array.isArray(parsed.tireStockEdits) ? parsed.tireStockEdits : [],
+        pmScheduleEdits: Array.isArray(parsed.pmScheduleEdits) ? parsed.pmScheduleEdits : [],
         googleAccessToken:
           typeof parsed.googleAccessToken === 'string'
             ? parsed.googleAccessToken
@@ -299,6 +313,7 @@ function readStore(): MutationsStore {
     repairFinancialEdits: [],
     fuelRecords: [],
     tireStockEdits: [],
+    pmScheduleEdits: [],
     pushSubscriptions: [],
     notifiedRepairKeys: [],
   };
@@ -1630,6 +1645,55 @@ async function startServer() {
       store.tireStockEdits[existingIdx] = entry;
     } else {
       store.tireStockEdits.push(entry);
+    }
+
+    sheetProxyCache.clear();
+    writeStore(store);
+    res.json({ ok: true, edit: entry });
+  });
+
+  app.post('/api/mutations/pm-schedule', (req, res) => {
+    const store = readStore();
+    const {
+      rowNumber,
+      date,
+      vehicleNumber,
+      prevMileage,
+      currMileage,
+      pmCycle,
+      pmStatus,
+      syncedToSheet,
+    } = req.body ?? {};
+
+    const veh = String(vehicleNumber ?? '').trim();
+    const rn = typeof rowNumber === 'number' ? rowNumber : 0;
+
+    if (!store.pmScheduleEdits) {
+      store.pmScheduleEdits = [];
+    }
+
+    const existingIdx = store.pmScheduleEdits.findIndex(
+      (item) =>
+        (veh && item.vehicleNumber.trim().toUpperCase() === veh.toUpperCase()) ||
+        (rn > 0 && item.rowNumber === rn)
+    );
+
+    const entry: StoredPmScheduleEdit = {
+      rowNumber: rn,
+      date: String(date ?? '').trim(),
+      vehicleNumber: veh,
+      prevMileage: String(prevMileage ?? '0').trim(),
+      currMileage: String(currMileage ?? '0').trim(),
+      pmCycle: String(pmCycle ?? '').trim(),
+      pmStatus: String(pmStatus ?? '').trim(),
+      updatedAt: new Date().toISOString(),
+      syncedToSheet: Boolean(syncedToSheet),
+    };
+
+    if (existingIdx >= 0) {
+      store.pmScheduleEdits[existingIdx] = entry;
+    } else {
+      store.pmScheduleEdits.push(entry);
     }
 
     sheetProxyCache.clear();

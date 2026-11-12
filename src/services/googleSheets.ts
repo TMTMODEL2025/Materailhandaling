@@ -649,6 +649,44 @@ function doPost(e) {
       return jsonResponse({ ok: true, rowNumber: targetRow });
     }
 
+    if (action === 'updatePmSchedule') {
+      var sheet = ss.getSheetByName('กำหนดรอบPM');
+      if (!sheet) {
+        return jsonResponse({ ok: false, error: 'Sheet กำหนดรอบPM not found' });
+      }
+      var vehicleNo = String(body.vehicleNumber || '').trim();
+      var targetRow = Number(body.rowNumber) || 0;
+      var lastRow = sheet.getLastRow();
+
+      if (vehicleNo && lastRow >= 2) {
+        var checkData = sheet.getRange(2, 3, lastRow - 1, 1).getValues();
+        for (var i = 0; i < checkData.length; i++) {
+          if (String(checkData[i][0] || '').trim().toUpperCase() === vehicleNo.toUpperCase()) {
+            targetRow = i + 2;
+            break;
+          }
+        }
+      }
+
+      var rowVals = [
+        body.date || '',
+        vehicleNo,
+        body.prevMileage !== undefined ? String(body.prevMileage) : '',
+        body.currMileage !== undefined ? String(body.currMileage) : '',
+        body.pmCycle || '',
+        body.pmStatus || ''
+      ];
+
+      if (targetRow >= 2 && targetRow <= lastRow) {
+        sheet.getRange(targetRow, 2, 1, 6).setValues([rowVals]);
+      } else {
+        var nextSeq = Math.max(1, lastRow);
+        sheet.appendRow([nextSeq, rowVals[0], rowVals[1], rowVals[2], rowVals[3], rowVals[4], rowVals[5]]);
+        targetRow = sheet.getLastRow();
+      }
+      return jsonResponse({ ok: true, rowNumber: targetRow });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err) });
@@ -1550,6 +1588,15 @@ const FALLBACK_COLUMN_LABELS: Record<string, Record<string, string>> = {
   '1295975917': {
     A: 'หมายเลขหางพ่วง',
   },
+  '1032541508': {
+    A: 'ลำดับ',
+    B: 'วันที่',
+    C: 'หมายเลขรถ',
+    D: 'เลขไมล์ครั้งก่อน',
+    E: 'เลขไมล์ปัจจุบัน',
+    F: 'รอบPM',
+    G: 'สถานะครบรอบPM',
+  },
 };
 
 const HIDDEN_COLUMN_IDS: Record<string, Set<string>> = {
@@ -1773,6 +1820,18 @@ export interface StoredTireStockEdit {
   syncedToSheet?: boolean;
 }
 
+export interface StoredPmScheduleEdit {
+  rowNumber: number;
+  date: string;
+  vehicleNumber: string;
+  prevMileage: string;
+  currMileage: string;
+  pmCycle: string;
+  pmStatus: string;
+  updatedAt: string;
+  syncedToSheet?: boolean;
+}
+
 interface MutationsStore {
   jobTransfers: StoredJobTransfer[];
   deliveryPoints: StoredDeliveryPoint[];
@@ -1789,6 +1848,7 @@ interface MutationsStore {
   repairFinancialEdits: StoredRepairFinancialEdit[];
   fuelRecords: StoredFuelRecord[];
   tireStockEdits: StoredTireStockEdit[];
+  pmScheduleEdits: StoredPmScheduleEdit[];
 }
 
 function createEmptyMutationsStore(): MutationsStore {
@@ -1808,6 +1868,7 @@ function createEmptyMutationsStore(): MutationsStore {
     repairFinancialEdits: [],
     fuelRecords: [],
     tireStockEdits: [],
+    pmScheduleEdits: [],
   };
 }
 
@@ -1894,6 +1955,9 @@ function readLocalMutationsStore(): MutationsStore {
         : [],
       tireStockEdits: Array.isArray(parsed.tireStockEdits)
         ? parsed.tireStockEdits
+        : [],
+      pmScheduleEdits: Array.isArray(parsed.pmScheduleEdits)
+        ? parsed.pmScheduleEdits
         : [],
     };
   } catch {
@@ -2156,6 +2220,18 @@ async function fetchCombinedMutationsStore(
         }
       });
 
+      const mergedPmMap = new Map<string, StoredPmScheduleEdit>();
+      (remote.pmScheduleEdits ?? []).forEach((p) =>
+        mergedPmMap.set(p.vehicleNumber.toUpperCase() || String(p.rowNumber), p)
+      );
+      (local.pmScheduleEdits ?? []).forEach((p) => {
+        const key = p.vehicleNumber.toUpperCase() || String(p.rowNumber);
+        const existing = mergedPmMap.get(key);
+        if (!existing || new Date(p.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+          mergedPmMap.set(key, p);
+        }
+      });
+
       const combined: MutationsStore = {
         jobTransfers: Array.from(mergedJobMap.values()),
         deliveryPoints: Array.from(mergedDpMap.values()),
@@ -2172,6 +2248,7 @@ async function fetchCombinedMutationsStore(
         repairFinancialEdits: Array.from(mergedFinancialEditMap.values()),
         fuelRecords: Array.from(mergedFuelMap.values()),
         tireStockEdits: Array.from(mergedTireMap.values()),
+        pmScheduleEdits: Array.from(mergedPmMap.values()),
       };
       cachedMutationsStore = combined;
       cachedMutationsAt = Date.now();
@@ -3616,6 +3693,55 @@ export async function fetchSheetTabData(
           target.values['O'] = tireEdit.updateNote;
           target.rawValues['O'] = tireEdit.updateNote;
         }
+      }
+    }
+  } else if (tab.gid === '1032541508') {
+    for (const pmEdit of mutationsStore.pmScheduleEdits ?? []) {
+      const target = parsedRows.find(
+        (r) =>
+          (pmEdit.vehicleNumber &&
+            (r.values['C'] ?? '').trim().toUpperCase() === pmEdit.vehicleNumber.trim().toUpperCase()) ||
+          (pmEdit.rowNumber > 0 && r.rowNumber === pmEdit.rowNumber)
+      );
+      if (target) {
+        if (pmEdit.date) {
+          target.values['B'] = pmEdit.date;
+          target.rawValues['B'] = pmEdit.date;
+        }
+        if (pmEdit.vehicleNumber) {
+          target.values['C'] = pmEdit.vehicleNumber;
+          target.rawValues['C'] = pmEdit.vehicleNumber;
+        }
+        target.values['D'] = pmEdit.prevMileage;
+        target.rawValues['D'] = pmEdit.prevMileage;
+        target.values['E'] = pmEdit.currMileage;
+        target.rawValues['E'] = pmEdit.currMileage;
+        target.values['F'] = pmEdit.pmCycle;
+        target.rawValues['F'] = pmEdit.pmCycle;
+        target.values['G'] = pmEdit.pmStatus;
+        target.rawValues['G'] = pmEdit.pmStatus;
+      } else if (!search && pmEdit.vehicleNumber) {
+        parsedRows.push({
+          rowNumber: pmEdit.rowNumber || (totalRowsInSheet + parsedRows.length + 1),
+          values: {
+            A: String(parsedRows.length + 1),
+            B: pmEdit.date,
+            C: pmEdit.vehicleNumber,
+            D: pmEdit.prevMileage,
+            E: pmEdit.currMileage,
+            F: pmEdit.pmCycle,
+            G: pmEdit.pmStatus,
+          },
+          rawValues: {
+            A: parsedRows.length + 1,
+            B: pmEdit.date,
+            C: pmEdit.vehicleNumber,
+            D: pmEdit.prevMileage,
+            E: pmEdit.currMileage,
+            F: pmEdit.pmCycle,
+            G: pmEdit.pmStatus,
+          },
+        });
       }
     }
   }
@@ -6241,5 +6367,138 @@ export async function fetchVehicleAndTrailerList(): Promise<string[]> {
   }
   return list;
 }
+
+export async function savePmScheduleRecord(params: {
+  rowNumber?: number;
+  date: string;
+  vehicleNumber: string;
+  prevMileage: string;
+  currMileage: string;
+  pmCycle: string;
+  pmStatus: string;
+}): Promise<{
+  syncedToSheet: boolean;
+  rowNumber: number;
+}> {
+  const veh = params.vehicleNumber.trim();
+  const rn = typeof params.rowNumber === 'number' ? params.rowNumber : 0;
+  let syncedToSheet = false;
+  let targetRowNumber = rn;
+
+  // 1. Update local store immediately
+  const localStore = readLocalMutationsStore();
+  if (!localStore.pmScheduleEdits) {
+    localStore.pmScheduleEdits = [];
+  }
+
+  const existingIdx = localStore.pmScheduleEdits.findIndex(
+    (item) =>
+      (veh && item.vehicleNumber.trim().toUpperCase() === veh.toUpperCase()) ||
+      (rn > 0 && item.rowNumber === rn)
+  );
+
+  const entry: StoredPmScheduleEdit = {
+    rowNumber: rn,
+    date: params.date.trim(),
+    vehicleNumber: veh,
+    prevMileage: params.prevMileage.trim(),
+    currMileage: params.currMileage.trim(),
+    pmCycle: params.pmCycle.trim(),
+    pmStatus: params.pmStatus.trim(),
+    updatedAt: new Date().toISOString(),
+    syncedToSheet: false,
+  };
+
+  if (existingIdx >= 0) {
+    localStore.pmScheduleEdits[existingIdx] = entry;
+  } else {
+    localStore.pmScheduleEdits.push(entry);
+  }
+  writeLocalMutationsStore(localStore);
+
+  // 2. Try Google Apps Script Webhook
+  const scriptUrl = getConfiguredAppsScriptUrl();
+  if (scriptUrl) {
+    try {
+      const res = await callAppsScriptWebhook(scriptUrl, {
+        action: 'updatePmSchedule',
+        rowNumber: rn,
+        date: params.date.trim(),
+        vehicleNumber: veh,
+        prevMileage: params.prevMileage.trim(),
+        currMileage: params.currMileage.trim(),
+        pmCycle: params.pmCycle.trim(),
+        pmStatus: params.pmStatus.trim(),
+      });
+      if (res.ok !== false) {
+        syncedToSheet = true;
+        if (typeof res.rowNumber === 'number' && res.rowNumber > 0) {
+          targetRowNumber = res.rowNumber;
+          entry.rowNumber = targetRowNumber;
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // 3. Try REST API if token is available
+  if (!syncedToSheet && targetRowNumber >= 2) {
+    const token = await getOrConnectAccessToken(false);
+    if (token) {
+      try {
+        const range = encodeURIComponent(`กำหนดรอบPM!B${targetRowNumber}:G${targetRowNumber}`);
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`;
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            values: [[
+              params.date.trim(),
+              veh,
+              params.prevMileage.trim(),
+              params.currMileage.trim(),
+              params.pmCycle.trim(),
+              params.pmStatus.trim(),
+            ]],
+          }),
+        });
+        if (res.ok) {
+          syncedToSheet = true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (syncedToSheet) {
+    entry.syncedToSheet = true;
+    writeLocalMutationsStore(localStore);
+  }
+
+  // 4. Sync to backend store & clear server sheetProxyCache
+  try {
+    await fetch('/api/mutations/pm-schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...entry,
+        syncedToSheet,
+      }),
+    });
+  } catch {
+    // ignore on static hosting
+  }
+
+  return {
+    syncedToSheet,
+    rowNumber: targetRowNumber,
+  };
+}
+
 
 

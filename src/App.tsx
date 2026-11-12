@@ -67,6 +67,7 @@ import {
   buildVehicleDriverOptions,
   matchVehicleDriverOption,
   assignVehicleDriver,
+  fetchVehicleAndTrailerList,
   EmployeeAccountRecord,
   VehicleDriverOption,
   KNOWN_DRIVER_EMP_CODES,
@@ -87,6 +88,7 @@ import { ManagerApprovalModal } from './components/ManagerApprovalModal';
 import { AttachRepairPhotosModal } from './components/AttachRepairPhotosModal';
 import { FuelRecordModal } from './components/FuelRecordModal';
 import { TireStockModal } from './components/TireStockModal';
+import { PmScheduleModal } from './components/PmScheduleModal';
 import { FuelCharts } from './components/FuelCharts';
 import { FuelMonthlySummaryView } from './components/FuelMonthlySummaryView';
 import { JobTransferStatsView } from './components/JobTransferStatsView';
@@ -450,12 +452,34 @@ export default function App() {
   const [tireModalInitType, setTireModalInitType] = useState<'IN' | 'OUT'>('OUT');
   const [tireModalInitCode, setTireModalInitCode] = useState<string>('');
   const [tireLowStockOnly, setTireLowStockOnly] = useState<boolean>(false);
+  const [isPmModalOpen, setIsPmModalOpen] = useState<boolean>(false);
+  const [selectedPmRow, setSelectedPmRow] = useState<SheetRow | null>(null);
+  const [vehicleList, setVehicleList] = useState<string[]>([]);
   const [isRepairModalOpen, setIsRepairModalOpen] = useState<boolean>(false);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
   const [attachingPhotoRow, setAttachingPhotoRow] = useState<SheetRow | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetchVehicleAndTrailerList()
+      .then((list) => {
+        if (list && list.length > 0) setVehicleList(list);
+      })
+      .catch(() => {});
+  }, []);
+
+  const pmVehicleOptions = useMemo(() => {
+    const set = new Set<string>(vehicleList);
+    (sheetData?.rows ?? []).forEach((r) => {
+      const v = (r.values['C'] ?? r.values['A'] ?? '').trim();
+      if (v && v !== '-' && v !== 'หมายเลขรถ' && v !== 'ทะเบียนรถ') {
+        set.add(v);
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'th'));
+  }, [vehicleList, sheetData?.rows]);
   // Accordion toggle state for sidebar menus with submenus (hidden by default)
   const [expandedSidebarSubmenus, setExpandedSidebarSubmenus] = useState<Record<string, boolean>>({});
 
@@ -3843,20 +3867,8 @@ function playNotificationChime() {
                   <span className="truncate sm:hidden">
                     ตารางทั้งหมด ({sheetData?.rows.length.toLocaleString('th-TH') ?? 0})
                   </span>
-                  <span className="hidden sm:inline">
-                    ตารางรายการทั้งหมด ({sheetData?.rows.length.toLocaleString('th-TH') ?? 0} แถว)
-                  </span>
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setIsFuelModalOpen(true)}
-                className="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap shrink-0"
-              >
-                <PlusCircle className="h-4 w-4" />
-                <span>+ บันทึกรับเข้า-เบิกออกน้ำมัน</span>
-              </button>
             </div>
           )}
 
@@ -3995,6 +4007,47 @@ function playNotificationChime() {
               </div>
             )}
 
+            {/* Toolbar on top of กำหนดรอบPM table */}
+            {activeTab.gid === '1032541508' && (
+              <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 sm:px-4">
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[200px]">
+                  <div className="relative flex-1 min-w-[180px] max-w-sm">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="ค้นหาหมายเลขรถ, รอบPM, สถานะ..."
+                      className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none shadow-2xs"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPmRow(null);
+                      setIsPmModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 px-3 py-1.5 text-xs font-bold text-amber-300 shadow-xs transition-colors whitespace-nowrap"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-amber-300" />
+                    <span>+ บันทึก/กำหนดรอบ PM</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
@@ -4084,6 +4137,11 @@ function playNotificationChime() {
                     {activeTab.gid === '1031154414' && (
                       <th className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap">
                         รับเข้า / เบิกออก
+                      </th>
+                    )}
+                    {activeTab.gid === '1032541508' && (
+                      <th className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap">
+                        จัดการ
                       </th>
                     )}
                   </tr>
@@ -4783,6 +4841,25 @@ function playNotificationChime() {
                                     >
                                       <Eye className="h-3.5 w-3.5" />
                                       <span>เพิ่มเติม</span>
+                                    </button>
+                                  </td>
+                                )}
+                                {activeTab.gid === '1032541508' && (
+                                  <td
+                                    className="px-2.5 py-2 sm:px-4 sm:py-2.5 text-center whitespace-nowrap"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedPmRow(row);
+                                        setIsPmModalOpen(true);
+                                      }}
+                                      title="แก้ไข/กำหนดรอบ PM คันนี้"
+                                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 px-2.5 py-1.5 text-xs font-bold transition-colors shadow-2xs"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                      <span>แก้ไข/บันทึก PM</span>
                                     </button>
                                   </td>
                                 )}
@@ -5918,6 +5995,26 @@ function playNotificationChime() {
             setSaveSuccessMsg(null);
           }, 5000);
         }}
+      />
+
+      {/* PM Schedule Modal */}
+      <PmScheduleModal
+        isOpen={isPmModalOpen}
+        onClose={() => {
+          setIsPmModalOpen(false);
+          setSelectedPmRow(null);
+        }}
+        onSuccess={() => {
+          setSaveSuccessMsg('บันทึกข้อมูลกำหนดรอบ PM เรียบร้อยแล้ว');
+          loadData({ silent: true });
+          setTimeout(() => loadData({ silent: true }), 5000);
+          setTimeout(() => {
+            setSaveSuccessMsg(null);
+          }, 5000);
+        }}
+        editingRow={selectedPmRow}
+        vehicleOptions={pmVehicleOptions}
+        allPmRows={activeTab.gid === '1032541508' ? sheetData?.rows ?? [] : []}
       />
 
       {/* No-Login Google Sheets Webhook Setup Modal */}
