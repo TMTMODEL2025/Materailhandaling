@@ -91,6 +91,7 @@ import { FuelCharts } from './components/FuelCharts';
 import { FuelMonthlySummaryView } from './components/FuelMonthlySummaryView';
 import { JobTransferStatsView } from './components/JobTransferStatsView';
 import { EmployeeManagementView } from './components/EmployeeManagementView';
+import { MaintenanceCalendarView } from './components/MaintenanceCalendarView';
 import { DrivePhotoImg } from './components/DrivePhotoImg';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { APP_VERSION } from './version';
@@ -489,6 +490,7 @@ export default function App() {
   const [sheetData, setSheetData] = useState<SheetDataResult | null>(null);
   const [showJobTransferStats, setShowJobTransferStats] = useState<boolean>(false);
   const [showEmployeeManagement, setShowEmployeeManagement] = useState<boolean>(false);
+  const [showMaintenanceCalendar, setShowMaintenanceCalendar] = useState<boolean>(false);
   const [repairTabRows, setRepairTabRows] = useState<SheetRow[]>([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -1011,10 +1013,12 @@ function playNotificationChime() {
   }, [refreshIntervalSec, loadData]);
 
   const handleSelectTab = (tab: SheetTabConfig) => {
+    const wasInCustomView = showEmployeeManagement || showMaintenanceCalendar || showJobTransferStats;
     setIsSidebarOpen(false);
     setShowJobTransferStats(false);
     setShowEmployeeManagement(false);
-    if (tab.gid === activeTab.gid) return;
+    setShowMaintenanceCalendar(false);
+    if (tab.gid === activeTab.gid && !wasInCustomView) return;
     setActiveTab(tab);
     setRowLimit(tab.defaultLimit ?? 250);
     setSearchQuery('');
@@ -2324,7 +2328,10 @@ function playNotificationChime() {
           </div>
           <nav className="space-y-2">
             {SHEET_TABS.map((tab) => {
-              const isSelected = activeTab.gid === tab.gid && !showEmployeeManagement;
+              const isSelected =
+                activeTab.gid === tab.gid &&
+                !showEmployeeManagement &&
+                !showMaintenanceCalendar;
               const isJobTransferTab = tab.gid === '606634465';
               const isRepairTab = tab.gid === '944294225';
               const isFuelTab = tab.gid === '1733355146';
@@ -2455,13 +2462,14 @@ function playNotificationChime() {
                           e.stopPropagation();
                           setIsSidebarOpen(false);
                           setShowEmployeeManagement(false);
+                          setShowMaintenanceCalendar(false);
                           if (activeTab.gid !== '606634465') {
                             handleSelectTab(tab);
                           }
                           setShowJobTransferStats(true);
                         }}
                         className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
-                          activeTab.gid === '606634465' && showJobTransferStats && !showEmployeeManagement
+                          activeTab.gid === '606634465' && showJobTransferStats && !showEmployeeManagement && !showMaintenanceCalendar
                             ? 'bg-amber-500/15 text-amber-900 font-bold border border-amber-300/60'
                             : 'text-slate-600 hover:bg-white hover:text-slate-900'
                         }`}
@@ -2556,6 +2564,59 @@ function playNotificationChime() {
                           />
                         </div>
                       </button>
+
+                      {/* เมนูหลัก: ปฏิทินกำหนดรอบ PM & งานซ่อมที่ยังไม่อนุมัติ */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSidebarOpen(false);
+                          setShowJobTransferStats(false);
+                          setShowEmployeeManagement(false);
+                          setShowMaintenanceCalendar(true);
+                        }}
+                        className={`mt-1.5 group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
+                          showMaintenanceCalendar
+                            ? 'bg-indigo-900 text-white shadow-sm ring-1 ring-indigo-900'
+                            : 'bg-white text-slate-800 border border-indigo-200/90 shadow-2xs hover:border-indigo-400 hover:bg-indigo-50/60 hover:text-slate-950'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                              showMaintenanceCalendar
+                                ? 'bg-white/15 text-indigo-200'
+                                : 'bg-indigo-100 text-indigo-700 group-hover:bg-indigo-200/80 group-hover:text-indigo-900'
+                            }`}
+                          >
+                            <Calendar className="h-4 w-4 shrink-0" />
+                          </span>
+                          <div className="min-w-0">
+                            <div
+                              className={`truncate text-sm font-bold leading-snug ${
+                                showMaintenanceCalendar ? 'text-white' : 'text-slate-900'
+                              }`}
+                            >
+                              ปฏิทิน PM & งานซ่อม
+                            </div>
+                            <div
+                              className={`truncate text-[11px] leading-tight ${
+                                showMaintenanceCalendar
+                                  ? 'text-indigo-200'
+                                  : 'text-indigo-700 font-medium'
+                              }`}
+                            >
+                              รอบ PM และงานซ่อมไม่อนุมัติ
+                            </div>
+                          </div>
+                        </div>
+                        <ChevronRight
+                          className={`h-4 w-4 shrink-0 transition-transform ${
+                            showMaintenanceCalendar
+                              ? 'text-indigo-200 translate-x-0.5'
+                              : 'text-slate-300 group-hover:text-indigo-600'
+                          }`}
+                        />
+                      </button>
                     </div>
                   )}
 
@@ -2619,6 +2680,7 @@ function playNotificationChime() {
                 onClick={() => {
                   setIsSidebarOpen(false);
                   setShowJobTransferStats(false);
+                  setShowMaintenanceCalendar(false);
                   setShowEmployeeManagement(true);
                 }}
                 className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
@@ -2688,11 +2750,13 @@ function playNotificationChime() {
               <Menu className="h-4 w-4" />
             </button>
             <h1 className="text-sm font-bold text-slate-900 sm:text-base truncate">
-              {showEmployeeManagement
-                ? 'จัดการพนักงาน (Account)'
-                : activeTab.gid === '606634465' && showJobTransferStats
-                  ? 'สถิติการขนย้าย'
-                  : activeTab.name}
+              {showMaintenanceCalendar
+                ? 'ปฏิทินกำหนดรอบ PM & งานซ่อมไม่อนุมัติ'
+                : showEmployeeManagement
+                  ? 'จัดการพนักงาน (Account)'
+                  : activeTab.gid === '606634465' && showJobTransferStats
+                    ? 'สถิติการขนย้าย'
+                    : activeTab.name}
             </h1>
           </div>
 
@@ -2824,15 +2888,38 @@ function playNotificationChime() {
         </header>
 
         <main className="w-full px-2.5 pt-2.5 pb-24 sm:px-6 sm:pt-4 sm:pb-24 lg:px-8 lg:pb-6">
-          {showEmployeeManagement && <EmployeeManagementView />}
-
-          {!showEmployeeManagement && activeTab.gid === '606634465' && showJobTransferStats && (
-            <JobTransferStatsView rows={sheetData?.rows ?? []} columns={sheetData?.columns} />
+          {showMaintenanceCalendar && (
+            <MaintenanceCalendarView
+              repairRows={
+                activeTab.gid === '944294225'
+                  ? (sheetData?.rows ?? repairTabRows)
+                  : repairTabRows
+              }
+              onOpenApprovalModal={() => setIsApprovalModalOpen(true)}
+              onSelectRepairRow={(row) => setSelectedRow(row)}
+              onSwitchToPmTab={() => {
+                const pmTab = SHEET_TABS.find((t) => t.gid === '1032541508');
+                if (pmTab) {
+                  handleSelectTab(pmTab);
+                }
+              }}
+            />
           )}
+
+          {showEmployeeManagement && !showMaintenanceCalendar && <EmployeeManagementView />}
+
+          {!showEmployeeManagement &&
+            !showMaintenanceCalendar &&
+            activeTab.gid === '606634465' &&
+            showJobTransferStats && (
+              <JobTransferStatsView rows={sheetData?.rows ?? []} columns={sheetData?.columns} />
+            )}
 
           <div
             className={
-              showEmployeeManagement || (activeTab.gid === '606634465' && showJobTransferStats)
+              showEmployeeManagement ||
+              showMaintenanceCalendar ||
+              (activeTab.gid === '606634465' && showJobTransferStats)
                 ? 'hidden'
                 : 'block'
             }
@@ -5256,11 +5343,12 @@ function playNotificationChime() {
           aria-label="แถบเมนูด้านล่างสำหรับมือถือ"
           className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/90 bg-white/95 backdrop-blur-md shadow-[0_-4px_16px_rgba(15,23,42,0.08)] pb-[env(safe-area-inset-bottom)] lg:hidden"
         >
-          <div className="mx-auto grid h-16 max-w-lg grid-cols-5 items-center px-1">
+          <div className="mx-auto grid h-16 max-w-lg grid-cols-6 items-center px-1">
             {/* 1. หน้าหลัก / แดชบอร์ด */}
             {(() => {
               const isHomeActive =
                 !isApprovalModalOpen &&
+                !showMaintenanceCalendar &&
                 activeTab.gid !== '944294225' &&
                 activeTab.gid !== '606634465' &&
                 activeTab.gid !== '1733355146';
@@ -5270,7 +5358,7 @@ function playNotificationChime() {
                   onClick={() => {
                     const dashboardTab =
                       SHEET_TABS.find((t) => t.gid === '378250263') ?? SHEET_TABS[0];
-                    if (activeTab.gid === dashboardTab.gid) {
+                    if (activeTab.gid === dashboardTab.gid && !showMaintenanceCalendar && !showEmployeeManagement) {
                       setIsSidebarOpen((prev) => !prev);
                     } else {
                       handleSelectTab(dashboardTab);
@@ -5284,7 +5372,7 @@ function playNotificationChime() {
                   }`}
                 >
                   <div
-                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                    className={`flex h-7 w-10 items-center justify-center rounded-full transition-all ${
                       isHomeActive
                         ? 'bg-blue-100 text-blue-700'
                         : 'group-hover:bg-slate-100'
@@ -5306,7 +5394,7 @@ function playNotificationChime() {
             {/* 2. บันทึกงานซ่อม */}
             {(() => {
               const isRepairActive =
-                !isApprovalModalOpen && activeTab.gid === '944294225';
+                !isApprovalModalOpen && !showMaintenanceCalendar && activeTab.gid === '944294225';
               return (
                 <button
                   type="button"
@@ -5324,7 +5412,7 @@ function playNotificationChime() {
                   }`}
                 >
                   <div
-                    className={`relative flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                    className={`relative flex h-7 w-10 items-center justify-center rounded-full transition-all ${
                       isRepairActive
                         ? 'bg-amber-100 text-amber-700'
                         : 'group-hover:bg-slate-100'
@@ -5344,16 +5432,50 @@ function playNotificationChime() {
                       isRepairActive ? 'font-bold text-amber-700' : 'font-medium'
                     }`}
                   >
-                    บันทึกงานซ่อม
+                    งานซ่อม
                   </span>
                 </button>
               );
             })()}
 
-            {/* 3. บันทึกการย้ายงาน */}
+            {/* 3. ปฏิทิน PM & งานซ่อม */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsSidebarOpen(false);
+                setShowJobTransferStats(false);
+                setShowEmployeeManagement(false);
+                setShowMaintenanceCalendar(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`group flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                showMaintenanceCalendar
+                  ? 'text-indigo-700'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <div
+                className={`flex h-7 w-10 items-center justify-center rounded-full transition-all ${
+                  showMaintenanceCalendar
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'group-hover:bg-slate-100'
+                }`}
+              >
+                <Calendar className="h-4 w-4" />
+              </div>
+              <span
+                className={`text-[10px] leading-tight tracking-tight ${
+                  showMaintenanceCalendar ? 'font-bold text-indigo-700' : 'font-medium'
+                }`}
+              >
+                ปฏิทิน PM
+              </span>
+            </button>
+
+            {/* 4. บันทึกการย้ายงาน */}
             {(() => {
               const isTransferActive =
-                !isApprovalModalOpen && activeTab.gid === '606634465';
+                !isApprovalModalOpen && !showMaintenanceCalendar && activeTab.gid === '606634465';
               return (
                 <button
                   type="button"
@@ -5371,7 +5493,7 @@ function playNotificationChime() {
                   }`}
                 >
                   <div
-                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                    className={`flex h-7 w-10 items-center justify-center rounded-full transition-all ${
                       isTransferActive
                         ? 'bg-indigo-100 text-indigo-700'
                         : 'group-hover:bg-slate-100'
@@ -5390,10 +5512,10 @@ function playNotificationChime() {
               );
             })()}
 
-            {/* 4. บันทึกน้ำมัน */}
+            {/* 5. บันทึกน้ำมัน */}
             {(() => {
               const isFuelActive =
-                !isApprovalModalOpen && activeTab.gid === '1733355146';
+                !isApprovalModalOpen && !showMaintenanceCalendar && activeTab.gid === '1733355146';
               return (
                 <button
                   type="button"
@@ -5411,7 +5533,7 @@ function playNotificationChime() {
                   }`}
                 >
                   <div
-                    className={`flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                    className={`flex h-7 w-10 items-center justify-center rounded-full transition-all ${
                       isFuelActive
                         ? 'bg-sky-100 text-sky-700'
                         : 'group-hover:bg-slate-100'
@@ -5424,13 +5546,13 @@ function playNotificationChime() {
                       isFuelActive ? 'font-bold text-sky-700' : 'font-medium'
                     }`}
                   >
-                    บันทึกน้ำมัน
+                    น้ำมัน
                   </span>
                 </button>
               );
             })()}
 
-            {/* 5. เมนูจัดการอนุมัติ (ผู้จัดการ) */}
+            {/* 6. เมนูจัดการอนุมัติ (ผู้จัดการ) */}
             <button
               type="button"
               onClick={() => {
@@ -5444,7 +5566,7 @@ function playNotificationChime() {
               }`}
             >
               <div
-                className={`relative flex h-7 w-12 items-center justify-center rounded-full transition-all ${
+                className={`relative flex h-7 w-10 items-center justify-center rounded-full transition-all ${
                   isApprovalModalOpen
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'group-hover:bg-slate-100'
