@@ -57,6 +57,7 @@ import {
   updateRepairReplyDetails,
   updateRepairFinancialDetails,
   inspectRepairRecord,
+  completeRepairRecord,
   isPhotoValue,
   flushPendingMutationsToGoogleSheet,
   completeJobTransferRecord,
@@ -104,6 +105,7 @@ import {
   getRowApprovalStatus,
   calculatePendingApprovalCount,
   parseNumericCell,
+  getCurrentThaiDateString,
 } from './utils/sheetMetrics';
 
 const PAGE_SIZE = 30;
@@ -136,9 +138,59 @@ const REPAIR_STATUS_GROUP_ORDER: string[] = [
   'รออนุมัติ',
   'ขอข้อมูลเพิ่มเติม',
   'ตอบกลับข้อมูลเพิ่มเติมแล้ว',
+  'รอคิวซ่อม',
   'อนุมัติ',
   'ไม่อนุมัติ',
 ];
+
+function renderRepairStatusBadge(statusText: string): React.ReactNode {
+  const s = statusText.trim();
+  if (s === 'รอคิวซ่อม' || s.includes('รอคิว') || s.includes('กำลังซ่อม')) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-300 bg-orange-100/90 px-2.5 py-0.5 text-xs font-bold text-orange-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
+        <span>{s || 'รอคิวซ่อม'}</span>
+      </span>
+    );
+  }
+  if (s.includes('ซ่อมเสร็จ')) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-2.5 py-0.5 text-xs font-bold text-emerald-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-emerald-600" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  if (s === 'รอตรวจสอบ') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-100/90 px-2.5 py-0.5 text-xs font-bold text-sky-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-sky-500" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  if (s === 'ตรวจสอบแล้ว') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/90 px-2.5 py-0.5 text-xs font-bold text-amber-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-amber-500" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  if (s.includes('ยกเลิก') || s.includes('ไม่อนุมัติ')) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-100/90 px-2.5 py-0.5 text-xs font-bold text-rose-900 whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-rose-500" />
+        <span>{s}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 whitespace-nowrap">
+      <span>{s || '-'}</span>
+    </span>
+  );
+}
 
 function getRowJobTransferStatus(row: SheetRow, columns?: SheetColumn[]): string {
   const statusCol = columns?.find(
@@ -327,6 +379,17 @@ function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHead
     };
   }
 
+  if (s === 'รอคิวซ่อม' || s.includes('รอคิว') || s.includes('กำลังซ่อม')) {
+    return {
+      rowClass:
+        'bg-gradient-to-r from-orange-600/20 via-orange-500/12 to-amber-500/5 hover:from-orange-600/30 hover:via-orange-500/20 border-y border-orange-300/90',
+      chevronClass: 'bg-orange-600 text-white shadow-xs',
+      titleClass: 'text-orange-950',
+      countClass: 'bg-orange-600 text-white shadow-2xs',
+      actionClass: 'text-orange-800',
+    };
+  }
+
   if (
     s === 'รออนุมัติ' ||
     s === 'รอพิจารณา' ||
@@ -340,8 +403,6 @@ function getStatusGroupHeaderTheme(status: string, gid: string): StatusGroupHead
     s.includes('กำลัง') ||
     s.includes('ส่ง') ||
     s.includes('กำลังดำเนินการ') ||
-    s.includes('กำลังซ่อม') ||
-    s.includes('รอคิว') ||
     s.includes('รออะไหล่')
   ) {
     return {
@@ -459,8 +520,20 @@ export default function App() {
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState<boolean>(false);
   const [attachingPhotoRow, setAttachingPhotoRow] = useState<SheetRow | null>(null);
+  const [completingRepairRow, setCompletingRepairRow] = useState<SheetRow | null>(null);
+  const [completingReporterName, setCompletingReporterName] = useState<string>('');
+  const [completingRepairDate, setCompletingRepairDate] = useState<string>(getCurrentThaiDateString());
+  const [completingRepairNote, setCompletingRepairNote] = useState<string>('');
+  const [isSubmittingCompleteRepair, setIsSubmittingCompleteRepair] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  const handleOpenCompleteRepairModal = useCallback((row: SheetRow) => {
+    setCompletingRepairRow(row);
+    setCompletingReporterName((row.values['AA'] ?? '').trim());
+    setCompletingRepairDate(getCurrentThaiDateString());
+    setCompletingRepairNote((row.values['AH'] ?? '').trim());
+  }, []);
 
   useEffect(() => {
     fetchVehicleAndTrailerList()
@@ -1375,6 +1448,10 @@ function playNotificationChime() {
 
           if (quickFilterValue === 'รอตรวจสอบ') {
             if (getRowApprovalStatus(row) !== 'รอตรวจสอบ' && statusVal !== 'รอตรวจสอบ' && appVal !== 'รอตรวจสอบ') return false;
+          } else if (quickFilterValue === 'รอคิวซ่อม') {
+            if (getRowApprovalStatus(row) !== 'รอคิวซ่อม' && statusVal !== 'รอคิวซ่อม') return false;
+          } else if (quickFilterValue === 'ซ่อมเสร็จแล้ว') {
+            if (!statusVal.includes('ซ่อมเสร็จ') && getRowApprovalStatus(row) !== 'อนุมัติ') return false;
           } else if (quickFilterValue === 'ผู้ใช้งานแจ้งซ่อม') {
             if (!reporterVal) return false;
           } else if (quickFilterValue === 'รอข้อมูลเพิ่มเติม') {
@@ -1813,7 +1890,7 @@ function playNotificationChime() {
         } else {
           pendingOnlyCount += 1;
         }
-      } else if (status === 'อนุมัติ') {
+      } else if (status === 'อนุมัติ' || status === 'รอคิวซ่อม') {
         approvedCount += 1;
       } else if (status === 'ไม่อนุมัติ') {
         rejectedCount += 1;
@@ -4418,6 +4495,13 @@ function playNotificationChime() {
                                     )}
                                   </div>
                                 )}
+
+                                {activeTab.gid === '944294225' && status === 'รอคิวซ่อม' && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-orange-300 bg-white/90 px-2.5 py-0.5 text-[11px] font-bold text-orange-900 shadow-2xs">
+                                    <Wrench className="h-3 w-3 text-orange-600" />
+                                    <span>ผู้จัดการอนุมัติแล้ว • รอผู้แจ้งซ่อมกดอัปเดตเมื่อซ่อมเสร็จแล้ว</span>
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-2">
@@ -4780,6 +4864,30 @@ function playNotificationChime() {
                                             </button>
                                           )}
                                         </div>
+                                      ) : activeTab.gid === '944294225' &&
+                                        (col.id === 'P' || col.label.trim() === 'สถานะ') ? (
+                                        <div className="inline-flex items-center gap-1.5">
+                                          {renderRepairStatusBadge(
+                                            val ||
+                                              (getRowApprovalStatus(row) === 'รอคิวซ่อม'
+                                                ? 'รอคิวซ่อม'
+                                                : '-')
+                                          )}
+                                          {getRowApprovalStatus(row) === 'รอคิวซ่อม' && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenCompleteRepairModal(row);
+                                              }}
+                                              className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-2xs transition-colors whitespace-nowrap"
+                                              title="สำหรับผู้แจ้งซ่อม: กดอัปเดตเมื่อซ่อมเสร็จแล้ว"
+                                            >
+                                              <CheckCircle2 className="h-3 w-3" />
+                                              <span>ซ่อมเสร็จแล้ว</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       ) : activeTab.gid === '378250263' &&
                                         (col.id === 'I' ||
                                           col.label.trim() === 'ชื่อพนักงานประจำรถ') ? (
@@ -4805,6 +4913,17 @@ function playNotificationChime() {
                                         >
                                           <CheckCircle2 className="h-3.5 w-3.5" />
                                           <span>ผู้ตรวจสอบ</span>
+                                        </button>
+                                      )}
+                                      {getRowApprovalStatus(row) === 'รอคิวซ่อม' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenCompleteRepairModal(row)}
+                                          title="สำหรับผู้แจ้งซ่อม: อัปเดตเมื่อซ่อมเสร็จแล้ว"
+                                          className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs whitespace-nowrap"
+                                        >
+                                          <CheckCircle2 className="h-3.5 w-3.5" />
+                                          <span>แจ้งซ่อมเสร็จแล้ว</span>
                                         </button>
                                       )}
                                       <button
@@ -5231,6 +5350,30 @@ function playNotificationChime() {
                               renderJobTransferStatusBadge(
                                 getRowJobTransferStatus(row, sheetData?.columns)
                               )
+                            ) : activeTab.gid === '944294225' &&
+                              (col.id === 'P' || col.label.trim() === 'สถานะ') ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                {renderRepairStatusBadge(
+                                  val ||
+                                    (getRowApprovalStatus(row) === 'รอคิวซ่อม'
+                                      ? 'รอคิวซ่อม'
+                                      : '-')
+                                )}
+                                {getRowApprovalStatus(row) === 'รอคิวซ่อม' && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenCompleteRepairModal(row);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-2xs transition-colors whitespace-nowrap"
+                                    title="สำหรับผู้แจ้งซ่อม: กดอัปเดตเมื่อซ่อมเสร็จแล้ว"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    <span>ซ่อมเสร็จแล้ว</span>
+                                  </button>
+                                )}
+                              </div>
                             ) : activeTab.gid === '378250263' &&
                               (col.id === 'I' ||
                                 col.label.trim() === 'ชื่อพนักงานประจำรถ') ? (
@@ -5256,6 +5399,17 @@ function playNotificationChime() {
                               >
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                                 <span>ผู้ตรวจสอบ</span>
+                              </button>
+                            )}
+                            {getRowApprovalStatus(row) === 'รอคิวซ่อม' && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCompleteRepairModal(row)}
+                                title="สำหรับผู้แจ้งซ่อม: อัปเดตเมื่อซ่อมเสร็จแล้ว"
+                                className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs whitespace-nowrap"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>แจ้งซ่อมเสร็จแล้ว</span>
                               </button>
                             )}
                             <button
@@ -5726,7 +5880,233 @@ function playNotificationChime() {
           setTimeout(() => loadData({ silent: true }), 6000);
           setTimeout(() => setSaveSuccessMsg(null), 5000);
         }}
+        onCompleteRepair={async (row, params) => {
+          const sequenceNo = (row.values['A'] ?? '').trim();
+          const repairRequestNo = (row.values['G'] ?? '').trim();
+          const startTs = parseThaiDateToTimestamp((row.values['B'] ?? '').trim());
+          const endTs = parseThaiDateToTimestamp(params.completedDate);
+          let repairDuration = '1';
+          if (startTs !== null && endTs !== null && endTs >= startTs) {
+            const diffDays = Math.round((endTs - startTs) / (1000 * 60 * 60 * 24));
+            repairDuration = String(Math.max(1, diffDays));
+          }
+
+          await completeRepairRecord({
+            rowNumber: row.rowNumber,
+            sequenceNo,
+            repairRequestNo,
+            reporterName: params.reporterName,
+            completedDate: params.completedDate,
+            repairDuration,
+            note: params.note,
+            approvalStatus: (row.values['AI'] ?? '').trim() || '3.✔️อนุมัติ',
+            approverName: (row.values['AE'] ?? '').trim(),
+            approvalDate: (row.values['AF'] ?? '').trim(),
+            approvalTime: (row.values['AG'] ?? '').trim(),
+          });
+
+          row.values['P'] = 'ซ่อมเสร็จแล้ว';
+          row.values['J'] = params.completedDate;
+          row.values['K'] = repairDuration;
+          if (params.reporterName) row.values['AA'] = params.reporterName;
+          if (params.note) row.values['AH'] = params.note;
+          setSaveSuccessMsg(
+            `ผู้แจ้งซ่อมอัปเดตสถานะงานซ่อม #${sequenceNo || row.rowNumber} เป็น "ซ่อมเสร็จแล้ว" เรียบร้อย`
+          );
+          loadData({ silent: true });
+          setTimeout(() => loadData({ silent: true }), 6000);
+          setTimeout(() => setSaveSuccessMsg(null), 5000);
+        }}
       />
+
+      {/* Reporter Repair Completion Modal (จากปุ่ม แจ้งซ่อมเสร็จแล้ว ในตาราง) */}
+      {completingRepairRow && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+          onClick={() => {
+            if (!isSubmittingCompleteRepair) setCompletingRepairRow(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 shrink-0">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    อัปเดตสถานะซ่อมเสร็จแล้ว
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    สำหรับผู้แจ้งซ่อมยืนยันเมื่อรถซ่อมเสร็จเรียบร้อยแล้ว
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSubmittingCompleteRepair}
+                onClick={() => setCompletingRepairRow(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="my-4 space-y-3">
+              <div className="rounded-xl border border-orange-200 bg-orange-50/70 px-3.5 py-2.5 text-xs space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-bold text-slate-900">
+                    ลำดับ #{completingRepairRow.values['A'] || completingRepairRow.rowNumber} • เบอร์รถ{' '}
+                    <span className="rounded bg-slate-900 px-1.5 py-0.5 text-white">
+                      {completingRepairRow.values['D'] || '-'}
+                    </span>
+                  </span>
+                  <span className="rounded-full bg-orange-100 border border-orange-300 px-2 py-0.5 text-[10px] font-bold text-orange-900">
+                    รอคิวซ่อม → ซ่อมเสร็จแล้ว
+                  </span>
+                </div>
+                <div className="text-slate-700 font-medium">
+                  ประเภท: <strong className="text-slate-900">{completingRepairRow.values['E'] || '-'}</strong>
+                </div>
+                <div className="text-slate-600 line-clamp-2">
+                  อาการ: {completingRepairRow.values['F'] || '-'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    ชื่อผู้แจ้งซ่อม
+                  </label>
+                  <input
+                    type="text"
+                    value={completingReporterName}
+                    onChange={(e) => setCompletingReporterName(e.target.value)}
+                    placeholder="ระบุชื่อผู้แจ้งซ่อม..."
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    วันที่ซ่อมเสร็จ
+                  </label>
+                  <input
+                    type="text"
+                    value={completingRepairDate}
+                    onChange={(e) => setCompletingRepairDate(e.target.value)}
+                    placeholder="วว/ดด/ปปปป"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs font-semibold text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">
+                  หมายเหตุการซ่อม (ไม่บังคับ)
+                </label>
+                <input
+                  type="text"
+                  value={completingRepairNote}
+                  onChange={(e) => setCompletingRepairNote(e.target.value)}
+                  placeholder="ระบุรายละเอียดการซ่อม หรือหมายเหตุเพิ่มเติม..."
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-emerald-600 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isSubmittingCompleteRepair}
+                onClick={() => setCompletingRepairRow(null)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingCompleteRepair}
+                onClick={async () => {
+                  if (!completingRepairRow) return;
+                  setIsSubmittingCompleteRepair(true);
+                  try {
+                    const targetRow = completingRepairRow;
+                    const sequenceNo = (targetRow.values['A'] ?? '').trim();
+                    const repairRequestNo = (targetRow.values['G'] ?? '').trim();
+                    const cleanReporter =
+                      completingReporterName.trim() ||
+                      (targetRow.values['AA'] ?? '').trim() ||
+                      'ผู้แจ้งซ่อม';
+                    const cleanDate =
+                      completingRepairDate.trim() || getCurrentThaiDateString();
+                    const cleanNote = completingRepairNote.trim();
+
+                    const startTs = parseThaiDateToTimestamp(
+                      (targetRow.values['B'] ?? '').trim()
+                    );
+                    const endTs = parseThaiDateToTimestamp(cleanDate);
+                    let repairDuration = '1';
+                    if (startTs !== null && endTs !== null && endTs >= startTs) {
+                      const diffDays = Math.round(
+                        (endTs - startTs) / (1000 * 60 * 60 * 24)
+                      );
+                      repairDuration = String(Math.max(1, diffDays));
+                    }
+
+                    await completeRepairRecord({
+                      rowNumber: targetRow.rowNumber,
+                      sequenceNo,
+                      repairRequestNo,
+                      reporterName: cleanReporter,
+                      completedDate: cleanDate,
+                      repairDuration,
+                      note: cleanNote || undefined,
+                      approvalStatus:
+                        (targetRow.values['AI'] ?? '').trim() || '3.✔️อนุมัติ',
+                      approverName: (targetRow.values['AE'] ?? '').trim(),
+                      approvalDate: (targetRow.values['AF'] ?? '').trim(),
+                      approvalTime: (targetRow.values['AG'] ?? '').trim(),
+                    });
+
+                    targetRow.values['P'] = 'ซ่อมเสร็จแล้ว';
+                    targetRow.values['J'] = cleanDate;
+                    targetRow.values['K'] = repairDuration;
+                    if (cleanReporter) targetRow.values['AA'] = cleanReporter;
+                    if (cleanNote) targetRow.values['AH'] = cleanNote;
+
+                    setCompletingRepairRow(null);
+                    setSaveSuccessMsg(
+                      `อัปเดตสถานะงานซ่อมรถ ${targetRow.values['D'] || ''} เป็น "ซ่อมเสร็จแล้ว" เรียบร้อยแล้ว`
+                    );
+                    showSuccessToast(
+                      'อัปเดตซ่อมเสร็จแล้วสำเร็จ!',
+                      `เปลี่ยนสถานะรถ ${targetRow.values['D'] || ''} เป็น "ซ่อมเสร็จแล้ว" เรียบร้อย`
+                    );
+                    loadData({ silent: true });
+                    setTimeout(() => loadData({ silent: true }), 6000);
+                    setTimeout(() => setSaveSuccessMsg(null), 5000);
+                  } catch (err) {
+                    console.error('Complete repair error:', err);
+                  } finally {
+                    setIsSubmittingCompleteRepair(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>
+                  {isSubmittingCompleteRepair
+                    ? 'กำลังบันทึก...'
+                    : 'ยืนยันซ่อมเสร็จแล้ว'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Attach / Edit Repair Photos Modal */}
       <AttachRepairPhotosModal

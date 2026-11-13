@@ -169,7 +169,7 @@ export const MaintenanceCalendarView: React.FC<MaintenanceCalendarViewProps> = (
       const inspector = (r.values['AB'] ?? '').trim();
       const timeDisplay = (r.values['C'] ?? '').trim();
 
-      const isUnapproved = approvalStatus !== 'อนุมัติ';
+      const isUnapproved = approvalStatus !== 'อนุมัติ' && approvalStatus !== 'รอคิวซ่อม';
       const isPmRepair =
         repairType.includes('PM') ||
         repairType.includes('ซ่อมเชิงป้องกัน') ||
@@ -318,7 +318,7 @@ export const MaintenanceCalendarView: React.FC<MaintenanceCalendarViewProps> = (
 
     repairRows.forEach((r) => {
       const st = getRowApprovalStatusLabel(r);
-      if (st !== 'อนุมัติ') {
+      if (st !== 'อนุมัติ' && st !== 'รอคิวซ่อม') {
         unapprovedTotal += 1;
         if (
           st === 'รออนุมัติ' ||

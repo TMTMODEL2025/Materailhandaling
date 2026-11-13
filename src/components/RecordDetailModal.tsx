@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Check, Camera, Pencil, Upload } from 'lucide-react';
+import { X, Check, Camera, Pencil, Upload, CheckCircle2 } from 'lucide-react';
 import { SheetColumn, SheetRow } from '../types';
 import {
   EmployeeAccountRecord,
@@ -12,6 +12,7 @@ import {
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { PhotoLightboxModal } from './PhotoLightboxModal';
 import { showSuccessToast } from '../utils/swal';
+import { getCurrentThaiDateString, getRowApprovalStatus } from '../utils/sheetMetrics';
 
 const DEFAULT_INSPECTOR_NAME = 'นายสุรสิทธิ์ นุชจันทร์';
 
@@ -33,6 +34,10 @@ interface RecordDetailModalProps {
   driverOptions?: VehicleDriverOption[];
   employeeAccounts?: EmployeeAccountRecord[];
   onInspectRepair?: (row: SheetRow, inspectorName: string) => Promise<void>;
+  onCompleteRepair?: (
+    row: SheetRow,
+    params: { reporterName: string; completedDate: string; note?: string }
+  ) => Promise<void>;
 }
 
 export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
@@ -49,6 +54,7 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   driverOptions = [],
   employeeAccounts = [],
   onInspectRepair,
+  onCompleteRepair,
 }) => {
   const [editingColId, setEditingColId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
@@ -58,13 +64,20 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
   const [inspectorName, setInspectorName] = useState<string>(DEFAULT_INSPECTOR_NAME);
   const [localAccounts, setLocalAccounts] = useState<EmployeeAccountRecord[]>([]);
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
+  const [reporterNameInput, setReporterNameInput] = useState<string>('');
+  const [completedDateInput, setCompletedDateInput] = useState<string>(getCurrentThaiDateString());
+  const [completionNoteInput, setCompletionNoteInput] = useState<string>('');
+  const [isCompletingRepair, setIsCompletingRepair] = useState<boolean>(false);
 
-  // Always default inspectorName to "นายสุรสิทธิ์ นุชจันทร์" when opening a record
+  // Always default inspectorName to "นายสุรสิทธิ์ นุชจันทร์" and initialize reporter completion fields when opening a record
   useEffect(() => {
     if (row) {
       setInspectorName(DEFAULT_INSPECTOR_NAME);
+      setReporterNameInput((row.values['AA'] ?? '').trim());
+      setCompletedDateInput(getCurrentThaiDateString());
+      setCompletionNoteInput((row.values['AH'] ?? '').trim());
     }
-  }, [row?.rowNumber]);
+  }, [row?.rowNumber, row]);
 
   // Ensure Account records are loaded if employeeAccounts prop is empty
   useEffect(() => {
@@ -144,6 +157,9 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
       rowRepairStatus === 'รอตรวจสอบ' ||
       (!rowAppStatus && !rowInspector));
 
+  const isWaitingRepairQueue =
+    isRepairTab && getRowApprovalStatus(row) === 'รอคิวซ่อม';
+
   const handleConfirmInspection = async () => {
     if (!row || !onInspectRepair || !inspectorName.trim()) return;
     setIsInspecting(true);
@@ -158,6 +174,28 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
       // ignore
     } finally {
       setIsInspecting(false);
+    }
+  };
+
+  const handleConfirmCompleteRepair = async () => {
+    if (!row || !onCompleteRepair) return;
+    setIsCompletingRepair(true);
+    try {
+      const cleanReporter = reporterNameInput.trim() || (row.values['AA'] ?? '').trim() || 'ผู้แจ้งซ่อม';
+      const cleanDate = completedDateInput.trim() || getCurrentThaiDateString();
+      await onCompleteRepair(row, {
+        reporterName: cleanReporter,
+        completedDate: cleanDate,
+        note: completionNoteInput.trim() || undefined,
+      });
+      showSuccessToast(
+        'อัปเดตซ่อมเสร็จแล้วสำเร็จ!',
+        'เปลี่ยนสถานะงานซ่อมเป็น "ซ่อมเสร็จแล้ว" เรียบร้อยแล้ว'
+      );
+    } catch {
+      // ignore
+    } finally {
+      setIsCompletingRepair(false);
     }
   };
 
@@ -331,6 +369,72 @@ export const RecordDetailModal: React.FC<RecordDetailModalProps> = ({
                     {isInspecting
                       ? 'กำลังบันทึกการตรวจสอบ...'
                       : 'ยืนยันผ่านการตรวจสอบ (ส่งต่อไปยังสถานะ รออนุมัติ)'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isWaitingRepairQueue && onCompleteRepair && (
+            <div className="mb-3 rounded-xl border border-emerald-300 bg-emerald-50/90 p-3.5 shadow-2xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-bold text-emerald-950">
+                  สำหรับผู้แจ้งซ่อม: อัปเดตเมื่อซ่อมเสร็จแล้ว
+                </div>
+                <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                  สถานะปัจจุบัน: รอคิวซ่อม
+                </span>
+              </div>
+              <div className="mt-2.5 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-emerald-900">
+                      ผู้แจ้งซ่อม:
+                    </label>
+                    <input
+                      type="text"
+                      value={reporterNameInput}
+                      onChange={(e) => setReporterNameInput(e.target.value)}
+                      placeholder="ระบุชื่อผู้แจ้งซ่อม..."
+                      className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-emerald-700 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-emerald-900">
+                      วันที่ซ่อมเสร็จ:
+                    </label>
+                    <input
+                      type="text"
+                      value={completedDateInput}
+                      onChange={(e) => setCompletedDateInput(e.target.value)}
+                      placeholder="วว/ดด/ปปปป"
+                      className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 font-mono text-xs font-semibold text-slate-900 focus:border-emerald-700 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-emerald-900">
+                    หมายเหตุการซ่อม (ถ้ามี):
+                  </label>
+                  <input
+                    type="text"
+                    value={completionNoteInput}
+                    onChange={(e) => setCompletionNoteInput(e.target.value)}
+                    placeholder="รายละเอียดการซ่อม / อะไหล่ที่เปลี่ยน (ไม่บังคับ)..."
+                    className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-emerald-700 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={isCompletingRepair}
+                  onClick={handleConfirmCompleteRepair}
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>
+                    {isCompletingRepair
+                      ? 'กำลังบันทึกสถานะซ่อมเสร็จแล้ว...'
+                      : 'ยืนยันซ่อมเสร็จแล้ว (เปลี่ยนสถานะเป็น ซ่อมเสร็จแล้ว)'}
                   </span>
                 </button>
               </div>

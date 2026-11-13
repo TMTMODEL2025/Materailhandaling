@@ -411,6 +411,9 @@ function doPost(e) {
       }
 
       if (targetRow >= 2) {
+        if (body.completedDate) sheet.getRange(targetRow, 10).setValue(String(body.completedDate).trim());
+        if (body.repairDuration !== undefined && body.repairDuration !== null && String(body.repairDuration).trim() !== '') sheet.getRange(targetRow, 11).setValue(String(body.repairDuration).trim());
+        if (body.reporterName) sheet.getRange(targetRow, 27).setValue(String(body.reporterName).trim());
         if (body.inspectorName) sheet.getRange(targetRow, 28).setValue(String(body.inspectorName).trim());
         if (body.inspectionDate) sheet.getRange(targetRow, 29).setValue(String(body.inspectionDate).trim());
         if (body.inspectionTime) sheet.getRange(targetRow, 30).setValue(String(body.inspectionTime).trim());
@@ -1746,6 +1749,9 @@ interface StoredRepairApproval {
   approvalDate: string;
   approvalTime: string;
   repairStatus?: string;
+  completedDate?: string;
+  repairDuration?: string;
+  reporterName?: string;
   note?: string;
   updatedAt: string;
   syncedToSheet?: boolean;
@@ -1872,7 +1878,7 @@ function createEmptyMutationsStore(): MutationsStore {
   };
 }
 
-function isRecentOptimisticMutation(updatedAt?: string, maxAgeMs = 20000): boolean {
+function isRecentOptimisticMutation(updatedAt?: string, maxAgeMs = 300000): boolean {
   if (!updatedAt) return false;
   const ts = new Date(updatedAt).getTime();
   if (!Number.isFinite(ts)) return false;
@@ -2099,9 +2105,34 @@ async function fetchCombinedMutationsStore(
       (remote.repairApprovals ?? [])
         .filter((a) => isRecentOptimisticMutation(a.updatedAt))
         .forEach((a) => mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a));
-      local.repairApprovals.forEach((a) =>
-        mergedRepAppMap.set(a.sequenceNo || String(a.rowNumber), a)
-      );
+      local.repairApprovals.forEach((a) => {
+        const key = a.sequenceNo || String(a.rowNumber);
+        const existing = mergedRepAppMap.get(key);
+        if (!existing) {
+          mergedRepAppMap.set(key, a);
+        } else {
+          const isLocalNewer =
+            new Date(a.updatedAt).getTime() >= new Date(existing.updatedAt).getTime();
+          const primary = isLocalNewer ? a : existing;
+          const secondary = isLocalNewer ? existing : a;
+          mergedRepAppMap.set(key, {
+            ...secondary,
+            ...primary,
+            approvalStatus: primary.approvalStatus || secondary.approvalStatus,
+            approverName: primary.approverName || secondary.approverName,
+            approvalDate: primary.approvalDate || secondary.approvalDate,
+            approvalTime: primary.approvalTime || secondary.approvalTime,
+            repairStatus: primary.repairStatus || secondary.repairStatus,
+            completedDate: primary.completedDate || secondary.completedDate,
+            repairDuration:
+              primary.repairDuration !== undefined
+                ? primary.repairDuration
+                : secondary.repairDuration,
+            reporterName: primary.reporterName || secondary.reporterName,
+            note: primary.note || secondary.note,
+          });
+        }
+      });
 
       const mergedPhotoEditMap = new Map<string, StoredRepairPhotoEdit>();
       (remote.repairPhotoEdits ?? [])
@@ -3605,11 +3636,14 @@ export async function fetchSheetTabData(
       if (!isRecentOptimisticMutation(app.updatedAt)) continue;
       const target = parsedRows.find((r) => matchesRepairRow(r, app));
       if (target) {
-        target.values['AE'] = app.approverName;
-        target.values['AF'] = app.approvalDate;
-        target.values['AG'] = app.approvalTime;
-        target.values['AI'] = app.approvalStatus;
+        if (app.approverName) target.values['AE'] = app.approverName;
+        if (app.approvalDate) target.values['AF'] = app.approvalDate;
+        if (app.approvalTime) target.values['AG'] = app.approvalTime;
+        if (app.approvalStatus) target.values['AI'] = app.approvalStatus;
         if (app.repairStatus) target.values['P'] = app.repairStatus;
+        if (app.completedDate) target.values['J'] = app.completedDate;
+        if (app.repairDuration !== undefined) target.values['K'] = app.repairDuration;
+        if (app.reporterName) target.values['AA'] = app.reporterName;
         if (app.note) target.values['AH'] = app.note;
       }
     }
@@ -3651,6 +3685,21 @@ export async function fetchSheetTabData(
         if (target) {
           target.values['N'] = fe.sparePartsCost;
           target.values['O'] = fe.laborCost;
+        }
+      }
+    }
+    // Ensure manager-approved rows (3.✔️อนุมัติ) that are not yet marked ซ่อมเสร็จแล้ว display สถานะ = รอคิวซ่อม
+    for (const r of parsedRows) {
+      const ai = (r.values['AI'] ?? '').trim();
+      const p = (r.values['P'] ?? '').trim();
+      if (
+        ai.includes('อนุมัติ') &&
+        !ai.includes('ไม่อนุมัติ') &&
+        !ai.includes('รอ') &&
+        !ai.includes('ตอบกลับ')
+      ) {
+        if (!p || p === 'ตรวจสอบแล้ว' || p === 'รอตรวจสอบ') {
+          r.values['P'] = 'รอคิวซ่อม';
         }
       }
     }
@@ -4651,21 +4700,45 @@ export async function approveRepairRecord(
   payload: import('../types').RepairApprovalPayload
 ): Promise<void> {
   const localStore = readLocalMutationsStore();
+  for (const reqItem of localStore.repairRequests) {
+    if (
+      (payload.sequenceNo && reqItem.sequenceNo === payload.sequenceNo) ||
+      (payload.rowNumber > 0 && reqItem.rowNumber === payload.rowNumber)
+    ) {
+      if (payload.approverName) reqItem.values['AE'] = payload.approverName;
+      if (payload.approvalDate) reqItem.values['AF'] = payload.approvalDate;
+      if (payload.approvalTime) reqItem.values['AG'] = payload.approvalTime;
+      if (payload.approvalStatus) reqItem.values['AI'] = payload.approvalStatus;
+      if (payload.repairStatus) reqItem.values['P'] = payload.repairStatus;
+      if (payload.completedDate) reqItem.values['J'] = payload.completedDate;
+      if (payload.repairDuration !== undefined) reqItem.values['K'] = payload.repairDuration;
+      if (payload.reporterName) reqItem.values['AA'] = payload.reporterName;
+      if (payload.note) reqItem.values['AH'] = payload.note;
+    }
+  }
+
   const existingIdx = localStore.repairApprovals.findIndex(
     (a) =>
       (payload.sequenceNo && a.sequenceNo === payload.sequenceNo) ||
       (payload.rowNumber > 0 && a.rowNumber === payload.rowNumber)
   );
+  const existing = existingIdx >= 0 ? localStore.repairApprovals[existingIdx] : undefined;
 
-  const approvalEntry = {
-    rowNumber: payload.rowNumber,
-    sequenceNo: payload.sequenceNo,
-    approvalStatus: payload.approvalStatus,
-    approverName: payload.approverName,
-    approvalDate: payload.approvalDate,
-    approvalTime: payload.approvalTime,
-    repairStatus: payload.repairStatus,
-    note: payload.note,
+  const approvalEntry: StoredRepairApproval = {
+    rowNumber: payload.rowNumber || existing?.rowNumber || 0,
+    sequenceNo: payload.sequenceNo || existing?.sequenceNo || '',
+    approvalStatus: payload.approvalStatus || existing?.approvalStatus || '',
+    approverName: payload.approverName || existing?.approverName || '',
+    approvalDate: payload.approvalDate || existing?.approvalDate || '',
+    approvalTime: payload.approvalTime || existing?.approvalTime || '',
+    repairStatus: payload.repairStatus || existing?.repairStatus,
+    completedDate: payload.completedDate || existing?.completedDate,
+    repairDuration:
+      payload.repairDuration !== undefined
+        ? payload.repairDuration
+        : existing?.repairDuration,
+    reporterName: payload.reporterName || existing?.reporterName,
+    note: payload.note || existing?.note,
     updatedAt: new Date().toISOString(),
   };
 
@@ -4704,28 +4777,30 @@ export async function approveRepairRecord(
         payload.sequenceNo
       );
       if (targetRow >= 2) {
-        const updateRange = encodeURIComponent(
-          `บันทึกงานซ่อม!AE${targetRow}:AI${targetRow}`
-        );
-        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-        await fetch(updateUrl, {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            values: [
-              [
-                payload.approverName,
-                payload.approvalDate,
-                payload.approvalTime,
-                payload.note || '',
-                payload.approvalStatus,
+        if (payload.approverName || payload.approvalStatus) {
+          const updateRange = encodeURIComponent(
+            `บันทึกงานซ่อม!AE${targetRow}:AI${targetRow}`
+          );
+          const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+          await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [
+                [
+                  payload.approverName,
+                  payload.approvalDate,
+                  payload.approvalTime,
+                  payload.note || '',
+                  payload.approvalStatus,
+                ],
               ],
-            ],
-          }),
-        });
+            }),
+          });
+        }
 
         if (payload.repairStatus) {
           const statusRange = encodeURIComponent(`บันทึกงานซ่อม!P${targetRow}`);
@@ -4741,11 +4816,46 @@ export async function approveRepairRecord(
             }),
           });
         }
+
+        if (payload.completedDate) {
+          const compRange = encodeURIComponent(
+            `บันทึกงานซ่อม!J${targetRow}:K${targetRow}`
+          );
+          const compUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${compRange}?valueInputOption=USER_ENTERED`;
+          await fetch(compUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              values: [[payload.completedDate, payload.repairDuration ?? '']],
+            }),
+          });
+        }
       }
     } catch {
       // ignore
     }
   }
+}
+
+export async function completeRepairRecord(
+  payload: import('../types').RepairCompletionPayload
+): Promise<void> {
+  await approveRepairRecord({
+    rowNumber: payload.rowNumber,
+    sequenceNo: payload.sequenceNo,
+    approvalStatus: payload.approvalStatus || '3.✔️อนุมัติ',
+    approverName: payload.approverName || '',
+    approvalDate: payload.approvalDate || '',
+    approvalTime: payload.approvalTime || '',
+    repairStatus: 'ซ่อมเสร็จแล้ว',
+    completedDate: payload.completedDate,
+    repairDuration: payload.repairDuration,
+    reporterName: payload.reporterName,
+    note: payload.note,
+  });
 }
 
 export async function inspectRepairRecord(

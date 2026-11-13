@@ -97,14 +97,22 @@ export function getRowApprovalStatus(row: SheetRow): string {
   ) {
     return 'รอตรวจสอบ';
   }
-  if (appStatus.includes('ไม่อนุมัติ')) return 'ไม่อนุมัติ';
+  if (appStatus.includes('ไม่อนุมัติ') || repairStatus.includes('ยกเลิก')) {
+    return 'ไม่อนุมัติ';
+  }
   if (
     appStatus.includes('อนุมัติ') &&
     !appStatus.includes('ไม่อนุมัติ') &&
     !appStatus.includes('รอ') &&
     !appStatus.includes('ตอบกลับ')
   ) {
-    return 'อนุมัติ';
+    if (repairStatus.includes('ซ่อมเสร็จ')) {
+      return 'อนุมัติ';
+    }
+    return 'รอคิวซ่อม';
+  }
+  if (repairStatus === 'รอคิวซ่อม') {
+    return 'รอคิวซ่อม';
   }
   const isReplied = appStatus.includes('ตอบกลับ') || Boolean(replyText);
   if (isReplied) return 'ตอบกลับข้อมูลเพิ่มเติมแล้ว';

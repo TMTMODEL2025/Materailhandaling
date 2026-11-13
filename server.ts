@@ -104,6 +104,9 @@ interface StoredRepairApproval {
   approvalDate: string;
   approvalTime: string;
   repairStatus?: string;
+  completedDate?: string;
+  repairDuration?: string;
+  reporterName?: string;
   note?: string;
   updatedAt: string;
 }
@@ -215,7 +218,7 @@ interface MutationsStore {
   notifiedRepairKeys?: string[];
 }
 
-function isRecentMutation(tsStr?: string, maxAgeMs = 20000): boolean {
+function isRecentMutation(tsStr?: string, maxAgeMs = 300000): boolean {
   if (!tsStr) return false;
   const ts = new Date(tsStr).getTime();
   if (!Number.isFinite(ts)) return false;
@@ -1249,6 +1252,9 @@ async function startServer() {
       approvalDate,
       approvalTime,
       repairStatus,
+      completedDate,
+      repairDuration,
+      reporterName,
       note,
     } = req.body ?? {};
 
@@ -1259,6 +1265,12 @@ async function startServer() {
     const appDate = String(approvalDate ?? '').trim();
     const appTime = String(approvalTime ?? '').trim();
     const repStatus = String(repairStatus ?? '').trim();
+    const compDate = String(completedDate ?? '').trim();
+    const repDuration =
+      repairDuration !== undefined && repairDuration !== null
+        ? String(repairDuration).trim()
+        : undefined;
+    const repName = String(reporterName ?? '').trim();
     const nt = String(note ?? '').trim();
 
     for (const reqItem of store.repairRequests) {
@@ -1266,11 +1278,14 @@ async function startServer() {
         (seq && reqItem.sequenceNo === seq) ||
         (rn > 0 && reqItem.rowNumber === rn)
       ) {
-        reqItem.values['AE'] = approver;
-        reqItem.values['AF'] = appDate;
-        reqItem.values['AG'] = appTime;
-        reqItem.values['AI'] = status;
+        if (approver) reqItem.values['AE'] = approver;
+        if (appDate) reqItem.values['AF'] = appDate;
+        if (appTime) reqItem.values['AG'] = appTime;
+        if (status) reqItem.values['AI'] = status;
         if (repStatus) reqItem.values['P'] = repStatus;
+        if (compDate) reqItem.values['J'] = compDate;
+        if (repDuration !== undefined) reqItem.values['K'] = repDuration;
+        if (repName) reqItem.values['AA'] = repName;
         if (nt) reqItem.values['AH'] = nt;
       }
     }
@@ -1278,16 +1293,20 @@ async function startServer() {
     const existingIdx = store.repairApprovals.findIndex(
       (a) => (seq && a.sequenceNo === seq) || (rn > 0 && a.rowNumber === rn)
     );
+    const existing = existingIdx >= 0 ? store.repairApprovals[existingIdx] : undefined;
 
     const approvalEntry: StoredRepairApproval = {
-      rowNumber: rn,
-      sequenceNo: seq,
-      approvalStatus: status,
-      approverName: approver,
-      approvalDate: appDate,
-      approvalTime: appTime,
-      repairStatus: repStatus || undefined,
-      note: nt || undefined,
+      rowNumber: rn || existing?.rowNumber || 0,
+      sequenceNo: seq || existing?.sequenceNo || '',
+      approvalStatus: status || existing?.approvalStatus || '',
+      approverName: approver || existing?.approverName || '',
+      approvalDate: appDate || existing?.approvalDate || '',
+      approvalTime: appTime || existing?.approvalTime || '',
+      repairStatus: repStatus || existing?.repairStatus || undefined,
+      completedDate: compDate || existing?.completedDate || undefined,
+      repairDuration: repDuration !== undefined ? repDuration : existing?.repairDuration,
+      reporterName: repName || existing?.reporterName || undefined,
+      note: nt || existing?.note || undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -1298,6 +1317,7 @@ async function startServer() {
     }
 
     writeStore(store);
+    sheetProxyCache.clear();
     res.json({ ok: true, approval: approvalEntry });
   });
 

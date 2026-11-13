@@ -76,7 +76,24 @@ export interface RepairApprovalPayload {
   approvalDate: string;
   approvalTime: string;
   repairStatus?: string;
+  completedDate?: string;
+  repairDuration?: string;
+  reporterName?: string;
   note?: string;
+}
+
+export interface RepairCompletionPayload {
+  rowNumber: number;
+  sequenceNo: string;
+  repairRequestNo?: string;
+  reporterName?: string;
+  completedDate: string;
+  repairDuration?: string;
+  note?: string;
+  approvalStatus?: string;
+  approverName?: string;
+  approvalDate?: string;
+  approvalTime?: string;
 }
 
 export interface RepairPhotoUpdatePayload {
