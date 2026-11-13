@@ -1666,9 +1666,11 @@ function playNotificationChime() {
           if (activeTab.gid === '1733355146' && hasDateFilter) {
             next[status] = false; // Auto-expand fuel table groups when date filter is active
           } else if (next[status] === undefined) {
-            // Default to collapsed (true) for fuel tab and STOCK ยาง tab
+            // Default to collapsed (true) for บันทึกงานซ่อม, fuel tab, and STOCK ยาง tab
             next[status] =
-              activeTab.gid === '1733355146' || activeTab.gid === '1031154414';
+              activeTab.gid === '944294225' ||
+              activeTab.gid === '1733355146' ||
+              activeTab.gid === '1031154414';
           }
         });
         return next;
