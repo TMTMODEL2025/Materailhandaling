@@ -27,6 +27,66 @@ import {
 const PHOTO_COLS = ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'];
 
 const MANAGER_ACCESS_PIN = '685400';
+const MANAGER_UNLOCK_UNTIL_KEY = 'gsheets_manager_unlock_until';
+const MANAGER_UNLOCK_PREF_KEY = 'gsheets_manager_unlock_duration_pref';
+
+type ManagerUnlockDuration = '1h' | '8h' | '7d' | 'once';
+
+const UNLOCK_DURATION_OPTIONS: Array<{
+  id: ManagerUnlockDuration;
+  label: string;
+  ms: number;
+}> = [
+  { id: '1h', label: '1 ชม.', ms: 60 * 60 * 1000 },
+  { id: '8h', label: '8 ชม. (ทั้งวัน)', ms: 8 * 60 * 60 * 1000 },
+  { id: '7d', label: '7 วัน (เครื่องส่วนตัว)', ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: 'once', label: 'ครั้งเดียวนี้', ms: 0 },
+];
+
+function readStoredUnlockUntil(): number {
+  try {
+    const raw = localStorage.getItem(MANAGER_UNLOCK_UNTIL_KEY);
+    if (!raw) return 0;
+    const ts = Number(raw);
+    if (Number.isFinite(ts) && ts > Date.now()) {
+      return ts;
+    }
+    localStorage.removeItem(MANAGER_UNLOCK_UNTIL_KEY);
+  } catch {
+    // ignore storage errors
+  }
+  return 0;
+}
+
+function readStoredDurationPref(): ManagerUnlockDuration {
+  try {
+    const raw = localStorage.getItem(MANAGER_UNLOCK_PREF_KEY);
+    if (raw === '1h' || raw === '8h' || raw === '7d' || raw === 'once') {
+      return raw;
+    }
+  } catch {
+    // ignore
+  }
+  return '8h';
+}
+
+function formatUnlockExpiryLabel(untilTs: number): string {
+  if (!untilTs || untilTs <= Date.now()) {
+    return 'ปลดล็อกเฉพาะครั้งนี้';
+  }
+  const d = new Date(untilTs);
+  const now = new Date();
+  const isSameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (isSameDay) {
+    return `จำสิทธิ์ถึง ${hh}:${mm} น.`;
+  }
+  return `จำสิทธิ์ถึง ${d.getDate()}/${d.getMonth() + 1} ${hh}:${mm}`;
+}
 
 interface ManagerApprovalModalProps {
   isOpen: boolean;
@@ -73,7 +133,15 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   rows,
   onApprovedSuccess,
 }) => {
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
+  const [unlockUntil, setUnlockUntil] = useState<number>(() =>
+    readStoredUnlockUntil()
+  );
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(
+    () => readStoredUnlockUntil() > Date.now()
+  );
+  const [unlockDuration, setUnlockDuration] = useState<ManagerUnlockDuration>(() =>
+    readStoredDurationPref()
+  );
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
 
@@ -132,15 +200,24 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   };
 
   useEffect(() => {
-    if (!isOpen) {
-      setIsUnlocked(false);
+    if (isOpen) {
+      const storedUntil = readStoredUnlockUntil();
+      setUnlockUntil(storedUntil);
+      setIsUnlocked(storedUntil > Date.now());
       setPinInput('');
       setPinError(null);
-      setExpandedRowNumber(null);
-      setSelectedRow(null);
-      setError(null);
-      setLightboxState({ isOpen: false, photos: [], initialIndex: 0 });
+      return;
     }
+
+    const storedUntil = readStoredUnlockUntil();
+    setUnlockUntil(storedUntil);
+    setIsUnlocked(storedUntil > Date.now());
+    setPinInput('');
+    setPinError(null);
+    setExpandedRowNumber(null);
+    setSelectedRow(null);
+    setError(null);
+    setLightboxState({ isOpen: false, photos: [], initialIndex: 0 });
   }, [isOpen]);
 
   // Filter rows based on centralized approval status (exclude 'รอตรวจสอบ' until passed 'ผู้ตรวจสอบ')
@@ -159,11 +236,42 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
   const handleVerifyPin = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput.trim() === MANAGER_ACCESS_PIN) {
+      const selectedOpt = UNLOCK_DURATION_OPTIONS.find(
+        (opt) => opt.id === unlockDuration
+      );
+      let nextUntil = 0;
+      try {
+        localStorage.setItem(MANAGER_UNLOCK_PREF_KEY, unlockDuration);
+        if (selectedOpt && selectedOpt.ms > 0) {
+          nextUntil = Date.now() + selectedOpt.ms;
+          localStorage.setItem(MANAGER_UNLOCK_UNTIL_KEY, String(nextUntil));
+        } else {
+          localStorage.removeItem(MANAGER_UNLOCK_UNTIL_KEY);
+        }
+      } catch {
+        // ignore storage errors
+      }
+      setUnlockUntil(nextUntil);
       setIsUnlocked(true);
+      setPinInput('');
       setPinError(null);
     } else {
       setPinError('รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
     }
+  };
+
+  const handleLockManagerSession = () => {
+    try {
+      localStorage.removeItem(MANAGER_UNLOCK_UNTIL_KEY);
+    } catch {
+      // ignore
+    }
+    setUnlockUntil(0);
+    setIsUnlocked(false);
+    setSelectedRow(null);
+    setExpandedRowNumber(null);
+    setPinInput('');
+    setPinError(null);
   };
 
   if (!isUnlocked) {
@@ -217,6 +325,28 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                 placeholder="รหัสผ่าน 6 หลัก"
                 className="mt-1.5 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-center font-mono text-base tracking-widest text-slate-900 focus:border-emerald-700 focus:bg-white focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">
+                ระยะเวลาจำสิทธิ์เข้าใช้งาน (ไม่ต้องกรอกรหัสซ้ำเมื่อเปิดใหม่)
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {UNLOCK_DURATION_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setUnlockDuration(opt.id)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                      unlockDuration === opt.id
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-800 shadow-2xs'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {pinError && (
@@ -364,15 +494,31 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            aria-label="ปิดหน้าต่าง"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
+              <Clock className="h-3 w-3 text-emerald-600" />
+              <span>{formatUnlockExpiryLabel(unlockUntil)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={handleLockManagerSession}
+              disabled={isSubmitting}
+              title="ล็อกสิทธิ์ผู้จัดการทันที (ต้องใส่รหัสผ่านใหม่ในครั้งถัดไป)"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>ล็อกสิทธิ์</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              aria-label="ปิดหน้าต่าง"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Top Controls: Approver name & filter tabs */}
