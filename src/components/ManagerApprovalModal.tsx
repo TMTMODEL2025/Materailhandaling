@@ -17,6 +17,7 @@ import { SheetRow, RepairApprovalPayload } from '../types';
 import { approveRepairRecord, updateRepairAdditionalDetails, isPhotoValue } from '../services/googleSheets';
 import { DrivePhotoImg } from './DrivePhotoImg';
 import { PhotoLightboxModal } from './PhotoLightboxModal';
+import { VehicleRepairHistoryPanel } from './VehicleRepairHistoryPanel';
 import { showSuccessToast } from '../utils/swal';
 import {
   filterPendingApprovalRows,
@@ -524,6 +525,14 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                       </div>
                     </div>
 
+                    {/* ประวัติที่เคยซ่อมของรถคันนี้ในประเภทเดียวกัน */}
+                    <VehicleRepairHistoryPanel
+                      vehicleNumber={selectedRow.values['D'] ?? ''}
+                      repairType={selectedRow.values['E'] ?? ''}
+                      currentRow={selectedRow}
+                      allLocalRows={rows}
+                    />
+
                     {/* Photos Grid */}
                     {(() => {
                       const rowPhotos = PHOTO_COLS.map((c) => (selectedRow.values[c] ?? '').trim())
@@ -913,6 +922,14 @@ export const ManagerApprovalModal: React.FC<ManagerApprovalModalProps> = ({
                             {sym || '-'}
                           </div>
                         </div>
+
+                        {/* ประวัติที่เคยซ่อมของรถคันนี้ในประเภทเดียวกัน */}
+                        <VehicleRepairHistoryPanel
+                          vehicleNumber={veh}
+                          repairType={typ}
+                          currentRow={r}
+                          allLocalRows={rows}
+                        />
 
                         {reqInfoText && (
                           <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-2.5 text-xs text-amber-900">

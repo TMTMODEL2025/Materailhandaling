@@ -3817,6 +3817,80 @@ export async function fetchSheetTabData(
   };
 }
 
+const repairHistoryByTypeCache = new Map<
+  string,
+  { rows: SheetRow[]; timestamp: number }
+>();
+
+export function clearRepairHistoryByTypeCache(): void {
+  repairHistoryByTypeCache.clear();
+}
+
+export async function fetchRepairHistoryByType(
+  repairType: string,
+  options?: { signal?: AbortSignal; limit?: number; vehicleNumber?: string }
+): Promise<SheetRow[]> {
+  const trimmed = repairType.trim();
+  if (!trimmed) return [];
+
+  const baseTerm = trimmed.replace(/\s*\([^)]*\)\s*$/, '').trim() || trimmed;
+  const cleanVehicle = (options?.vehicleNumber ?? '').trim();
+  const cacheKey = `${baseTerm.toLowerCase()}::${cleanVehicle.replace(/\s+/g, '').toLowerCase()}`;
+  const cached = repairHistoryByTypeCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 180_000) {
+    return cached.rows;
+  }
+
+  const limit = options?.limit ?? 60;
+  const escapedType = baseTerm.replace(/'/g, "\\'").toLowerCase();
+  const whereClauses = [`lower(E) contains '${escapedType}'`];
+  if (cleanVehicle) {
+    const escapedVeh = cleanVehicle.replace(/'/g, "\\'").toLowerCase();
+    whereClauses.push(`lower(D) contains '${escapedVeh}'`);
+  }
+  const tq = `select A, B, C, D, E, F, G, J, K, N, O, P, AA, AB, AH, AI, AM where ${whereClauses.join(' and ')} order by A desc limit ${limit}`;
+
+  const dataResponse = await queryGviz('944294225', tq, options?.signal, 15000);
+  const rawCols = dataResponse.table?.cols ?? [];
+  const rawRows = dataResponse.table?.rows ?? [];
+
+  const parsedRows: SheetRow[] = [];
+  rawRows.forEach((r, idx) => {
+    const values: Record<string, string> = {};
+    const rawValues: Record<string, string | number | null> = {};
+    let hasData = false;
+
+    rawCols.forEach((col, colIdx) => {
+      const colId = col.id;
+      if (!colId) return;
+      const cell = r.c?.[colIdx];
+      const formatted = formatGvizCellValue(cell);
+      values[colId] = formatted;
+      rawValues[colId] =
+        typeof cell?.v === 'number' || typeof cell?.v === 'string'
+          ? cell.v
+          : formatted || null;
+      if (formatted !== '') hasData = true;
+    });
+
+    if (!hasData) return;
+
+    const seqNum = Number(rawValues['A'] ?? values['A']);
+    const rowNumber = !Number.isNaN(seqNum) && seqNum > 0 ? seqNum + 1 : idx + 2;
+    parsedRows.push({
+      rowNumber,
+      values,
+      rawValues,
+    });
+  });
+
+  repairHistoryByTypeCache.set(cacheKey, {
+    rows: parsedRows,
+    timestamp: Date.now(),
+  });
+  return parsedRows;
+}
+
 let lastAssignedJobTransferRow = 0;
 
 export async function appendJobTransferRecord(

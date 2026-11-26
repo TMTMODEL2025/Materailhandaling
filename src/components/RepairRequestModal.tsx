@@ -1,7 +1,33 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { X, AlertCircle, Wrench, Send, Camera, Image as ImageIcon, Trash2 } from 'lucide-react';
+import {
+  X,
+  AlertCircle,
+  Wrench,
+  Send,
+  Camera,
+  Trash2,
+  History,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  Check,
+  CopyPlus,
+  Loader2,
+  Calendar,
+  Truck,
+} from 'lucide-react';
 import { SheetRow, RepairRequestPayload } from '../types';
-import { appendRepairRecord, processHighResImageFile } from '../services/googleSheets';
+import {
+  appendRepairRecord,
+  clearRepairHistoryByTypeCache,
+  fetchRepairHistoryByType,
+  processHighResImageFile,
+} from '../services/googleSheets';
+import {
+  getRowApprovalStatus,
+  parseNumericCell,
+  parseThaiDateToTimestamp,
+} from '../utils/sheetMetrics';
 import { showSuccessToast } from '../utils/swal';
 
 interface RepairRequestModalProps {
@@ -31,10 +57,51 @@ function compressImageFile(file: File): Promise<string> {
   return processHighResImageFile(file);
 }
 
+function matchesRepairType(rowType: string, selectedType: string): boolean {
+  const normRow = rowType.trim().toLowerCase();
+  const normSel = selectedType.trim().toLowerCase();
+  if (!normRow || !normSel) return false;
+  if (normRow === normSel) return true;
+  const baseRow = normRow.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const baseSel = normSel.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return baseSel.length > 0 && baseRow === baseSel;
+}
+
+function getRepairHistoryStatusBadge(row: SheetRow): {
+  label: string;
+  className: string;
+} {
+  const rawStatus = (row.values['P'] ?? '').trim();
+  const approval = getRowApprovalStatus(row);
+  const label = rawStatus || approval || '-';
+
+  if (label.includes('ซ่อมเสร็จ') || approval === 'อนุมัติ') {
+    return {
+      label,
+      className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    };
+  }
+  if (label.includes('รอคิว') || approval === 'รอคิวซ่อม') {
+    return {
+      label: rawStatus || 'รอคิวซ่อม',
+      className: 'border-orange-200 bg-orange-50 text-orange-700',
+    };
+  }
+  if (label.includes('ไม่อนุมัติ') || label.includes('ยกเลิก')) {
+    return {
+      label,
+      className: 'border-rose-200 bg-rose-50 text-rose-700',
+    };
+  }
+  return {
+    label,
+    className: 'border-amber-200 bg-amber-50 text-amber-800',
+  };
+}
+
 function generateNextRepairRequestNo(existingRows: SheetRow[]): string {
   const now = new Date();
   const monthStr = String(now.getMonth() + 1).padStart(2, '0');
-  const prefix = `TMT-FL${monthStr}`;
 
   let maxSeq = 0;
   existingRows.forEach((r) => {
@@ -81,6 +148,15 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
   const [note, setNote] = useState<string>('');
   const [photos, setPhotos] = useState<string[]>([]);
 
+  const [remoteHistoryRows, setRemoteHistoryRows] = useState<SheetRow[]>([]);
+  const [remoteVehicleHistoryRows, setRemoteVehicleHistoryRows] = useState<SheetRow[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(true);
+  const [historyOnlySelectedVehicle, setHistoryOnlySelectedVehicle] =
+    useState<boolean>(true);
+  const [historySearch, setHistorySearch] = useState<string>('');
+  const [copiedHistoryKey, setCopiedHistoryKey] = useState<string | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -124,6 +200,167 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
     };
   }, [existingRows]);
 
+  const normalizedVehicleInput = vehicleNumber.replace(/\s+/g, '').trim().toUpperCase();
+  const displayVehicleLabel = vehicleNumber.trim();
+
+  // Fetch fleet-wide historical records for the selected repairType (cached in memory)
+  useEffect(() => {
+    if (!isOpen || !repairType.trim()) {
+      setRemoteHistoryRows([]);
+      setIsLoadingHistory(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setIsLoadingHistory(true);
+    setHistorySearch('');
+
+    void fetchRepairHistoryByType(repairType, {
+      signal: controller.signal,
+      limit: 60,
+    })
+      .then((rows) => {
+        if (!active) return;
+        setRemoteHistoryRows(rows);
+      })
+      .catch(() => {
+        if (!active) return;
+        setRemoteHistoryRows([]);
+      })
+      .finally(() => {
+        if (active) setIsLoadingHistory(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [isOpen, repairType]);
+
+  // Fetch vehicle-specific historical records when a vehicleNumber is chosen (debounced & cached)
+  useEffect(() => {
+    if (!isOpen || !repairType.trim() || !displayVehicleLabel) {
+      setRemoteVehicleHistoryRows([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+
+    const timer = setTimeout(() => {
+      setIsLoadingHistory(true);
+      void fetchRepairHistoryByType(repairType, {
+        signal: controller.signal,
+        limit: 50,
+        vehicleNumber: displayVehicleLabel,
+      })
+        .then((rows) => {
+          if (!active) return;
+          setRemoteVehicleHistoryRows(rows);
+        })
+        .catch(() => {
+          if (!active) return;
+          setRemoteVehicleHistoryRows([]);
+        })
+        .finally(() => {
+          if (active) setIsLoadingHistory(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isOpen, repairType, displayVehicleLabel]);
+
+  // Automatically filter history by selected vehicle whenever user enters/changes vehicleNumber
+  useEffect(() => {
+    setHistoryOnlySelectedVehicle(Boolean(normalizedVehicleInput));
+  }, [normalizedVehicleInput]);
+
+  // Merge instant local existingRows + fetched remote rows for the selected repairType
+  const matchedHistoryRows = useMemo(() => {
+    if (!repairType.trim()) return [];
+    const seen = new Set<string>();
+    const merged: SheetRow[] = [];
+
+    const addIfMatch = (row: SheetRow) => {
+      const rowType = (row.values['E'] ?? '').trim();
+      if (!matchesRepairType(rowType, repairType)) return;
+      const symptom = (row.values['F'] ?? '').trim();
+      const veh = (row.values['D'] ?? '').trim();
+      if (!symptom && !veh) return;
+
+      const seq = (row.values['A'] ?? '').trim();
+      const reqNo = (row.values['G'] ?? '').trim();
+      const dedupKey = seq
+        ? `seq:${seq}`
+        : reqNo
+        ? `req:${reqNo}`
+        : `row:${row.values['B'] ?? ''}|${veh}|${symptom}`;
+
+      if (seen.has(dedupKey)) return;
+      seen.add(dedupKey);
+      merged.push(row);
+    };
+
+    existingRows.forEach(addIfMatch);
+    remoteVehicleHistoryRows.forEach(addIfMatch);
+    remoteHistoryRows.forEach(addIfMatch);
+
+    return merged.sort((a, b) => {
+      const seqA = parseNumericCell(a.rawValues['A'] ?? a.values['A']);
+      const seqB = parseNumericCell(b.rawValues['A'] ?? b.values['A']);
+      if (seqA !== seqB) return seqB - seqA;
+      const tsA = parseThaiDateToTimestamp(a.values['B'] ?? '') ?? 0;
+      const tsB = parseThaiDateToTimestamp(b.values['B'] ?? '') ?? 0;
+      if (tsA !== tsB) return tsB - tsA;
+      return b.rowNumber - a.rowNumber;
+    });
+  }, [existingRows, remoteVehicleHistoryRows, remoteHistoryRows, repairType]);
+
+  const sameVehicleHistoryCount = useMemo(() => {
+    if (!normalizedVehicleInput) return 0;
+    return matchedHistoryRows.filter(
+      (r) =>
+        (r.values['D'] ?? '').replace(/\s+/g, '').trim().toUpperCase() ===
+        normalizedVehicleInput
+    ).length;
+  }, [matchedHistoryRows, normalizedVehicleInput]);
+
+  const filteredHistoryRows = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    return matchedHistoryRows.filter((row) => {
+      if (historyOnlySelectedVehicle && normalizedVehicleInput) {
+        const rowVeh = (row.values['D'] ?? '').replace(/\s+/g, '').trim().toUpperCase();
+        if (rowVeh !== normalizedVehicleInput) {
+          return false;
+        }
+      }
+      if (!q) return true;
+      const haystack = [
+        row.values['B'],
+        row.values['D'],
+        row.values['F'],
+        row.values['G'],
+        row.values['P'],
+        row.values['AA'],
+        row.values['AH'],
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [
+    matchedHistoryRows,
+    historyOnlySelectedVehicle,
+    normalizedVehicleInput,
+    historySearch,
+  ]);
+
   useEffect(() => {
     if (isOpen) {
       setDate(getCurrentThaiDateString());
@@ -134,6 +371,21 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
   }, [isOpen, existingRows]);
 
   if (!isOpen) return null;
+
+  const handleUseHistoricalSymptom = (rowKey: string, text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    setSymptoms((prev) => {
+      const current = prev.trim();
+      if (!current) return clean;
+      if (current.includes(clean)) return prev;
+      return `${current}\n${clean}`;
+    });
+    setCopiedHistoryKey(rowKey);
+    setTimeout(() => {
+      setCopiedHistoryKey((curr) => (curr === rowKey ? null : curr));
+    }, 1500);
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -202,6 +454,7 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
       };
 
       await appendRepairRecord(payload);
+      clearRepairHistoryByTypeCache();
 
       showSuccessToast(
         'บันทึกแจ้งซ่อมสำเร็จ!',
@@ -235,7 +488,7 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
       }}
     >
       <div
-        className="flex max-h-[94vh] w-full max-w-xl flex-col rounded-xl border border-slate-200 bg-white shadow-lg"
+        className="flex max-h-[94vh] w-full max-w-2xl flex-col rounded-xl border border-slate-200 bg-white shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -328,7 +581,10 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
               <select
                 required
                 value={repairType}
-                onChange={(e) => setRepairType(e.target.value)}
+                onChange={(e) => {
+                  setRepairType(e.target.value);
+                  setIsHistoryExpanded(true);
+                }}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
               >
                 {referenceOptions.repairTypes.map((t) => (
@@ -338,6 +594,235 @@ export const RepairRequestModal: React.FC<RepairRequestModalProps> = ({
                 ))}
               </select>
             </div>
+
+            {/* ประวัติการซ่อมของประเภทและเบอร์รถที่เลือก */}
+            {repairType.trim() && (
+              <div className="col-span-2 rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-2.5 sm:p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-600 text-white">
+                      <History className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-900 truncate">
+                          ประวัติที่เคยซ่อม: {repairType}
+                        </span>
+                        {normalizedVehicleInput && historyOnlySelectedVehicle && (
+                          <span className="inline-flex items-center gap-1 rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
+                            <Truck className="h-2.5 w-2.5" />
+                            <span>{displayVehicleLabel}</span>
+                          </span>
+                        )}
+                        <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 font-mono text-[10px] font-bold text-indigo-800">
+                          {historyOnlySelectedVehicle && normalizedVehicleInput
+                            ? sameVehicleHistoryCount
+                            : matchedHistoryRows.length}{' '}
+                          รายการ
+                        </span>
+                        {isLoadingHistory && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>กำลังดึงประวัติเพิ่ม...</span>
+                          </span>
+                        )}
+                      </div>
+                      {!normalizedVehicleInput && (
+                        <p className="text-[10px] text-slate-500">
+                          ระบุเบอร์รถด้านบนเพื่อกรองประวัติเฉพาะรถคันนั้นอัตโนมัติ
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsHistoryExpanded((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50 transition-colors shrink-0"
+                  >
+                    <span>{isHistoryExpanded ? 'ซ่อนประวัติ' : 'ดูประวัติ'}</span>
+                    {isHistoryExpanded ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                {isHistoryExpanded && (
+                  <div className="mt-2.5 space-y-2">
+                    {(normalizedVehicleInput || matchedHistoryRows.length > 3) && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {normalizedVehicleInput && (
+                          <div className="inline-flex rounded-lg border border-indigo-200 bg-white p-0.5 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setHistoryOnlySelectedVehicle(true)}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-semibold transition-colors ${
+                                historyOnlySelectedVehicle
+                                  ? 'bg-slate-900 text-white'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              <Truck className="h-3 w-3" />
+                              <span>
+                                เฉพาะรถ {displayVehicleLabel} ({sameVehicleHistoryCount})
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setHistoryOnlySelectedVehicle(false)}
+                              className={`rounded-md px-2 py-0.5 font-semibold transition-colors ${
+                                !historyOnlySelectedVehicle
+                                  ? 'bg-slate-900 text-white'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              ทุกคัน ({matchedHistoryRows.length})
+                            </button>
+                          </div>
+                        )}
+
+                        {matchedHistoryRows.length > 3 && (
+                          <div className="relative flex-1 min-w-[160px]">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              value={historySearch}
+                              onChange={(e) => setHistorySearch(e.target.value)}
+                              placeholder="ค้นหาอาการ, เบอร์รถ ในประวัติ..."
+                              className="w-full rounded-lg border border-slate-200 bg-white py-1 pl-7 pr-2.5 text-[11px] text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {filteredHistoryRows.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-indigo-200 bg-white/80 px-3 py-3 text-center text-xs text-slate-500">
+                        {isLoadingHistory
+                          ? 'กำลังค้นหาประวัติการซ่อมจากฐานข้อมูล...'
+                          : historyOnlySelectedVehicle && normalizedVehicleInput
+                          ? `ยังไม่พบประวัติการซ่อมประเภท "${repairType}" ของรถ ${displayVehicleLabel}`
+                          : historySearch.trim()
+                          ? `ไม่พบประวัติที่ตรงกับคำค้นหา "${historySearch.trim()}"`
+                          : `ยังไม่มีประวัติการซ่อมในประเภท "${repairType}"`}
+                      </div>
+                    ) : (
+                      <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200/90 bg-white divide-y divide-slate-100 shadow-2xs">
+                        {filteredHistoryRows.slice(0, 30).map((row, idx) => {
+                          const seq = (row.values['A'] ?? '').trim();
+                          const reqDate = (row.values['B'] ?? '').trim() || '-';
+                          const veh = (row.values['D'] ?? '').trim() || '-';
+                          const sym = (row.values['F'] ?? '').trim() || '-';
+                          const reqNo = (row.values['G'] ?? '').trim();
+                          const completedDate = (row.values['J'] ?? '').trim();
+                          const reporter = (row.values['AA'] ?? '').trim();
+                          const rowNote = (row.values['AH'] ?? '').trim();
+                          const partsCost = parseNumericCell(
+                            row.rawValues['N'] ?? row.values['N']
+                          );
+                          const laborCostNum = parseNumericCell(
+                            row.rawValues['O'] ?? row.values['O']
+                          );
+                          const totalCost = partsCost + laborCostNum;
+                          const badge = getRepairHistoryStatusBadge(row);
+                          const itemKey = `${seq || row.rowNumber}-${reqNo || idx}`;
+                          const isCopied = copiedHistoryKey === itemKey;
+
+                          return (
+                            <div
+                              key={itemKey}
+                              className="px-2.5 py-2 hover:bg-slate-50/90 transition-colors"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                  <span className="inline-flex items-center gap-1 font-mono font-semibold text-slate-600">
+                                    <Calendar className="h-3 w-3 text-slate-400" />
+                                    {reqDate}
+                                  </span>
+                                  <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
+                                    {veh}
+                                  </span>
+                                  {reqNo && (
+                                    <span className="font-mono text-[10px] text-slate-400">
+                                      {reqNo}
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`inline-flex items-center rounded-full border px-1.5 py-0.2 text-[10px] font-semibold ${badge.className}`}
+                                  >
+                                    {badge.label}
+                                  </span>
+                                </div>
+
+                                {sym !== '-' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUseHistoricalSymptom(itemKey, sym)}
+                                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-colors shrink-0 ${
+                                      isCopied
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                        : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-400 hover:text-indigo-700'
+                                    }`}
+                                    title="คัดลอกข้อความอาการนี้ลงในช่องอาการเสีย"
+                                  >
+                                    {isCopied ? (
+                                      <>
+                                        <Check className="h-3 w-3" />
+                                        <span>นำไปใช้แล้ว</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CopyPlus className="h-3 w-3" />
+                                        <span>ใช้อาการนี้</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+
+                              <p className="mt-1 text-xs font-medium text-slate-800 leading-snug whitespace-pre-line">
+                                {sym}
+                              </p>
+
+                              {(totalCost > 0 || completedDate || reporter || rowNote) && (
+                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-500">
+                                  {totalCost > 0 && (
+                                    <span className="font-mono font-semibold text-slate-700">
+                                      ค่าซ่อมรวม{' '}
+                                      {totalCost.toLocaleString('th-TH', {
+                                        maximumFractionDigits: 2,
+                                      })}{' '}
+                                      ฿
+                                    </span>
+                                  )}
+                                  {completedDate && (
+                                    <span>ซ่อมเสร็จ: {completedDate}</span>
+                                  )}
+                                  {reporter && <span>ผู้แจ้ง: {reporter}</span>}
+                                  {rowNote && (
+                                    <span className="truncate max-w-[260px]" title={rowNote}>
+                                      หมายเหตุ: {rowNote}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {filteredHistoryRows.length > 30 && (
+                          <div className="bg-slate-50 px-3 py-1.5 text-center text-[10px] text-slate-500">
+                            แสดงล่าสุด 30 รายการ จากทั้งหมด {filteredHistoryRows.length}{' '}
+                            รายการ (พิมพ์คำค้นหาด้านบนเพื่อกรองเพิ่ม)
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ผู้แจ้งซ่อม */}
             <div>
